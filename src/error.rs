@@ -8,6 +8,9 @@ pub enum SynkroError {
     #[error("network error: {0}")]
     Network(#[from] std::io::Error),
     
+    #[error("serialization error: {0}")]
+    Serialization(String),
+
     #[error("deserialization error: {0}")]
     Deserialization(String),
 }

@@ -15,9 +15,7 @@ pub enum Message {
 
 pub fn serialize(envelope: &Envelope) -> crate::error::Result<Vec<u8>> {
     postcard::to_allocvec(envelope)
-        .map_err(|e| crate::error::SynkroError::Network(
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        ))
+        .map_err(|e| crate::error::SynkroError::Serialization(e.to_string()))
 }
 
 pub fn deserialize(bytes: &[u8]) -> crate::error::Result<Envelope> {

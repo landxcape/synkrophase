@@ -60,16 +60,23 @@ impl ClockSync {
             
             self.socket.send_to(&data, target_addr).await?;
 
-            if let Ok(Ok((len, addr))) = timeout(Duration::from_millis(500), self.socket.recv_from(&mut buf)).await {
-                if addr == target_addr {
-                    if let Ok(Envelope { payload: Message::ClockResponse { t1: rt1, t2, t3 }, .. }) = deserialize(&buf[..len]) {
-                        if rt1 == t1 {
-                            let t4 = local_now();
-                            let offset = ((t2 as i64 - t1 as i64) + (t3 as i64 - t4 as i64)) / 2;
-                            offsets.push(offset);
+            let recv_result = timeout(Duration::from_millis(500), async {
+                loop {
+                    let (len, addr) = self.socket.recv_from(&mut buf).await?;
+                    if addr == target_addr {
+                        if let Ok(Envelope { payload: Message::ClockResponse { t1: rt1, t2, t3 }, .. }) = deserialize(&buf[..len]) {
+                            if rt1 == t1 {
+                                return Ok::<(u64, u64, u64), crate::error::SynkroError>((rt1, t2, t3));
+                            }
                         }
                     }
                 }
+            }).await;
+
+            if let Ok(Ok((rt1, t2, t3))) = recv_result {
+                let t4 = local_now();
+                let offset = ((t2 as i64 - rt1 as i64) + (t3 as i64 - t4 as i64)) / 2;
+                offsets.push(offset);
             }
         }
 
