@@ -60,12 +60,14 @@ impl ClockSync {
             
             self.socket.send_to(&data, target_addr).await?;
 
-            if let Ok(Ok((len, _addr))) = timeout(Duration::from_millis(500), self.socket.recv_from(&mut buf)).await {
-                if let Ok(Envelope { payload: Message::ClockResponse { t1: rt1, t2, t3 }, .. }) = deserialize(&buf[..len]) {
-                    if rt1 == t1 {
-                        let t4 = local_now();
-                        let offset = ((t2 as i64 - t1 as i64) + (t3 as i64 - t4 as i64)) / 2;
-                        offsets.push(offset);
+            if let Ok(Ok((len, addr))) = timeout(Duration::from_millis(500), self.socket.recv_from(&mut buf)).await {
+                if addr == target_addr {
+                    if let Ok(Envelope { payload: Message::ClockResponse { t1: rt1, t2, t3 }, .. }) = deserialize(&buf[..len]) {
+                        if rt1 == t1 {
+                            let t4 = local_now();
+                            let offset = ((t2 as i64 - t1 as i64) + (t3 as i64 - t4 as i64)) / 2;
+                            offsets.push(offset);
+                        }
                     }
                 }
             }
@@ -86,12 +88,12 @@ impl ClockSync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
     
     #[tokio::test]
     async fn test_measure_offset() {
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let target_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let dummy = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let target_addr = dummy.local_addr().unwrap();
         let config = SyncConfig::default();
         let clock = ClockSync::new(socket, config, uuid::Uuid::new_v4());
         
