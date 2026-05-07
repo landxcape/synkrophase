@@ -13,6 +13,13 @@ pub enum Message {
     ClockResponse { t1: u64, t2: u64, t3: u64 },
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PeerInfo {
+    pub device_id: Uuid,
+    pub clock_offset_us: i64,
+    pub last_seen: u64,
+}
+
 pub fn serialize(envelope: &Envelope) -> crate::error::Result<Vec<u8>> {
     postcard::to_allocvec(envelope)
         .map_err(|e| crate::error::SynkroError::Serialization(e.to_string()))
