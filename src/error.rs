@@ -1,0 +1,15 @@
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SynkroError {
+    #[error("clock sync failed: {0}")]
+    ClockSync(String),
+
+    #[error("network error: {0}")]
+    Network(#[from] std::io::Error),
+    
+    #[error("deserialization error: {0}")]
+    Deserialization(String),
+}
+
+pub type Result<T> = std::result::Result<T, SynkroError>;
