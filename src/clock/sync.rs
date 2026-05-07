@@ -83,6 +83,25 @@ impl ClockSync {
         
         Ok(median)
     }
+
+    pub async fn run_responder(&self) -> crate::error::Result<()> {
+        let mut buf = [0u8; 1024];
+        loop {
+            let (len, src) = self.socket.recv_from(&mut buf).await?;
+            let t2 = local_now();
+            
+            if let Ok(Envelope { payload: Message::ClockRequest { t1 }, .. }) = deserialize(&buf[..len]) {
+                let t3 = local_now();
+                let resp = Envelope {
+                    sender: self.self_id,
+                    payload: Message::ClockResponse { t1, t2, t3 },
+                };
+                if let Ok(data) = serialize(&resp) {
+                    let _ = self.socket.send_to(&data, src).await;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -99,5 +118,35 @@ mod tests {
         
         let err = clock.measure_offset(target_addr).await;
         assert!(err.is_err(), "should fail without a responding server");
+    }
+
+    #[tokio::test]
+    async fn test_clock_sync_integration() {
+        let server_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let server_addr = server_socket.local_addr().unwrap();
+        
+        let server_clone = server_socket.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            while let Ok((len, src)) = server_clone.recv_from(&mut buf).await {
+                let t2 = local_now();
+                if let Ok(Envelope { payload: Message::ClockRequest { t1 }, sender }) = deserialize(&buf[..len]) {
+                    let t3 = local_now();
+                    let resp = Envelope {
+                        sender, // bounce back sender for simplicity in test
+                        payload: Message::ClockResponse { t1, t2, t3 },
+                    };
+                    let out = serialize(&resp).unwrap();
+                    server_clone.send_to(&out, src).await.unwrap();
+                }
+            }
+        });
+
+        let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let clock = ClockSync::new(client_socket, SyncConfig::default(), uuid::Uuid::new_v4());
+        
+        let offset = clock.measure_offset(server_addr).await.expect("should measure successfully");
+        // Because they run on the same machine/clock, offset should be effectively 0 (within <1ms / 1000us)
+        assert!(offset.abs() < 1000, "offset {} is not < 1ms", offset);
     }
 }
