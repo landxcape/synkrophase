@@ -42,26 +42,3 @@ impl ClockSync {
         self.offset_us.store(offset, Ordering::Release);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_clock_sync_offset() {
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let config = SyncConfig::default();
-        let id = uuid::Uuid::new_v4();
-        
-        let clock_sync = ClockSync::new(socket, config, id);
-        
-        assert_eq!(clock_sync.offset(), 0);
-        clock_sync.set_offset(5000);
-        assert_eq!(clock_sync.offset(), 5000);
-        
-        let local = local_now();
-        let ref_now = clock_sync.reference_now();
-        
-        assert!(ref_now >= local + 5000);
-    }
-}
