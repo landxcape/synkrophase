@@ -892,7 +892,38 @@ async fn run_stream_distribution_loop(
             continue;
         };
 
-        if session.stream_url_for(&current.id).is_some() {
+        let current_stream = session.stream_url_for(&current.id);
+
+        let needs_resolve = if let Some(stream) = current_stream {
+            if stream.expires_at == 0 {
+                false
+            } else {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                // Re-resolve if it expires in less than 5 minutes (300 seconds)
+                stream.expires_at < now + 300
+            }
+        } else {
+            true // Not resolved yet
+        };
+
+        if !needs_resolve {
+            let status = playback.status();
+            let is_same_track = status.track_id.as_deref() == Some(&current.id);
+
+            if !is_same_track || !status.is_playing {
+                if let Some(stream) = session.stream_url_for(&current.id) {
+                    let url = stream.url.clone();
+                    let track_id = current.id.clone();
+                    let playback_clone = Arc::clone(&playback);
+                    tokio::task::spawn_blocking(move || {
+                        let _ = playback_clone.load_and_play(&track_id, &url);
+                    });
+                }
+            }
+
             sleep(Duration::from_millis(200)).await;
             continue;
         }
@@ -915,11 +946,17 @@ async fn run_stream_distribution_loop(
             let _ = socket.send_to(&bytes, addr).await;
         }
 
-        let url = stream.url.clone();
-        let playback = Arc::clone(&playback);
-        tokio::task::spawn_blocking(move || {
-            let _ = playback.load_and_play(&url);
-        });
+        let status = playback.status();
+        let is_same_track = status.track_id.as_deref() == Some(&current.id);
+
+        if !is_same_track || !status.is_playing {
+            let url = stream.url.clone();
+            let track_id = current.id.clone();
+            let playback_clone = Arc::clone(&playback);
+            tokio::task::spawn_blocking(move || {
+                let _ = playback_clone.load_and_play(&track_id, &url);
+            });
+        }
 
         sleep(Duration::from_millis(200)).await;
     }

@@ -177,6 +177,7 @@ fn leader_builds_sync_anchor_message_from_playback_status() {
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     let session = SessionState::new_leader("ROOM42".into(), leader_id);
     let status = PlaybackStatus {
+        track_id: Some("track-1".into()),
         stream_url: Some("https://cdn.example.com/audio".into()),
         position_us: 111_000,
         rate: 0.98,

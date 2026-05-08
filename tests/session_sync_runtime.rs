@@ -28,6 +28,7 @@ impl MockPlayback {
     fn with(position_us: i64, rate: f32) -> Self {
         Self {
             status: Mutex::new(PlaybackStatus {
+                track_id: None,
                 stream_url: None,
                 position_us,
                 rate,

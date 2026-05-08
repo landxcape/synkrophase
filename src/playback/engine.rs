@@ -12,6 +12,7 @@ pub struct PlaybackSnapshot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaybackStatus {
+    pub track_id: Option<String>,
     pub stream_url: Option<String>,
     pub position_us: i64,
     pub rate: f32,
@@ -21,6 +22,7 @@ pub struct PlaybackStatus {
 impl Default for PlaybackStatus {
     fn default() -> Self {
         Self {
+            track_id: None,
             stream_url: None,
             position_us: 0,
             rate: 1.0,
@@ -55,9 +57,10 @@ impl PlaybackEngine {
         Ok(Self::new(Box::new(RodioPlaybackBackend::new()?)))
     }
 
-    pub fn load_and_play(&self, stream_url: &str) -> Result<()> {
+    pub fn load_and_play(&self, track_id: &str, stream_url: &str) -> Result<()> {
         self.backend.load_and_play(stream_url)?;
         let mut status = self.status.write().unwrap();
+        status.track_id = Some(track_id.to_string());
         status.stream_url = Some(stream_url.to_string());
         status.position_us = 0;
         status.rate = 1.0;

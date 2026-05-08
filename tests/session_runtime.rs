@@ -245,7 +245,7 @@ async fn leader_anchor_broadcast_sends_sync_anchor_envelope() {
     ));
     let playback = Arc::new(PlaybackEngine::new(Box::new(MockBackend::default())));
     playback
-        .load_and_play("https://cdn.example.com/audio")
+        .load_and_play("track-1", "https://cdn.example.com/audio")
         .unwrap();
     playback.seek(42_000).unwrap();
     playback.set_rate(0.98).unwrap();

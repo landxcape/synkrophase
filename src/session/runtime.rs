@@ -233,8 +233,9 @@ impl SessionMessageRuntime {
                 if let Some(playback) = &self.playback {
                     let playback = Arc::clone(playback);
                     let url = stream.url.clone();
+                    let track_id = stream.track_id.clone();
                     tokio::task::spawn_blocking(move || {
-                        let _ = playback.load_and_play(&url);
+                        let _ = playback.load_and_play(&track_id, &url);
                     });
                 }
                 Ok(())

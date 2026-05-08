@@ -70,7 +70,7 @@ fn load_and_play_sets_playing_state_and_tracks_stream() {
     let engine = PlaybackEngine::new(Box::new(backend.clone()));
 
     engine
-        .load_and_play("https://cdn.example.com/audio")
+        .load_and_play("track-1", "https://cdn.example.com/audio")
         .unwrap();
 
     assert_eq!(
@@ -78,6 +78,10 @@ fn load_and_play_sets_playing_state_and_tracks_stream() {
         vec![BackendCall::Load("https://cdn.example.com/audio".into())]
     );
     assert!(engine.is_playing());
+    assert_eq!(
+        engine.status().track_id.as_deref(),
+        Some("track-1")
+    );
     assert_eq!(
         engine.status().stream_url.as_deref(),
         Some("https://cdn.example.com/audio")
@@ -90,7 +94,7 @@ fn set_rate_and_seek_update_status() {
     let backend = MockBackend::default();
     let engine = PlaybackEngine::new(Box::new(backend.clone()));
     engine
-        .load_and_play("https://cdn.example.com/audio")
+        .load_and_play("track-1", "https://cdn.example.com/audio")
         .unwrap();
 
     engine.set_rate(1.02).unwrap();
@@ -115,7 +119,7 @@ fn pause_resume_and_stop_toggle_playback_state() {
     let backend = MockBackend::default();
     let engine = PlaybackEngine::new(Box::new(backend.clone()));
     engine
-        .load_and_play("https://cdn.example.com/audio")
+        .load_and_play("track-1", "https://cdn.example.com/audio")
         .unwrap();
 
     engine.pause().unwrap();
@@ -143,7 +147,7 @@ fn position_snapshot_reflects_latest_status() {
     let backend = MockBackend::default();
     let engine = PlaybackEngine::new(Box::new(backend));
     engine
-        .load_and_play("https://cdn.example.com/audio")
+        .load_and_play("track-1", "https://cdn.example.com/audio")
         .unwrap();
     engine.seek(123_000).unwrap();
     engine.set_rate(0.98).unwrap();
@@ -171,6 +175,7 @@ fn status_exposes_playback_state_for_sync_layer() {
     assert_eq!(
         engine.status(),
         PlaybackStatus {
+            track_id: None,
             stream_url: None,
             position_us: 0,
             rate: 1.0,
