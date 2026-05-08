@@ -231,12 +231,16 @@ impl SessionMessageRuntime {
             Message::StreamUrl(stream) => {
                 self.session.accept_stream_url(stream.clone());
                 if let Some(playback) = &self.playback {
-                    let playback = Arc::clone(playback);
-                    let url = stream.url.clone();
-                    let track_id = stream.track_id.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let _ = playback.load_and_play(&track_id, &url);
-                    });
+                    let status = playback.status();
+                    let is_same_track = status.track_id.as_deref() == Some(&stream.track_id);
+                    if !is_same_track || !status.is_playing {
+                        let playback = Arc::clone(playback);
+                        let url = stream.url.clone();
+                        let track_id = stream.track_id.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let _ = playback.load_and_play(&track_id, &url);
+                        });
+                    }
                 }
                 Ok(())
             }

@@ -275,3 +275,78 @@ async fn leader_anchor_broadcast_sends_sync_anchor_envelope() {
         other => panic!("unexpected payload: {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn stream_url_refresh_does_not_restart_playback() {
+    let leader_id = Uuid::new_v4();
+    let session = Arc::new(SessionState::from_join(
+        "ROOM42".into(),
+        Uuid::new_v4(),
+        leader_id,
+        vec![],
+        QueueState::default(),
+    ));
+
+    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let addr = socket.local_addr().unwrap();
+
+    let backend = MockBackend::default();
+    let playback = Arc::new(PlaybackEngine::new(Box::new(backend.clone())));
+    let runtime =
+        SessionMessageRuntime::new(Arc::clone(&session)).with_playback(Arc::clone(&playback));
+
+    let runtime_socket = Arc::clone(&socket);
+    let handle = tokio::spawn(async move {
+        let _ = runtime.run_receive_loop(runtime_socket).await;
+    });
+
+    let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+    // 1. Initial load
+    let env_1 = Envelope {
+        sender: leader_id,
+        payload: Message::StreamUrl(StreamUrl {
+            track_id: "track-1".into(),
+            url: "https://cdn.example.com/audio?v=1".into(),
+            expires_at: 100,
+        }),
+    };
+    client_socket.send_to(&serialize(&env_1).unwrap(), addr).await.unwrap();
+
+    // Give it a moment to process
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(backend.calls(), vec![BackendCall::Load("https://cdn.example.com/audio?v=1".into())]);
+
+    // 2. Refresh with same track_id, different URL
+    let env_2 = Envelope {
+        sender: leader_id,
+        payload: Message::StreamUrl(StreamUrl {
+            track_id: "track-1".into(),
+            url: "https://cdn.example.com/audio?v=2".into(),
+            expires_at: 200,
+        }),
+    };
+    client_socket.send_to(&serialize(&env_2).unwrap(), addr).await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    // Should NOT have called Load again
+    assert_eq!(backend.calls(), vec![BackendCall::Load("https://cdn.example.com/audio?v=1".into())]);
+
+    // 3. Different track_id SHOULD trigger load
+    let env_3 = Envelope {
+        sender: leader_id,
+        payload: Message::StreamUrl(StreamUrl {
+            track_id: "track-2".into(),
+            url: "https://cdn.example.com/audio-2".into(),
+            expires_at: 300,
+        }),
+    };
+    client_socket.send_to(&serialize(&env_3).unwrap(), addr).await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(backend.calls().len(), 2);
+    assert_eq!(backend.calls()[1], BackendCall::Load("https://cdn.example.com/audio-2".into()));
+
+    handle.abort();
+}
