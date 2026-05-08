@@ -59,6 +59,70 @@ async fn leader_resolves_current_track_into_stream_url_message() {
     );
 }
 
+#[tokio::test]
+async fn expiry_refresh_logic_triggers_re_resolution() {
+    let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let session = std::sync::Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    session
+        .handle_queue_proposal(QueueCommand::Add(track("refresh")))
+        .unwrap();
+
+    // 1. Resolve an "almost expired" URL (e.g., 1 minute from now)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let expires_soon = now + 60;
+
+    let script = write_script(&format!(
+        "#!/bin/sh\nprintf 'https://cdn.example.com/stream?expire={expires_soon}\\n'\n"
+    ));
+    let resolver = StreamResolver::new(script);
+
+    // Initial resolution
+    let stream = session.resolve_current_track(&resolver).await.unwrap();
+    assert_eq!(stream.expires_at, expires_soon);
+    assert_eq!(session.stream_url_for("refresh").unwrap().expires_at, expires_soon);
+
+    // 2. Setup a new resolver script that returns a FRESH URL (expiring in 2 hours)
+    let expires_fresh = now + 7200;
+    let fresh_script = write_script(&format!(
+        "#!/bin/sh\nprintf 'https://cdn.example.com/stream?expire={expires_fresh}\\n'\n"
+    ));
+    let fresh_resolver = Some(StreamResolver::new(fresh_script));
+
+    // 3. Run the logic from run_stream_distribution_loop manually (or a single iteration of it)
+    // We can't easily run the actual loop in a test because it's in main.rs, 
+    // so we'll simulate the logic here.
+    
+    let queue = session.queue_snapshot();
+    let current = queue.current.unwrap();
+    let current_stream = session.stream_url_for(&current.id);
+    
+    let needs_resolve = if let Some(stream) = current_stream {
+        if stream.expires_at == 0 {
+            false
+        } else {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            stream.expires_at < now + 300
+        }
+    } else {
+        true
+    };
+
+    assert!(needs_resolve, "Should need re-resolution because it expires in 60s (< 300s)");
+
+    if needs_resolve {
+        let stream = session.resolve_current_track(&fresh_resolver.unwrap()).await.unwrap();
+        assert_eq!(stream.expires_at, expires_fresh);
+    }
+
+    assert_eq!(session.stream_url_for("refresh").unwrap().expires_at, expires_fresh);
+}
+
 #[test]
 fn peer_accepts_stream_url_distribution() {
     let self_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
