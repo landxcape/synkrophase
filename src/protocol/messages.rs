@@ -189,7 +189,12 @@ mod tests {
 
     #[test]
     fn test_playback_controls_roundtrip() {
-        let controls = vec![Message::Play, Message::Pause, Message::Resume, Message::Skip];
+        let controls = vec![
+            Message::Play,
+            Message::Pause,
+            Message::Resume,
+            Message::Skip,
+        ];
         for payload in controls {
             let env = Envelope {
                 sender: Uuid::new_v4(),

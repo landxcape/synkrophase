@@ -1,7 +1,11 @@
+pub mod clock;
 pub mod config;
 pub mod error;
+pub mod playback;
 pub mod protocol;
-pub mod clock;
+pub mod queue;
 pub mod session;
+pub mod stream;
+pub mod sync;
 
 // Core library modules will go here

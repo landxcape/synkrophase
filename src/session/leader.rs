@@ -21,12 +21,20 @@ mod tests {
 
         assert_eq!(elect_leader(&[id2, id3], id1), id1, "Self wins if lowest");
         assert_eq!(elect_leader(&[id1, id3], id2), id1, "Peer wins if lowest");
-        assert_eq!(elect_leader(&[id1, id2], id3), id1, "Lowest win regardless of position");
+        assert_eq!(
+            elect_leader(&[id1, id2], id3),
+            id1,
+            "Lowest win regardless of position"
+        );
     }
 
     #[test]
     fn test_election_with_single_peer() {
         let self_id = Uuid::new_v4();
-        assert_eq!(elect_leader(&[], self_id), self_id, "Only peer (self) must win");
+        assert_eq!(
+            elect_leader(&[], self_id),
+            self_id,
+            "Only peer (self) must win"
+        );
     }
 }

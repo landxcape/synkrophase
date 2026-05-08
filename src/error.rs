@@ -7,7 +7,22 @@ pub enum SynkroError {
 
     #[error("network error: {0}")]
     Network(#[from] std::io::Error),
-    
+
+    #[error("operation requires leader role")]
+    NotLeader,
+
+    #[error("stale queue version: local={local}, received={received}")]
+    StaleQueue { local: u64, received: u64 },
+
+    #[error("yt-dlp not found and user declined auto-install")]
+    YtdlpMissing,
+
+    #[error("stream resolution failed: {0}")]
+    StreamResolution(String),
+
+    #[error("playback error: {0}")]
+    Playback(String),
+
     #[error("serialization error: {0}")]
     Serialization(String),
 
