@@ -672,6 +672,7 @@ async fn run_queue(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
+    println!("Requesting queue state for room {}...", room_code);
     send_join_request(
         &socket,
         device.device_id,
@@ -685,22 +686,29 @@ async fn run_queue(
         Ok(Ok((len, _))) => {
             let envelope = synkrophase::protocol::messages::deserialize(&buf[..len])?;
             if let Message::JoinAccepted { queue_state, .. } = envelope.payload {
-                println!("Queue for room {}:", room_code);
+                println!("\nQueue for room {}:", room_code);
                 if let Some(current) = queue_state.current {
                     println!(
-                        "  [PLAYING] {} (requested by {})",
-                        current.title, current.requested_by
+                        "  [PLAYING] {} (ID: {}, requested by {})",
+                        current.title, current.id, current.requested_by
                     );
                 } else {
                     println!("  [PLAYING] None");
                 }
-                for (i, track) in queue_state.upcoming.iter().enumerate() {
-                    println!(
-                        "  {}. {} (requested by {})",
-                        i + 1,
-                        track.title,
-                        track.requested_by
-                    );
+                
+                if queue_state.upcoming.is_empty() {
+                    println!("  (Upcoming queue is empty)");
+                } else {
+                    println!("\n  Upcoming:");
+                    for (i, track) in queue_state.upcoming.iter().enumerate() {
+                        println!(
+                            "  {}. {} (ID: {}, requested by {})",
+                            i + 1,
+                            track.title,
+                            track.id,
+                            track.requested_by
+                        );
+                    }
                 }
             } else {
                 println!("Received unexpected response from leader.");
@@ -721,6 +729,69 @@ async fn run_sync_status(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
+    println!("Collecting sync status for room {} (2s burst)...", room_code);
+    send_join_request(
+        &socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+    )
+    .await?;
+
+    let mut peer_offsets = std::collections::HashMap::new();
+    let mut buf = [0u8; 8 * 1024];
+    let start = std::time::Instant::now();
+    let duration = Duration::from_secs(2);
+
+    while start.elapsed() < duration {
+        let remaining = duration.saturating_sub(start.elapsed());
+        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
+                match envelope.payload {
+                    Message::JoinAccepted { peer_list, .. } => {
+                        for peer in peer_list {
+                            peer_offsets.insert(peer.device_id, peer.clock_offset_us);
+                        }
+                    }
+                    Message::Heartbeat { .. } => {
+                        // Heartbeat doesn't carry offset, but marks presence. 
+                        // We already have device_id from envelope.sender.
+                    }
+                    Message::SyncAnchor(_) => {
+                        // Anchors are broadcast by leader.
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if peer_offsets.is_empty() {
+        println!("No peer data collected.");
+    } else {
+        println!("\n{:<40} {:>12}", "Device ID", "Offset (us)");
+        println!("{}", "-".repeat(53));
+        let mut sorted: Vec<_> = peer_offsets.into_iter().collect();
+        sorted.sort_by_key(|a| a.0);
+        for (id, offset) in sorted {
+            println!("{:<40} {:>12}", id, offset);
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_debug(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+    socket.set_broadcast(true)?;
+
+    println!("Collecting debug metrics for room {} (3s burst)...", room_code);
     send_join_request(
         &socket,
         device.device_id,
@@ -730,31 +801,48 @@ async fn run_sync_status(
     .await?;
 
     let mut buf = [0u8; 8 * 1024];
-    match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let envelope = synkrophase::protocol::messages::deserialize(&buf[..len])?;
-            if let Message::JoinAccepted { peer_list, .. } = envelope.payload {
-                println!("Sync Status for room {}:", room_code);
-                println!("{:<40} {:>12}", "Device ID", "Offset (us)");
-                println!("{}", "-".repeat(53));
-                for peer in peer_list {
-                    println!("{:<40} {:>12}", peer.device_id, peer.clock_offset_us);
+    let start = std::time::Instant::now();
+    let duration = Duration::from_secs(3);
+
+    println!("\n{:<10} {:<40} {:<20}", "Type", "Sender", "Data");
+    println!("{}", "-".repeat(70));
+
+    while start.elapsed() < duration {
+        let remaining = duration.saturating_sub(start.elapsed());
+        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
+                match envelope.payload {
+                    Message::SyncAnchor(anchor) => {
+                        println!(
+                            "{:<10} {:<40} Pos: {}us, Rate: {:.4}, Playing: {}",
+                            "Anchor", envelope.sender, anchor.media_position_us, anchor.playback_rate, anchor.is_playing
+                        );
+                    }
+                    Message::Heartbeat { is_leader, .. } => {
+                        println!(
+                            "{:<10} {:<40} Role: {}",
+                            "Heartbeat", envelope.sender, if is_leader { "Leader" } else { "Follower" }
+                        );
+                    }
+                    Message::JoinAccepted { peer_list, .. } => {
+                        println!(
+                            "{:<10} {:<40} Peers: {}",
+                            "JoinAcc", envelope.sender, peer_list.len()
+                        );
+                    }
+                    Message::QueueUpdate(state) => {
+                        println!(
+                            "{:<10} {:<40} Queue Ver: {}, Current: {}",
+                            "QueueUpd", envelope.sender, state.version, state.current.map(|t| t.title).unwrap_or_else(|| "None".into())
+                        );
+                    }
+                    _ => {}
                 }
-            } else {
-                println!("Received unexpected response from leader.");
             }
         }
-        _ => println!("Timed out waiting for sync status from leader."),
     }
-    Ok(())
-}
 
-async fn run_debug(
-    device: DeviceConfig,
-    room_code: String,
-    leader_addr: Option<SocketAddr>,
-) -> Result<()> {
-    run_sync_status(device, room_code, leader_addr).await
+    Ok(())
 }
 
 async fn await_join_accepted(socket: &UdpSocket, timeout: Duration) -> Result<()> {
