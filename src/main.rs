@@ -186,13 +186,51 @@ async fn main() -> Result<()> {
             url,
             leader_addr,
         } => run_play(device, room_code, url, leader_addr).await,
-        Commands::Pause { .. } => todo!("Pause subcommand implementation"),
-        Commands::Resume { .. } => todo!("Resume subcommand implementation"),
-        Commands::Skip { .. } => todo!("Skip subcommand implementation"),
-        Commands::Queue { .. } => todo!("Queue subcommand implementation"),
-        Commands::Sync { .. } => todo!("Sync subcommand implementation"),
-        Commands::Debug { .. } => todo!("Debug subcommand implementation"),
-        Commands::Transfer { .. } => todo!("Transfer subcommand implementation"),
+        Commands::Pause {
+            room_code,
+            leader_addr,
+        } => run_simple_command(device, room_code, leader_addr, Message::Pause).await,
+        Commands::Resume {
+            room_code,
+            leader_addr,
+        } => run_simple_command(device, room_code, leader_addr, Message::Resume).await,
+        Commands::Skip {
+            room_code,
+            leader_addr,
+        } => {
+            run_simple_command(
+                device,
+                room_code,
+                leader_addr,
+                Message::QueueProposal(QueueCommand::Skip),
+            )
+            .await
+        }
+        Commands::Queue {
+            room_code,
+            leader_addr,
+        } => run_queue(device, room_code, leader_addr).await,
+        Commands::Sync {
+            room_code,
+            leader_addr,
+        } => run_sync_status(device, room_code, leader_addr).await,
+        Commands::Debug {
+            room_code,
+            leader_addr,
+        } => run_debug(device, room_code, leader_addr).await,
+        Commands::Transfer {
+            room_code,
+            device_id,
+            leader_addr,
+        } => {
+            let to = Uuid::parse_str(&device_id).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid device_id: {e}"),
+                )
+            })?;
+            run_simple_command(device, room_code, leader_addr, Message::TransferLeadership { to }).await
+        }
     }
 }
 
@@ -595,6 +633,130 @@ async fn run_play(
     Ok(())
 }
 
+async fn run_simple_command(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+    message: Message,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+    socket.set_broadcast(true)?;
+
+    send_join_request(
+        &socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+    )
+    .await?;
+    let _ = await_join_accepted(&socket, Duration::from_secs(1)).await;
+
+    let envelope = Envelope {
+        sender: device.device_id,
+        payload: message,
+    };
+    let bytes = serialize(&envelope)?;
+    socket.send_to(&bytes, resolved_leader_addr).await?;
+    Ok(())
+}
+
+async fn run_queue(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+    socket.set_broadcast(true)?;
+
+    send_join_request(
+        &socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+    )
+    .await?;
+
+    let mut buf = [0u8; 8 * 1024];
+    match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
+            let envelope = synkrophase::protocol::messages::deserialize(&buf[..len])?;
+            if let Message::JoinAccepted { queue_state, .. } = envelope.payload {
+                println!("Queue for room {}:", room_code);
+                if let Some(current) = queue_state.current {
+                    println!(
+                        "  [PLAYING] {} (requested by {})",
+                        current.title, current.requested_by
+                    );
+                } else {
+                    println!("  [PLAYING] None");
+                }
+                for (i, track) in queue_state.upcoming.iter().enumerate() {
+                    println!(
+                        "  {}. {} (requested by {})",
+                        i + 1,
+                        track.title,
+                        track.requested_by
+                    );
+                }
+            } else {
+                println!("Received unexpected response from leader.");
+            }
+        }
+        _ => println!("Timed out waiting for queue information from leader."),
+    }
+    Ok(())
+}
+
+async fn run_sync_status(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+    socket.set_broadcast(true)?;
+
+    send_join_request(
+        &socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+    )
+    .await?;
+
+    let mut buf = [0u8; 8 * 1024];
+    match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
+            let envelope = synkrophase::protocol::messages::deserialize(&buf[..len])?;
+            if let Message::JoinAccepted { peer_list, .. } = envelope.payload {
+                println!("Sync Status for room {}:", room_code);
+                println!("{:<40} {:>12}", "Device ID", "Offset (us)");
+                println!("{}", "-".repeat(53));
+                for peer in peer_list {
+                    println!("{:<40} {:>12}", peer.device_id, peer.clock_offset_us);
+                }
+            } else {
+                println!("Received unexpected response from leader.");
+            }
+        }
+        _ => println!("Timed out waiting for sync status from leader."),
+    }
+    Ok(())
+}
+
+async fn run_debug(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    run_sync_status(device, room_code, leader_addr).await
+}
+
 async fn await_join_accepted(socket: &UdpSocket, timeout: Duration) -> Result<()> {
     let mut buf = [0u8; 8 * 1024];
     let recv = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await;
@@ -737,7 +899,11 @@ mod tests {
         // Test Transfer
         let cli = Cli::try_parse_from(["synkro", "transfer", "ROOM12", "device-uuid"]).unwrap();
         match cli.command {
-            Commands::Transfer { room_code, device_id, .. } => {
+            Commands::Transfer {
+                room_code,
+                device_id,
+                ..
+            } => {
                 assert_eq!(room_code, "ROOM12");
                 assert_eq!(device_id, "device-uuid");
             }
