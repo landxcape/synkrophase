@@ -86,6 +86,18 @@ impl SessionMessageRuntime {
         Ok(())
     }
 
+    async fn send_to_peers(&self, socket: &UdpSocket, message: Message) -> Result<()> {
+        let envelope = Envelope {
+            sender: self.session.self_id(),
+            payload: message,
+        };
+        let bytes = serialize(&envelope)?;
+        for addr in self.session.peer_socket_addrs() {
+            let _ = socket.send_to(&bytes, addr).await;
+        }
+        Ok(())
+    }
+
     async fn broadcast_message(
         socket: &UdpSocket,
         sender: Uuid,
@@ -103,7 +115,14 @@ impl SessionMessageRuntime {
         envelope: Envelope,
     ) -> Result<()> {
         if envelope.sender == self.session.self_id() {
-            return Ok(());
+            // Allow control messages from same device (CLI use case)
+            let allowed = matches!(
+                envelope.payload,
+                Message::Pause | Message::Resume | Message::Play | Message::QueueProposal(_)
+            );
+            if !allowed {
+                return Ok(());
+            }
         }
 
         match envelope.payload {
@@ -199,18 +218,14 @@ impl SessionMessageRuntime {
                     return Ok(());
                 }
 
-                self.session
-                    .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                if envelope.sender != self.session.self_id() {
+                    self.session
+                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                }
 
                 let updated = self.session.handle_queue_proposal(command)?;
-                let envelope = Envelope {
-                    sender: self.session.self_id(),
-                    payload: Message::QueueUpdate(updated),
-                };
-                let bytes = serialize(&envelope)?;
-                for addr in self.session.peer_socket_addrs() {
-                    let _ = socket.send_to(&bytes, addr).await;
-                }
+                self.send_to_peers(socket, Message::QueueUpdate(updated))
+                    .await?;
                 Ok(())
             }
             Message::StreamUrl(stream) => {
@@ -225,50 +240,41 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::Pause => {
+                if envelope.sender != self.session.self_id() {
+                    self.session
+                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                }
                 if let Some(playback) = &self.playback {
                     playback.pause()?;
                 }
                 if self.session.is_leader() {
-                    let envelope = Envelope {
-                        sender: self.session.self_id(),
-                        payload: Message::Pause,
-                    };
-                    let bytes = serialize(&envelope)?;
-                    for addr in self.session.peer_socket_addrs() {
-                        let _ = socket.send_to(&bytes, addr).await;
-                    }
+                    self.send_to_peers(socket, Message::Pause).await?;
                 }
                 Ok(())
             }
             Message::Resume => {
+                if envelope.sender != self.session.self_id() {
+                    self.session
+                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                }
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
                 if self.session.is_leader() {
-                    let envelope = Envelope {
-                        sender: self.session.self_id(),
-                        payload: Message::Resume,
-                    };
-                    let bytes = serialize(&envelope)?;
-                    for addr in self.session.peer_socket_addrs() {
-                        let _ = socket.send_to(&bytes, addr).await;
-                    }
+                    self.send_to_peers(socket, Message::Resume).await?;
                 }
                 Ok(())
             }
             Message::Play => {
+                if envelope.sender != self.session.self_id() {
+                    self.session
+                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                }
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
                 if self.session.is_leader() {
-                    let envelope = Envelope {
-                        sender: self.session.self_id(),
-                        payload: Message::Play,
-                    };
-                    let bytes = serialize(&envelope)?;
-                    for addr in self.session.peer_socket_addrs() {
-                        let _ = socket.send_to(&bytes, addr).await;
-                    }
+                    self.send_to_peers(socket, Message::Play).await?;
                 }
                 Ok(())
             }
