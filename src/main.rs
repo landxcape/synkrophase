@@ -597,7 +597,7 @@ fn generated_room_code(device_id: Uuid) -> String {
 }
 
 async fn run_play(
-    device: DeviceConfig,
+    _device: DeviceConfig,
     room_code: String,
     url: String,
     leader_addr: Option<SocketAddr>,
@@ -609,9 +609,11 @@ async fn run_play(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
+    let ephemeral_id = Uuid::new_v4();
+
     send_join_request(
         &socket,
-        device.device_id,
+        ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
     )
@@ -622,10 +624,10 @@ async fn run_play(
         id: Uuid::new_v4().to_string(),
         youtube_url: url,
         title: "Pending".into(),
-        requested_by: device.device_id,
+        requested_by: ephemeral_id,
     };
     let envelope = Envelope {
-        sender: device.device_id,
+        sender: ephemeral_id,
         payload: Message::QueueProposal(QueueCommand::Add(track)),
     };
     let bytes = serialize(&envelope)?;
@@ -634,7 +636,7 @@ async fn run_play(
 }
 
 async fn run_simple_command(
-    device: DeviceConfig,
+    _device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
     message: Message,
@@ -644,9 +646,11 @@ async fn run_simple_command(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
+    let ephemeral_id = Uuid::new_v4();
+
     send_join_request(
         &socket,
-        device.device_id,
+        ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
     )
@@ -654,7 +658,7 @@ async fn run_simple_command(
     let _ = await_join_accepted(&socket, Duration::from_secs(1)).await;
 
     let envelope = Envelope {
-        sender: device.device_id,
+        sender: ephemeral_id,
         payload: message,
     };
     let bytes = serialize(&envelope)?;
@@ -663,7 +667,7 @@ async fn run_simple_command(
 }
 
 async fn run_queue(
-    device: DeviceConfig,
+    _device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
 ) -> Result<()> {
@@ -672,10 +676,12 @@ async fn run_queue(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
+    let ephemeral_id = Uuid::new_v4();
+
     println!("Requesting queue state for room {}...", room_code);
     send_join_request(
         &socket,
-        device.device_id,
+        ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
     )
@@ -720,7 +726,7 @@ async fn run_queue(
 }
 
 async fn run_sync_status(
-    device: DeviceConfig,
+    _device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
 ) -> Result<()> {
@@ -729,10 +735,12 @@ async fn run_sync_status(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
-    println!("Collecting sync status for room {} (2s burst)...", room_code);
+    let ephemeral_id = Uuid::new_v4();
+
+    println!("Collecting sync status for room {}...", room_code);
     send_join_request(
         &socket,
-        device.device_id,
+        ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
     )
@@ -752,6 +760,7 @@ async fn run_sync_status(
                         for peer in peer_list {
                             peer_offsets.insert(peer.device_id, peer.clock_offset_us);
                         }
+                        break;
                     }
                     Message::Heartbeat { .. } => {
                         // Heartbeat doesn't carry offset, but marks presence. 
@@ -782,7 +791,7 @@ async fn run_sync_status(
 }
 
 async fn run_debug(
-    device: DeviceConfig,
+    _device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
 ) -> Result<()> {
@@ -791,10 +800,12 @@ async fn run_debug(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
     socket.set_broadcast(true)?;
 
+    let ephemeral_id = Uuid::new_v4();
+
     println!("Collecting debug metrics for room {} (3s burst)...", room_code);
     send_join_request(
         &socket,
-        device.device_id,
+        ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
     )
