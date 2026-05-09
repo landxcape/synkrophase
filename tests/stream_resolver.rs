@@ -40,7 +40,7 @@ async fn resolve_returns_url_and_expiry() {
 #[tokio::test]
 async fn get_title_returns_trimmed_output() {
     let script = write_script(
-        "#!/bin/sh\nif [ \"$1\" = \"--get-title\" ]; then\n  printf 'Test Title\\n'\nelse\n  printf 'https://example.com\\n'\nfi\n",
+        "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"--get-title\" ]; then\n    printf 'Test Title\\n'\n    exit 0\n  fi\ndone\nprintf 'https://example.com\\n'\n",
     );
     let resolver = StreamResolver::new(script);
 

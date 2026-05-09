@@ -35,6 +35,10 @@ impl PlaybackBackend for MockBackend {
         Ok(())
     }
 
+    fn position_us(&self) -> i64 {
+        0
+    }
+
     fn set_rate(&self, rate: f32) -> synkrophase::error::Result<()> {
         self.calls.lock().unwrap().push(BackendCall::Rate(rate));
         Ok(())

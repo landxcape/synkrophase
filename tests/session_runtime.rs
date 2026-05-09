@@ -44,6 +44,9 @@ impl PlaybackBackend for MockBackend {
             .push(BackendCall::Load(stream_url.to_string()));
         Ok(())
     }
+    fn position_us(&self) -> i64 {
+        0
+    }
     fn set_rate(&self, rate: f32) -> Result<()> {
         self.calls.lock().unwrap().push(BackendCall::Rate(rate));
         Ok(())
@@ -92,7 +95,7 @@ async fn process_envelope_applies_stream_and_sync_anchor() {
     ));
     let follower = Arc::new(FollowerSyncRuntime::new(controller));
 
-    let runtime = SessionMessageRuntime::new(Arc::clone(&session)).with_follower_sync(follower);
+    let runtime = SessionMessageRuntime::new(Arc::clone(&session), None).with_follower_sync(follower);
     let envelope = Envelope {
         sender: Uuid::new_v4(),
         payload: Message::SyncAnchor(SyncAnchor {
@@ -131,7 +134,7 @@ async fn runtime_handles_playback_controls_via_socket() {
     playback.resume().unwrap(); // Start in playing state
 
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session)).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), None).with_playback(Arc::clone(&playback));
 
     let runtime_socket = Arc::clone(&socket);
     let handle = tokio::spawn(async move {
@@ -143,7 +146,7 @@ async fn runtime_handles_playback_controls_via_socket() {
     // Send Pause
     let env = Envelope {
         sender: Uuid::new_v4(),
-        payload: Message::Pause,
+        payload: Message::Pause { actor: Uuid::nil() },
     };
     let bytes = serialize(&env).unwrap();
     client_socket.send_to(&bytes, addr).await.unwrap();
@@ -156,7 +159,7 @@ async fn runtime_handles_playback_controls_via_socket() {
     // Send Resume
     let env = Envelope {
         sender: Uuid::new_v4(),
-        payload: Message::Resume,
+        payload: Message::Resume { actor: Uuid::nil() },
     };
     let bytes = serialize(&env).unwrap();
     client_socket.send_to(&bytes, addr).await.unwrap();
@@ -191,7 +194,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
     let backend = MockBackend::default();
     let playback = Arc::new(PlaybackEngine::new(Box::new(backend)));
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session)).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), None).with_playback(Arc::clone(&playback));
 
     let runtime_socket = Arc::clone(&leader_socket);
     let handle = tokio::spawn(async move {
@@ -203,7 +206,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
     // Send Pause to leader from a "CLI" or another peer
     let env = Envelope {
         sender: Uuid::new_v4(),
-        payload: Message::Pause,
+        payload: Message::Pause { actor: Uuid::nil() },
     };
     let bytes = serialize(&env).unwrap();
     client_socket.send_to(&bytes, leader_addr).await.unwrap();
@@ -217,7 +220,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
 
     let envelope = deserialize(&buf[..len]).unwrap();
     assert_eq!(envelope.sender, leader_id);
-    assert_eq!(envelope.payload, Message::Pause);
+    assert_eq!(envelope.payload, Message::Pause { actor: Uuid::nil() });
 
     handle.abort();
 }
@@ -293,7 +296,7 @@ async fn stream_url_refresh_does_not_restart_playback() {
     let backend = MockBackend::default();
     let playback = Arc::new(PlaybackEngine::new(Box::new(backend.clone())));
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session)).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), None).with_playback(Arc::clone(&playback));
 
     let runtime_socket = Arc::clone(&socket);
     let handle = tokio::spawn(async move {

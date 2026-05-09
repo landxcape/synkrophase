@@ -18,6 +18,9 @@ impl PlaybackBackend for MockBackend {
     fn load_and_play(&self, _stream_url: &str) -> synkrophase::error::Result<()> {
         Ok(())
     }
+    fn position_us(&self) -> i64 {
+        0
+    }
     fn set_rate(&self, _rate: f32) -> synkrophase::error::Result<()> {
         Ok(())
     }
@@ -42,7 +45,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
     let follower_id = Uuid::new_v4();
 
     let leader_session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
-    let leader_runtime = SessionMessageRuntime::new(Arc::clone(&leader_session));
+    let leader_runtime = SessionMessageRuntime::new(Arc::clone(&leader_session), None);
 
     let leader_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     leader_socket.set_broadcast(true).unwrap();
@@ -152,7 +155,7 @@ async fn heartbeats_update_peer_registry_and_election_can_flip_leader() {
         }],
         QueueState::default(),
     ));
-    let runtime_a = SessionMessageRuntime::new(Arc::clone(&session_a));
+    let runtime_a = SessionMessageRuntime::new(Arc::clone(&session_a), None);
 
     let socket_a = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     socket_a.set_broadcast(true).unwrap();
