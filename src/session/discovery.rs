@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::error::Result;
 
 const SERVICE_TYPE: &str = "_synkrophase._udp.local.";
-const BROWSE_WINDOW: Duration = Duration::from_millis(250);
+const BROWSE_WINDOW: Duration = Duration::from_millis(2000);
 
 pub struct Discovery {
     daemon: ServiceDaemon,

@@ -13,18 +13,32 @@ use crate::protocol::messages::{Envelope, Message, PeerInfo, deserialize, serial
 use crate::session::{FollowerSyncRuntime, SessionState};
 use crate::sync::controller::ClockSource;
 
+use rustyline_async::SharedWriter;
+
 pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
     follower_sync: Option<Arc<FollowerSyncRuntime>>,
     playback: Option<Arc<PlaybackEngine>>,
+    stdout: Option<SharedWriter>,
+}
+
+pub fn print_event(stdout: Option<&SharedWriter>, msg: &str) {
+    if let Some(out) = stdout {
+        use std::io::Write;
+        let mut out = out.clone();
+        let _ = writeln!(out, "{}", msg);
+    } else {
+        println!("{}", msg);
+    }
 }
 
 impl SessionMessageRuntime {
-    pub fn new(session: Arc<SessionState>) -> Self {
+    pub fn new(session: Arc<SessionState>, stdout: Option<SharedWriter>) -> Self {
         Self {
             session,
             follower_sync: None,
             playback: None,
+            stdout,
         }
     }
 
@@ -118,7 +132,7 @@ impl SessionMessageRuntime {
             // Allow control messages from same device (CLI use case)
             let allowed = matches!(
                 envelope.payload,
-                Message::Pause | Message::Resume | Message::Play | Message::QueueProposal(_)
+                Message::Pause { .. } | Message::Resume { .. } | Message::Play { .. } | Message::QueueProposal(_)
             );
             if !allowed {
                 return Ok(());
@@ -127,15 +141,18 @@ impl SessionMessageRuntime {
 
         match envelope.payload {
             Message::JoinRequest { room_code } => {
-                if !self.session.is_leader() {
-                    return Ok(());
-                }
                 if room_code != self.session.room_code() {
                     return Ok(());
                 }
 
                 self.session
                     .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+
+                if !self.session.is_leader() {
+                    return Ok(());
+                }
+
+                print_event(self.stdout.as_ref(), &format!("[System] Peer joined: {}", envelope.sender));
 
                 let mut peer_list = self.session.snapshot().peer_list;
                 peer_list.push(self.self_peer_info());
@@ -181,17 +198,20 @@ impl SessionMessageRuntime {
                 peer_list,
                 queue_state,
             } => {
+                print_event(self.stdout.as_ref(), "[System] Joined room successfully.");
                 self.session
                     .accept_join_accepted(envelope.sender, peer_list, queue_state);
                 Ok(())
             }
             Message::PeerJoined(peer) => {
                 if peer.device_id != self.session.self_id() {
+                    print_event(self.stdout.as_ref(), &format!("[System] Peer joined: {}", peer.device_id));
                     self.session.record_peer_seen(peer);
                 }
                 Ok(())
             }
             Message::PeerLeft(peer_id) => {
+                print_event(self.stdout.as_ref(), &format!("[System] Peer left: {}", peer_id));
                 self.session.remove_peer(&peer_id);
                 Ok(())
             }
@@ -223,12 +243,24 @@ impl SessionMessageRuntime {
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
 
-                let updated = self.session.handle_queue_proposal(command)?;
+                let updated = self.session.handle_queue_proposal(command.clone())?;
+                
+                let action = match command {
+                    crate::protocol::messages::QueueCommand::Add(_) => "queued a track",
+                    crate::protocol::messages::QueueCommand::Skip => "skipped the current track",
+                    crate::protocol::messages::QueueCommand::Remove { .. } => "removed a track",
+                };
+                let log_msg = format!("[System] {} {}", envelope.sender, action);
+                print_event(self.stdout.as_ref(), &log_msg);
+                self.send_to_peers(socket, Message::SystemLog(log_msg)).await?;
+                
+                print_event(self.stdout.as_ref(), &format!("[System] Queue updated ({} upcoming)", updated.upcoming.len()));
                 self.send_to_peers(socket, Message::QueueUpdate(updated))
                     .await?;
                 Ok(())
             }
             Message::StreamUrl(stream) => {
+                print_event(self.stdout.as_ref(), "[System] Starting playback...");
                 self.session.accept_stream_url(stream.clone());
                 if let Some(playback) = &self.playback {
                     let status = playback.status();
@@ -237,50 +269,60 @@ impl SessionMessageRuntime {
                         let playback = Arc::clone(playback);
                         let url = stream.url.clone();
                         let track_id = stream.track_id.clone();
+                        let stdout = self.stdout.clone();
                         tokio::task::spawn_blocking(move || {
-                            let _ = playback.load_and_play(&track_id, &url);
+                            if let Err(err) = playback.load_and_play(&track_id, &url) {
+                                print_event(stdout.as_ref(), &format!("[System] Playback error: {}", err));
+                            }
                         });
                     }
                 }
                 Ok(())
             }
-            Message::Pause => {
+            Message::Pause { actor } => {
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
+                print_event(self.stdout.as_ref(), &format!("[System] Playback paused by {}", actor));
                 if let Some(playback) = &self.playback {
                     playback.pause()?;
                 }
                 if self.session.is_leader() {
-                    self.send_to_peers(socket, Message::Pause).await?;
+                    self.send_to_peers(socket, Message::Pause { actor }).await?;
                 }
                 Ok(())
             }
-            Message::Resume => {
+            Message::Resume { actor } => {
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
+                print_event(self.stdout.as_ref(), &format!("[System] Playback resumed by {}", actor));
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
                 if self.session.is_leader() {
-                    self.send_to_peers(socket, Message::Resume).await?;
+                    self.send_to_peers(socket, Message::Resume { actor }).await?;
                 }
                 Ok(())
             }
-            Message::Play => {
+            Message::Play { actor } => {
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
+                print_event(self.stdout.as_ref(), &format!("[System] Playback started by {}", actor));
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
                 if self.session.is_leader() {
-                    self.send_to_peers(socket, Message::Play).await?;
+                    self.send_to_peers(socket, Message::Play { actor }).await?;
                 }
+                Ok(())
+            }
+            Message::SystemLog(log) => {
+                print_event(self.stdout.as_ref(), &log);
                 Ok(())
             }
             message => {
@@ -363,7 +405,7 @@ impl LeaderAnchorBroadcaster {
 
     pub async fn run_broadcast_loop(&self, socket: Arc<UdpSocket>, sender: Uuid) -> Result<()> {
         loop {
-            let _ = self.broadcast_once(&socket, sender).await?;
+            let _ = self.broadcast_once(&socket, sender).await;
             sleep(Duration::from_secs(self.config.anchor_broadcast_secs)).await;
         }
     }
