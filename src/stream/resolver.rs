@@ -22,7 +22,12 @@ impl StreamResolver {
 
     pub async fn resolve(&self, youtube_url: &str) -> Result<ResolvedStream> {
         let output = self
-            .run_command(["-f", "bestaudio", "--get-url", youtube_url])
+            .run_command([
+                "-f",
+                "bestaudio[protocol^=http]/best[protocol^=http]",
+                "--get-url",
+                youtube_url,
+            ])
             .await?;
         let url = first_line(&output)?;
 
@@ -39,6 +44,7 @@ impl StreamResolver {
 
     async fn run_command<const N: usize>(&self, args: [&str; N]) -> Result<String> {
         let output = Command::new(&self.ytdlp_path)
+            .args(["--cookies-from-browser", "chrome"])
             .args(args)
             .output()
             .await
