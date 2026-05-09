@@ -33,6 +33,7 @@ impl Default for PlaybackStatus {
 
 pub trait PlaybackBackend: Send + Sync {
     fn load_and_play(&self, stream_url: &str) -> Result<()>;
+    fn position_us(&self) -> i64;
     fn set_rate(&self, rate: f32) -> Result<()>;
     fn seek(&self, position_us: i64) -> Result<()>;
     fn pause(&self) -> Result<()>;
@@ -69,7 +70,7 @@ impl PlaybackEngine {
     }
 
     pub fn position(&self) -> i64 {
-        self.status.read().unwrap().position_us
+        self.backend.position_us()
     }
 
     pub fn position_snapshot(&self) -> PlaybackSnapshot {
@@ -181,6 +182,14 @@ impl PlaybackBackend for RodioPlaybackBackend {
             player,
         });
         Ok(())
+    }
+
+    fn position_us(&self) -> i64 {
+        let guard = self.inner.lock().unwrap();
+        guard
+            .as_ref()
+            .map(|inner| inner.player.get_pos().as_micros() as i64)
+            .unwrap_or(0)
     }
 
     fn set_rate(&self, rate: f32) -> Result<()> {
