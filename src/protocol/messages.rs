@@ -34,14 +34,15 @@ pub enum Message {
     TransferLeadership {
         to: Uuid,
     },
-    Play,
-    Pause,
-    Resume,
+    Play { actor: Uuid },
+    Pause { actor: Uuid },
+    Resume { actor: Uuid },
     Skip,
     QueueProposal(QueueCommand),
     QueueUpdate(QueueState),
     StreamUrl(StreamUrl),
     SyncAnchor(SyncAnchor),
+    SystemLog(String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -190,9 +191,9 @@ mod tests {
     #[test]
     fn test_playback_controls_roundtrip() {
         let controls = vec![
-            Message::Play,
-            Message::Pause,
-            Message::Resume,
+            Message::Play { actor: Uuid::nil() },
+            Message::Pause { actor: Uuid::nil() },
+            Message::Resume { actor: Uuid::nil() },
             Message::Skip,
         ];
         for payload in controls {
