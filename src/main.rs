@@ -674,13 +674,13 @@ fn build_playback_engine() -> PlaybackEngine {
 }
 
 fn load_device_config(name_opt: Option<String>, ephemeral: bool) -> Result<DeviceConfig> {
-    let home = env::var_os("HOME").ok_or_else(|| {
+    let home = home::home_dir().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "HOME environment variable not set",
+            "Could not find home directory",
         )
     })?;
-    let data_dir = PathBuf::from(home).join(".synkrophase");
+    let data_dir = home.join(".synkrophase");
     fs::create_dir_all(&data_dir)?;
 
     let name = name_opt
