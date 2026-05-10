@@ -203,17 +203,19 @@ impl PlaybackBackend for RodioPlaybackBackend {
             let mut devices = host.output_devices().map_err(|e| {
                 crate::error::SynkroError::Playback(format!("Host error: {}", e))
             })?;
-            devices.nth(idx).ok_or_else(|| {
+            let device = devices.nth(idx).ok_or_else(|| {
                 crate::error::SynkroError::Playback(format!("Device index {} not found", idx))
-            })
-            .and_then(|device| rodio::DeviceSinkBuilder::open_sink(&device).map_err(|e| e.into()))
+            })?;
+            rodio::DeviceSinkBuilder::from_device(device)
+                .and_then(|builder| builder.open())
+                .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))
         } else {
-            rodio::DeviceSinkBuilder::open_default_sink().map_err(|e| e.into())
+            rodio::DeviceSinkBuilder::open_default_sink()
+                .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))
         }
         .map_err(|err| {
-            let e = crate::error::SynkroError::Playback(format!("Hardware error: {}", err));
-            eprintln!("[Audio] Error: {}", e);
-            e
+            eprintln!("[Audio] Error: {}", err);
+            err
         })?;
         
         let player = rodio::Player::connect_new(sink_handle.mixer());
