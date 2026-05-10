@@ -42,6 +42,7 @@ impl PeerRegistry {
                 existing.addr = addr;
             }
             existing.info.clock_offset_us = info.clock_offset_us;
+            existing.info.role = info.role;
             if info.name != "Unknown" {
                 existing.info.name = info.name.clone();
             }

@@ -214,13 +214,16 @@ impl SessionMessageRuntime {
                 }
 
                 // Notify other peers about the new arrival
-                let peer_joined_env = Envelope {
+                let notification_msg = format!("{} joined the room.", name);
+                let notification_env = Envelope {
                     sender: self.session.self_id(),
-                    payload: Message::PeerJoined(peer_info.clone()),
+                    payload: Message::Notification {
+                        text: notification_msg,
+                    },
                 };
-                if let Ok(bytes) = serialize(&peer_joined_env) {
+                if let Ok(bytes) = serialize(&notification_env) {
                     for (peer_id, entry) in self.session.all_alive_peers() {
-                        // Don't send PeerJoined to the person who just joined (they got JoinAccepted)
+                        // Don't send notification to the person who just joined (they got JoinAccepted)
                         // and don't send to ourselves.
                         if peer_id != envelope.sender && peer_id != self.session.self_id() {
                             let _ = socket.send_to(&bytes, entry.addr).await;
@@ -244,37 +247,30 @@ impl SessionMessageRuntime {
                 );
                 Ok(())
             }
-            Message::PeerJoined(peer) => {
-                if peer.device_id != self.session.self_id() {
-                    self.session.record_peer_seen(peer.clone());
-                    if self.session.role() >= Role::Moderator {
-                        print_event(
-                            self.stdout.as_ref(),
-                            &format!("[System] Peer joined: {}", self.session.display_name(&peer.device_id)),
-                        );
-                    }
-                }
+            Message::PeerJoined(_) => {
+                // Deprecated in favor of Notification broadcast
                 Ok(())
             }
             Message::PeerLeft(peer_id) => {
-                let peer_name = self.session.display_name(&peer_id);
-                if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!("[System] Peer left: {}", peer_name),
-                    );
+                if self.session.is_leader() {
+                    let peer_name = self.session.display_name(&peer_id);
+                    if self.session.role() >= Role::Moderator {
+                        print_event(
+                            self.stdout.as_ref(),
+                            &format!("[System] Peer left: {}", peer_name),
+                        );
+                    }
                 }
                 self.session.remove_peer(&peer_id);
                 Ok(())
             }
-            Message::Heartbeat {
-                room_code,
-                info,
-            } => {
+            Message::Heartbeat { room_code, info } => {
                 if room_code != self.session.room_code() {
                     return Ok(());
                 }
-                self.session.record_peer_heartbeat(info.clone(), src);
+                if self.session.is_leader() || info.role == Role::Leader {
+                    self.session.record_peer_heartbeat(info.clone(), src);
+                }
                 if info.role == Role::Leader {
                     self.session.set_leader_id(envelope.sender);
                 }
@@ -284,10 +280,16 @@ impl SessionMessageRuntime {
                 self.session.set_leader_id(leader_id);
                 if self.session.role() >= Role::Moderator {
                     if leader_id == self.session.self_id() {
-                        print_event(self.stdout.as_ref(), "[System] You have been elected as the Leader!");
+                        print_event(
+                            self.stdout.as_ref(),
+                            "[System] You have been elected as the Leader!",
+                        );
                     } else {
                         let name = self.session.display_name(&leader_id);
-                        print_event(self.stdout.as_ref(), &format!("[System] {} is now the Leader.", name));
+                        print_event(
+                            self.stdout.as_ref(),
+                            &format!("[System] {} is now the Leader.", name),
+                        );
                     }
                 }
                 Ok(())
@@ -295,14 +297,18 @@ impl SessionMessageRuntime {
             Message::QueueProposal(command) => {
                 let role = sender_role.unwrap_or(Role::Listener);
                 if role < Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[Warning] Rejected queue proposal from {} due to insufficient role ({:?})",
-                            self.session.display_name(&envelope.sender),
-                            role
-                        ),
-                    );
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can modify the queue."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                    }
                     return Ok(());
                 }
 
@@ -311,8 +317,10 @@ impl SessionMessageRuntime {
                 }
 
                 if envelope.sender != self.session.self_id() {
-                    self.session
-                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let mut info = Self::peer_info_for(envelope.sender);
+                    info.role = role;
+                    self.session.record_peer_heartbeat(info, src);
                 }
 
                 let updated = self.session.handle_queue_proposal(command.clone())?;
@@ -322,7 +330,11 @@ impl SessionMessageRuntime {
                     crate::protocol::messages::QueueCommand::Skip => "skipped the current track",
                     crate::protocol::messages::QueueCommand::Remove { .. } => "removed a track",
                 };
-                let log_msg = format!("[System] {} {}", envelope.sender, action);
+                let log_msg = format!(
+                    "[System] {} {}",
+                    self.session.display_name(&envelope.sender),
+                    action
+                );
                 if self.session.role() >= Role::Moderator {
                     print_event(self.stdout.as_ref(), &log_msg);
                 }
@@ -342,7 +354,17 @@ impl SessionMessageRuntime {
                     .await?;
                 Ok(())
             }
+            Message::QueueUpdate(update) => {
+                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
+                    return Ok(());
+                }
+                let _ = self.session.accept_queue_update(update);
+                Ok(())
+            }
             Message::StreamUrl(stream) => {
+                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
+                    return Ok(());
+                }
                 print_event(self.stdout.as_ref(), "[System] Starting playback...");
                 self.session.accept_stream_url(stream.clone());
                 if let Some(playback) = &self.playback {
@@ -366,76 +388,183 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::Pause { actor } => {
-                let role = sender_role.unwrap_or(Role::Listener);
-                if role < Role::Moderator {
+                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
 
-                if envelope.sender != self.session.self_id() {
-                    self.session
-                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can control playback."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
                 }
-                if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!("[System] Playback paused by {}", actor),
-                    );
+
+                if self.session.is_leader() && envelope.sender != self.session.self_id() {
+                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let mut info = Self::peer_info_for(envelope.sender);
+                    info.role = role;
+                    self.session.record_peer_heartbeat(info, src);
                 }
+
                 if let Some(playback) = &self.playback {
                     playback.pause()?;
                 }
-                if self.session.is_leader() && envelope.sender == actor {
+
+                if self.session.role() >= Role::Moderator {
+                    print_event(
+                        self.stdout.as_ref(),
+                        &format!(
+                            "[System] Playback paused by {}",
+                            self.session.display_name(&actor)
+                        ),
+                    );
+                }
+
+                if self.session.is_leader() {
                     self.send_to_peers(socket, Message::Pause { actor }).await?;
                 }
                 Ok(())
             }
             Message::Resume { actor } => {
-                let role = sender_role.unwrap_or(Role::Listener);
-                if role < Role::Moderator {
+                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
 
-                if envelope.sender != self.session.self_id() {
-                    self.session
-                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can control playback."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
                 }
-                if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!("[System] Playback resumed by {}", actor),
-                    );
+
+                if self.session.is_leader() && envelope.sender != self.session.self_id() {
+                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let mut info = Self::peer_info_for(envelope.sender);
+                    info.role = role;
+                    self.session.record_peer_heartbeat(info, src);
                 }
+
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
-                if self.session.is_leader() && envelope.sender == actor {
+
+                if self.session.role() >= Role::Moderator {
+                    print_event(
+                        self.stdout.as_ref(),
+                        &format!(
+                            "[System] Playback resumed by {}",
+                            self.session.display_name(&actor)
+                        ),
+                    );
+                }
+
+                if self.session.is_leader() {
                     self.send_to_peers(socket, Message::Resume { actor })
                         .await?;
                 }
                 Ok(())
             }
             Message::Play { actor } => {
-                let role = sender_role.unwrap_or(Role::Listener);
-                if role < Role::Moderator {
+                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
 
-                if envelope.sender != self.session.self_id() {
-                    self.session
-                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can control playback."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
                 }
-                if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!("[System] Playback started by {}", actor),
-                    );
+
+                if self.session.is_leader() && envelope.sender != self.session.self_id() {
+                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let mut info = Self::peer_info_for(envelope.sender);
+                    info.role = role;
+                    self.session.record_peer_heartbeat(info, src);
                 }
+
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
-                if self.session.is_leader() && envelope.sender == actor {
+
+                if self.session.role() >= Role::Moderator {
+                    print_event(
+                        self.stdout.as_ref(),
+                        &format!(
+                            "[System] Playback started by {}",
+                            self.session.display_name(&actor)
+                        ),
+                    );
+                }
+
+                if self.session.is_leader() {
                     self.send_to_peers(socket, Message::Play { actor }).await?;
                 }
+                Ok(())
+            }
+            Message::Skip => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can skip tracks.".into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
+                }
+
+                if !self.session.is_leader() {
+                    return Ok(());
+                }
+
+                let updated =
+                    self.session
+                        .handle_queue_proposal(crate::protocol::messages::QueueCommand::Skip)?;
+                let log_msg = format!(
+                    "[System] {} skipped the track",
+                    self.session.display_name(&envelope.sender)
+                );
+                print_event(self.stdout.as_ref(), &log_msg);
+                self.send_to_peers(socket, Message::SystemLog(log_msg))
+                    .await?;
+                self.send_to_peers(socket, Message::QueueUpdate(updated))
+                    .await?;
                 Ok(())
             }
             Message::SystemLog(log) => {
@@ -444,42 +573,53 @@ impl SessionMessageRuntime {
                 }
                 Ok(())
             }
-            Message::Chat { sender, name: _, text } => {
-                if envelope.sender != self.session.self_id() {
-                    self.session
-                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
-                }
-                let display_name = self.session.display_name(&sender);
-                print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
-                if self.session.is_leader() && envelope.sender == sender {
-                    // Relay to everyone EXCEPT the original sender to avoid double-printing
-                    let relay_message = Message::Chat {
-                        sender,
-                        name: display_name,
-                        text: text.clone(),
-                    };
-                    let envelope = Envelope {
-                        sender: self.session.self_id(),
-                        payload: relay_message,
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        for (peer_id, entry) in self.session.all_alive_peers() {
-                            if peer_id != sender {
-                                let _ = socket.send_to(&bytes, entry.addr).await;
-                            }
-                        }
+            Message::Chat {
+                sender,
+                name: _,
+                text,
+            } => {
+                if self.session.is_leader() {
+                    if envelope.sender != self.session.self_id() {
+                        let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                        let mut info = Self::peer_info_for(envelope.sender);
+                        info.role = role;
+                        self.session.record_peer_heartbeat(info, src);
                     }
+
+                    let display_name = self.session.display_name(&sender);
+                    // 1. Local display
+                    print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
+                    // 2. Broadcast as ChatBroadcast
+                    self.send_to_peers(
+                        socket,
+                        Message::ChatBroadcast {
+                            display_name,
+                            text: text.clone(),
+                        },
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            Message::ChatBroadcast { display_name, text } => {
+                print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
+                Ok(())
+            }
+            Message::Notification { text } => {
+                print_event(self.stdout.as_ref(), &text);
+                Ok(())
+            }
+            Message::SyncAnchor(anchor) => {
+                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
+                    return Ok(());
+                }
+                self.session.accept_sync_anchor(anchor.clone());
+                if let Some(follower_sync) = &self.follower_sync {
+                    follower_sync.ingest_message(&self.session, &Message::SyncAnchor(anchor));
                 }
                 Ok(())
             }
             message => {
-                if matches!(message, Message::SyncAnchor(_)) {
-                    let role = sender_role.unwrap_or(Role::Listener);
-                    if role < Role::Leader {
-                        return Ok(());
-                    }
-                }
-
                 // Best-effort application message handling. Stale queue updates should not
                 // stop the receive loop.
                 match self.session.apply_message(message.clone()) {
