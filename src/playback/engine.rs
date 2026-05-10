@@ -1,4 +1,5 @@
 use std::sync::RwLock;
+use rodio::{OutputStream, OutputStreamHandle, Sink};
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
 use crate::clock::sync::local_now;
@@ -130,9 +131,9 @@ pub struct RodioPlaybackBackend {
 }
 
 struct RodioInner {
-    _stream: rodio::OutputStream,
-    _handle: rodio::OutputStreamHandle,
-    sink: rodio::Sink,
+    _stream: OutputStream,
+    _handle: OutputStreamHandle,
+    sink: Sink,
 }
 
 impl RodioPlaybackBackend {
@@ -207,9 +208,9 @@ impl PlaybackBackend for RodioPlaybackBackend {
             let device = devices.nth(idx).ok_or_else(|| {
                 crate::error::SynkroError::Playback(format!("Device index {} not found", idx))
             })?;
-            rodio::OutputStream::try_from_device(&device)
+            OutputStream::try_from_device(&device)
         } else {
-            rodio::OutputStream::try_default()
+            OutputStream::try_default()
         }
         .map_err(|err| {
             let e = crate::error::SynkroError::Playback(format!("Hardware error: {}", err));
@@ -217,7 +218,7 @@ impl PlaybackBackend for RodioPlaybackBackend {
             e
         })?;
         
-        let sink = rodio::Sink::try_new(&handle).map_err(|e| crate::error::SynkroError::Playback(e.to_string()))?;
+        let sink = Sink::try_new(&handle).map_err(|e| crate::error::SynkroError::Playback(e.to_string()))?;
         sink.append(decoder);
         sink.play();
         println!("[Audio] Playback started.");
