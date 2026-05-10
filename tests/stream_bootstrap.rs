@@ -21,6 +21,7 @@ fn temp_dir(name: &str) -> PathBuf {
 fn config_with_dir(data_dir: PathBuf) -> DeviceConfig {
     DeviceConfig {
         device_id: Uuid::nil(),
+        name: "TestUser".into(),
         data_dir,
         ytdlp_path: None,
     }
@@ -55,6 +56,7 @@ fn ensure_ytdlp_prefers_configured_path() {
 
     let config = DeviceConfig {
         device_id: Uuid::nil(),
+        name: "TestUser".to_string(),
         data_dir,
         ytdlp_path: Some(binary.clone()),
     };

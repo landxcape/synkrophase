@@ -45,7 +45,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
     let follower_id = Uuid::new_v4();
 
     let leader_session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
-    let leader_runtime = SessionMessageRuntime::new(Arc::clone(&leader_session), None);
+    let leader_runtime = SessionMessageRuntime::new(Arc::clone(&leader_session), None, "TestUser".to_string());
 
     let leader_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     leader_socket.set_broadcast(true).unwrap();
@@ -71,6 +71,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
         sender: follower_id,
         payload: Message::JoinRequest {
             room_code: "ROOM42".into(),
+            name: "Follower".into(),
         },
     };
     let bytes = synkrophase::protocol::messages::serialize(&join).unwrap();
@@ -99,6 +100,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
     leader_session.record_peer_heartbeat(
         synkrophase::protocol::messages::PeerInfo {
             device_id: follower_id,
+            name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
         },
@@ -148,14 +150,16 @@ async fn heartbeats_update_peer_registry_and_election_can_flip_leader() {
         "ROOM42".into(),
         id_a,
         id_b,
+        "127.0.0.1:8080".parse().unwrap(),
         vec![synkrophase::protocol::messages::PeerInfo {
             device_id: id_b,
+            name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
         }],
         QueueState::default(),
     ));
-    let runtime_a = SessionMessageRuntime::new(Arc::clone(&session_a), None);
+    let runtime_a = SessionMessageRuntime::new(Arc::clone(&session_a), None, "TestUser".to_string());
 
     let socket_a = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     socket_a.set_broadcast(true).unwrap();

@@ -78,6 +78,7 @@ async fn process_envelope_applies_stream_and_sync_anchor() {
         "ROOM42".into(),
         Uuid::new_v4(),
         Uuid::new_v4(),
+        "127.0.0.1:8080".parse().unwrap(),
         vec![],
         QueueState::default(),
     ));
@@ -95,7 +96,8 @@ async fn process_envelope_applies_stream_and_sync_anchor() {
     ));
     let follower = Arc::new(FollowerSyncRuntime::new(controller));
 
-    let runtime = SessionMessageRuntime::new(Arc::clone(&session), None).with_follower_sync(follower);
+    let runtime =
+        SessionMessageRuntime::new(Arc::clone(&session), None, "TestUser".to_string()).with_follower_sync(follower);
     let envelope = Envelope {
         sender: Uuid::new_v4(),
         payload: Message::SyncAnchor(SyncAnchor {
@@ -134,7 +136,7 @@ async fn runtime_handles_playback_controls_via_socket() {
     playback.resume().unwrap(); // Start in playing state
 
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session), None).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), None, "TestUser".to_string()).with_playback(Arc::clone(&playback));
 
     let runtime_socket = Arc::clone(&socket);
     let handle = tokio::spawn(async move {
@@ -185,6 +187,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
     session.record_peer_heartbeat(
         synkrophase::protocol::messages::PeerInfo {
             device_id: Uuid::new_v4(),
+            name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
         },
@@ -194,7 +197,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
     let backend = MockBackend::default();
     let playback = Arc::new(PlaybackEngine::new(Box::new(backend)));
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session), None).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), None, "TestUser".to_string()).with_playback(Arc::clone(&playback));
 
     let runtime_socket = Arc::clone(&leader_socket);
     let handle = tokio::spawn(async move {
@@ -204,9 +207,10 @@ async fn leader_broadcasts_playback_controls_to_peers() {
     let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
     // Send Pause to leader from a "CLI" or another peer
+    let sender_id = Uuid::new_v4();
     let env = Envelope {
-        sender: Uuid::new_v4(),
-        payload: Message::Pause { actor: Uuid::nil() },
+        sender: sender_id,
+        payload: Message::Pause { actor: sender_id },
     };
     let bytes = serialize(&env).unwrap();
     client_socket.send_to(&bytes, leader_addr).await.unwrap();
@@ -220,7 +224,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
 
     let envelope = deserialize(&buf[..len]).unwrap();
     assert_eq!(envelope.sender, leader_id);
-    assert_eq!(envelope.payload, Message::Pause { actor: Uuid::nil() });
+    assert_eq!(envelope.payload, Message::Pause { actor: sender_id });
 
     handle.abort();
 }
@@ -234,6 +238,7 @@ async fn leader_anchor_broadcast_sends_sync_anchor_envelope() {
     session.record_peer_heartbeat(
         synkrophase::protocol::messages::PeerInfo {
             device_id: Uuid::new_v4(),
+            name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
         },
@@ -286,6 +291,7 @@ async fn stream_url_refresh_does_not_restart_playback() {
         "ROOM42".into(),
         Uuid::new_v4(),
         leader_id,
+        "127.0.0.1:8080".parse().unwrap(),
         vec![],
         QueueState::default(),
     ));
@@ -296,7 +302,7 @@ async fn stream_url_refresh_does_not_restart_playback() {
     let backend = MockBackend::default();
     let playback = Arc::new(PlaybackEngine::new(Box::new(backend.clone())));
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session), None).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), None, "TestUser".to_string()).with_playback(Arc::clone(&playback));
 
     let runtime_socket = Arc::clone(&socket);
     let handle = tokio::spawn(async move {
@@ -314,11 +320,19 @@ async fn stream_url_refresh_does_not_restart_playback() {
             expires_at: 100,
         }),
     };
-    client_socket.send_to(&serialize(&env_1).unwrap(), addr).await.unwrap();
+    client_socket
+        .send_to(&serialize(&env_1).unwrap(), addr)
+        .await
+        .unwrap();
 
     // Give it a moment to process
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(backend.calls(), vec![BackendCall::Load("https://cdn.example.com/audio?v=1".into())]);
+    assert_eq!(
+        backend.calls(),
+        vec![BackendCall::Load(
+            "https://cdn.example.com/audio?v=1".into()
+        )]
+    );
 
     // 2. Refresh with same track_id, different URL
     let env_2 = Envelope {
@@ -329,12 +343,20 @@ async fn stream_url_refresh_does_not_restart_playback() {
             expires_at: 200,
         }),
     };
-    client_socket.send_to(&serialize(&env_2).unwrap(), addr).await.unwrap();
+    client_socket
+        .send_to(&serialize(&env_2).unwrap(), addr)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     // Should NOT have called Load again
-    assert_eq!(backend.calls(), vec![BackendCall::Load("https://cdn.example.com/audio?v=1".into())]);
+    assert_eq!(
+        backend.calls(),
+        vec![BackendCall::Load(
+            "https://cdn.example.com/audio?v=1".into()
+        )]
+    );
 
     // 3. Different track_id SHOULD trigger load
     let env_3 = Envelope {
@@ -345,11 +367,17 @@ async fn stream_url_refresh_does_not_restart_playback() {
             expires_at: 300,
         }),
     };
-    client_socket.send_to(&serialize(&env_3).unwrap(), addr).await.unwrap();
+    client_socket
+        .send_to(&serialize(&env_3).unwrap(), addr)
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(backend.calls().len(), 2);
-    assert_eq!(backend.calls()[1], BackendCall::Load("https://cdn.example.com/audio-2".into()));
+    assert_eq!(
+        backend.calls()[1],
+        BackendCall::Load("https://cdn.example.com/audio-2".into())
+    );
 
     handle.abort();
 }

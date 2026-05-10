@@ -22,6 +22,7 @@ fn track(id: &str) -> Track {
 fn peer_info(id: Uuid) -> PeerInfo {
     PeerInfo {
         device_id: id,
+        name: "TestUser".to_string(),
         clock_offset_us: 0,
         last_seen: 0,
     }
@@ -41,6 +42,7 @@ fn join_accepted_initializes_peer_session() {
         "ROOM42".into(),
         self_id,
         leader_id,
+        "127.0.0.1:8080".parse().unwrap(),
         vec![peer_info(leader_id)],
         queue_state.clone(),
     );
@@ -62,6 +64,7 @@ fn heartbeat_expiry_re_elects_lowest_live_peer() {
         "ROOM42".into(),
         self_id,
         old_leader,
+        addr,
         vec![peer_info(old_leader), peer_info(other_peer)],
         QueueState::default(),
     );
@@ -145,6 +148,7 @@ fn apply_message_updates_stream_and_sync_anchor_state() {
         "ROOM42".into(),
         self_id,
         leader_id,
+        "127.0.0.1:8080".parse().unwrap(),
         vec![],
         QueueState::default(),
     );

@@ -82,10 +82,7 @@ fn load_and_play_sets_playing_state_and_tracks_stream() {
         vec![BackendCall::Load("https://cdn.example.com/audio".into())]
     );
     assert!(engine.is_playing());
-    assert_eq!(
-        engine.status().track_id.as_deref(),
-        Some("track-1")
-    );
+    assert_eq!(engine.status().track_id.as_deref(), Some("track-1"));
     assert_eq!(
         engine.status().stream_url.as_deref(),
         Some("https://cdn.example.com/audio")

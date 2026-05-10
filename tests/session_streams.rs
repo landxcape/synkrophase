@@ -82,7 +82,10 @@ async fn expiry_refresh_logic_triggers_re_resolution() {
     // Initial resolution
     let stream = session.resolve_current_track(&resolver).await.unwrap();
     assert_eq!(stream.expires_at, expires_soon);
-    assert_eq!(session.stream_url_for("refresh").unwrap().expires_at, expires_soon);
+    assert_eq!(
+        session.stream_url_for("refresh").unwrap().expires_at,
+        expires_soon
+    );
 
     // 2. Setup a new resolver script that returns a FRESH URL (expiring in 2 hours)
     let expires_fresh = now + 7200;
@@ -92,13 +95,13 @@ async fn expiry_refresh_logic_triggers_re_resolution() {
     let fresh_resolver = Some(StreamResolver::new(fresh_script));
 
     // 3. Run the logic from run_stream_distribution_loop manually (or a single iteration of it)
-    // We can't easily run the actual loop in a test because it's in main.rs, 
+    // We can't easily run the actual loop in a test because it's in main.rs,
     // so we'll simulate the logic here.
-    
+
     let queue = session.queue_snapshot();
     let current = queue.current.unwrap();
     let current_stream = session.stream_url_for(&current.id);
-    
+
     let needs_resolve = if let Some(stream) = current_stream {
         if stream.expires_at == 0 {
             false
@@ -113,14 +116,23 @@ async fn expiry_refresh_logic_triggers_re_resolution() {
         true
     };
 
-    assert!(needs_resolve, "Should need re-resolution because it expires in 60s (< 300s)");
+    assert!(
+        needs_resolve,
+        "Should need re-resolution because it expires in 60s (< 300s)"
+    );
 
     if needs_resolve {
-        let stream = session.resolve_current_track(&fresh_resolver.unwrap()).await.unwrap();
+        let stream = session
+            .resolve_current_track(&fresh_resolver.unwrap())
+            .await
+            .unwrap();
         assert_eq!(stream.expires_at, expires_fresh);
     }
 
-    assert_eq!(session.stream_url_for("refresh").unwrap().expires_at, expires_fresh);
+    assert_eq!(
+        session.stream_url_for("refresh").unwrap().expires_at,
+        expires_fresh
+    );
 }
 
 #[test]
@@ -131,6 +143,7 @@ fn peer_accepts_stream_url_distribution() {
         "ROOM42".into(),
         self_id,
         leader_id,
+        "127.0.0.1:8080".parse().unwrap(),
         vec![],
         Default::default(),
     );
