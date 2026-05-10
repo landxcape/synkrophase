@@ -29,6 +29,14 @@ const DEFAULT_SESSION_PORT: u16 = 5871;
 #[derive(Parser, Debug)]
 #[command(name = "synkro", about = "Synchronized LAN media playback")]
 struct Cli {
+    /// Optional nickname for this device
+    #[arg(long, global = true)]
+    pub name: Option<String>,
+
+    /// Use a random, temporary device ID (useful for local testing)
+    #[arg(long, global = true)]
+    pub ephemeral: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -155,7 +163,7 @@ impl PlaybackBackend for NoopPlaybackBackend {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let device = load_device_config()?;
+    let device = load_device_config(cli.name, cli.ephemeral)?;
     let sync_config = SyncConfig::default();
 
     match cli.command {
@@ -193,11 +201,31 @@ async fn main() -> Result<()> {
         Commands::Pause {
             room_code,
             leader_addr,
-        } => run_simple_command(device.clone(), room_code, leader_addr, Message::Pause { actor: device.device_id }).await,
+        } => {
+            run_simple_command(
+                device.clone(),
+                room_code,
+                leader_addr,
+                Message::Pause {
+                    actor: device.device_id,
+                },
+            )
+            .await
+        }
         Commands::Resume {
             room_code,
             leader_addr,
-        } => run_simple_command(device.clone(), room_code, leader_addr, Message::Resume { actor: device.device_id }).await,
+        } => {
+            run_simple_command(
+                device.clone(),
+                room_code,
+                leader_addr,
+                Message::Resume {
+                    actor: device.device_id,
+                },
+            )
+            .await
+        }
         Commands::Skip {
             room_code,
             leader_addr,
@@ -233,7 +261,13 @@ async fn main() -> Result<()> {
                     format!("invalid device_id: {e}"),
                 )
             })?;
-            run_simple_command(device, room_code, leader_addr, Message::TransferLeadership { to }).await
+            run_simple_command(
+                device,
+                room_code,
+                leader_addr,
+                Message::TransferLeadership { to },
+            )
+            .await
         }
     }
 }
@@ -273,7 +307,7 @@ async fn run_host(
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
     let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session), Some(stdout.clone())).with_playback(Arc::clone(&playback));
+        SessionMessageRuntime::new(Arc::clone(&session), Some(stdout.clone()), device.name.clone()).with_playback(Arc::clone(&playback));
     let broadcaster = LeaderAnchorBroadcaster::new(
         Arc::clone(&session),
         Arc::clone(&clock),
@@ -289,7 +323,7 @@ async fn run_host(
         &format!(
             "Hosting room {room_code} as leader {} (clock {}, session {})",
             device.device_id, clock_port, session_port
-        )
+        ),
     );
 
     let receive_task = tokio::spawn({
@@ -333,16 +367,20 @@ async fn run_host(
         let sender = device.device_id;
         let playback = Arc::clone(&playback);
         let stdout = stdout.clone();
-        async move { run_stream_distribution_loop(session, socket, sender, resolver, playback, stdout).await }
+        async move {
+            run_stream_distribution_loop(session, socket, sender, resolver, playback, stdout).await
+        }
     });
 
     let repl_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
-        let leader_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), session_port));
+        let leader_addr =
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), session_port));
         let rl_stdout = stdout.clone();
-        async move { run_repl(session, socket, sender, leader_addr, rl, rl_stdout).await }
+        let name = device.name.clone();
+        async move { run_repl(session, socket, sender, leader_addr, rl, rl_stdout, name).await }
     });
 
     tokio::select! {
@@ -442,8 +480,10 @@ async fn run_join(
         room_code.clone(),
         device.device_id,
         resolved_leader_id,
+        resolved_leader_addr,
         vec![synkrophase::protocol::messages::PeerInfo {
             device_id: resolved_leader_id,
+            name: "Leader".into(),
             clock_offset_us: 0,
             last_seen: 0,
         }],
@@ -462,7 +502,7 @@ async fn run_join(
 
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
-    let runtime = SessionMessageRuntime::new(Arc::clone(&session), Some(stdout.clone()))
+    let runtime = SessionMessageRuntime::new(Arc::clone(&session), Some(stdout.clone()), device.name.clone())
         .with_follower_sync(Arc::clone(&follower_sync))
         .with_playback(Arc::clone(&playback));
 
@@ -471,7 +511,7 @@ async fn run_join(
         &format!(
             "Joining room {room_code} as follower {} via leader {resolved_leader_addr}",
             device.device_id
-        )
+        ),
     );
 
     send_join_request(
@@ -479,6 +519,7 @@ async fn run_join(
         device.device_id,
         resolved_leader_addr,
         room_code.clone(),
+        device.name.clone(),
     )
     .await?;
 
@@ -510,7 +551,19 @@ async fn run_join(
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
         let rl_stdout = stdout.clone();
-        async move { run_repl(session, socket, sender, resolved_leader_addr, rl, rl_stdout).await }
+        let name = device.name.clone();
+        async move {
+            run_repl(
+                session,
+                socket,
+                sender,
+                resolved_leader_addr,
+                rl,
+                rl_stdout,
+                name,
+            )
+            .await
+        }
     });
 
     tokio::select! {
@@ -587,10 +640,11 @@ async fn send_join_request(
     self_id: Uuid,
     leader_addr: SocketAddr,
     room_code: String,
+    name: String,
 ) -> Result<()> {
     let envelope = Envelope {
         sender: self_id,
-        payload: Message::JoinRequest { room_code },
+        payload: Message::JoinRequest { room_code, name },
     };
     let bytes = serialize(&envelope)?;
     socket.send_to(&bytes, leader_addr).await?;
@@ -607,7 +661,7 @@ fn build_playback_engine() -> PlaybackEngine {
     }
 }
 
-fn load_device_config() -> Result<DeviceConfig> {
+fn load_device_config(name_opt: Option<String>, ephemeral: bool) -> Result<DeviceConfig> {
     let home = env::var_os("HOME").ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -617,9 +671,15 @@ fn load_device_config() -> Result<DeviceConfig> {
     let data_dir = PathBuf::from(home).join(".synkrophase");
     fs::create_dir_all(&data_dir)?;
 
-    if std::env::var("SYNKRO_EPHEMERAL").is_ok() {
+    let name = name_opt
+        .or_else(|| env::var("USER").ok())
+        .or_else(|| env::var("USERNAME").ok())
+        .unwrap_or_else(|| "User".to_string());
+
+    if ephemeral || std::env::var("SYNKRO_EPHEMERAL").is_ok() {
         return Ok(DeviceConfig {
             device_id: Uuid::new_v4(),
+            name,
             data_dir,
             ytdlp_path: None,
         });
@@ -637,6 +697,7 @@ fn load_device_config() -> Result<DeviceConfig> {
 
     Ok(DeviceConfig {
         device_id,
+        name,
         data_dir,
         ytdlp_path: None,
     })
@@ -653,7 +714,7 @@ fn generated_room_code(device_id: Uuid) -> String {
 }
 
 async fn run_play(
-    _device: DeviceConfig,
+    device: DeviceConfig,
     room_code: String,
     url: String,
     leader_addr: Option<SocketAddr>,
@@ -672,6 +733,7 @@ async fn run_play(
         ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
+        device.name.clone(),
     )
     .await?;
     let _ = await_join_accepted(&socket, Duration::from_secs(2)).await;
@@ -692,7 +754,7 @@ async fn run_play(
 }
 
 async fn run_simple_command(
-    _device: DeviceConfig,
+    device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
     message: Message,
@@ -709,6 +771,7 @@ async fn run_simple_command(
         ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
+        device.name.clone(),
     )
     .await?;
     let _ = await_join_accepted(&socket, Duration::from_secs(1)).await;
@@ -723,7 +786,7 @@ async fn run_simple_command(
 }
 
 async fn run_queue(
-    _device: DeviceConfig,
+    device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
 ) -> Result<()> {
@@ -740,6 +803,7 @@ async fn run_queue(
         ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
+        device.name.clone(),
     )
     .await?;
 
@@ -757,7 +821,7 @@ async fn run_queue(
                 } else {
                     println!("  [PLAYING] None");
                 }
-                
+
                 if queue_state.upcoming.is_empty() {
                     println!("  (Upcoming queue is empty)");
                 } else {
@@ -782,7 +846,7 @@ async fn run_queue(
 }
 
 async fn run_sync_status(
-    _device: DeviceConfig,
+    device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
 ) -> Result<()> {
@@ -799,6 +863,7 @@ async fn run_sync_status(
         ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
+        device.name.clone(),
     )
     .await?;
 
@@ -809,7 +874,8 @@ async fn run_sync_status(
 
     while start.elapsed() < duration {
         let remaining = duration.saturating_sub(start.elapsed());
-        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
+        {
             if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
                 match envelope.payload {
                     Message::JoinAccepted { peer_list, .. } => {
@@ -819,7 +885,7 @@ async fn run_sync_status(
                         break;
                     }
                     Message::Heartbeat { .. } => {
-                        // Heartbeat doesn't carry offset, but marks presence. 
+                        // Heartbeat doesn't carry offset, but marks presence.
                         // We already have device_id from envelope.sender.
                     }
                     Message::SyncAnchor(_) => {
@@ -847,7 +913,7 @@ async fn run_sync_status(
 }
 
 async fn run_debug(
-    _device: DeviceConfig,
+    device: DeviceConfig,
     room_code: String,
     leader_addr: Option<SocketAddr>,
 ) -> Result<()> {
@@ -858,12 +924,16 @@ async fn run_debug(
 
     let ephemeral_id = Uuid::new_v4();
 
-    println!("Collecting debug metrics for room {} (3s burst)...", room_code);
+    println!(
+        "Collecting debug metrics for room {} (3s burst)...",
+        room_code
+    );
     send_join_request(
         &socket,
         ephemeral_id,
         resolved_leader_addr,
         room_code.clone(),
+        device.name.clone(),
     )
     .await?;
 
@@ -876,31 +946,46 @@ async fn run_debug(
 
     while start.elapsed() < duration {
         let remaining = duration.saturating_sub(start.elapsed());
-        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
+        {
             if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
                 match envelope.payload {
                     Message::SyncAnchor(anchor) => {
                         println!(
                             "{:<10} {:<40} Pos: {}us, Rate: {:.4}, Playing: {}",
-                            "Anchor", envelope.sender, anchor.media_position_us, anchor.playback_rate, anchor.is_playing
+                            "Anchor",
+                            envelope.sender,
+                            anchor.media_position_us,
+                            anchor.playback_rate,
+                            anchor.is_playing
                         );
                     }
                     Message::Heartbeat { is_leader, .. } => {
                         println!(
                             "{:<10} {:<40} Role: {}",
-                            "Heartbeat", envelope.sender, if is_leader { "Leader" } else { "Follower" }
+                            "Heartbeat",
+                            envelope.sender,
+                            if is_leader { "Leader" } else { "Follower" }
                         );
                     }
                     Message::JoinAccepted { peer_list, .. } => {
                         println!(
                             "{:<10} {:<40} Peers: {}",
-                            "JoinAcc", envelope.sender, peer_list.len()
+                            "JoinAcc",
+                            envelope.sender,
+                            peer_list.len()
                         );
                     }
                     Message::QueueUpdate(state) => {
                         println!(
                             "{:<10} {:<40} Queue Ver: {}, Current: {}",
-                            "QueueUpd", envelope.sender, state.version, state.current.map(|t| t.title).unwrap_or_else(|| "None".into())
+                            "QueueUpd",
+                            envelope.sender,
+                            state.version,
+                            state
+                                .current
+                                .map(|t| t.title)
+                                .unwrap_or_else(|| "None".into())
                         );
                     }
                     _ => {}
@@ -976,15 +1061,16 @@ async fn run_stream_distribution_loop(
                     let track_id = current.id.clone();
                     let playback_clone = Arc::clone(&playback);
                     let out = stdout.clone();
-                    
+
                     let result = tokio::task::spawn_blocking(move || {
                         playback_clone.load_and_play(&track_id, &url)
-                    }).await;
+                    })
+                    .await;
 
                     if let Ok(Err(e)) = result {
                         let msg = format!("[System] Playback error: {}", e);
                         synkrophase::session::runtime::print_event(Some(&out), &msg);
-                        
+
                         let envelope = Envelope {
                             sender,
                             payload: Message::SystemLog(msg),
@@ -1006,7 +1092,7 @@ async fn run_stream_distribution_loop(
                                 }
                             }
                         }
-                        
+
                         sleep(Duration::from_secs(1)).await;
                         continue;
                     }
@@ -1022,7 +1108,7 @@ async fn run_stream_distribution_loop(
             Err(err) => {
                 let msg = format!("[System] Failed to resolve track: {}", err);
                 synkrophase::session::runtime::print_event(Some(&stdout), &msg);
-                
+
                 let envelope = Envelope {
                     sender,
                     payload: Message::SystemLog(msg),
@@ -1045,7 +1131,7 @@ async fn run_stream_distribution_loop(
                         }
                     }
                 }
-                
+
                 sleep(Duration::from_secs(1)).await;
                 continue;
             }
@@ -1068,15 +1154,15 @@ async fn run_stream_distribution_loop(
             let track_id = current.id.clone();
             let playback_clone = Arc::clone(&playback);
             let out = stdout.clone();
-            
-            let result = tokio::task::spawn_blocking(move || {
-                playback_clone.load_and_play(&track_id, &url)
-            }).await;
+
+            let result =
+                tokio::task::spawn_blocking(move || playback_clone.load_and_play(&track_id, &url))
+                    .await;
 
             if let Ok(Err(e)) = result {
                 let msg = format!("[System] Playback error: {}", e);
                 synkrophase::session::runtime::print_event(Some(&out), &msg);
-                
+
                 let envelope = Envelope {
                     sender,
                     payload: Message::SystemLog(msg),
@@ -1098,7 +1184,7 @@ async fn run_stream_distribution_loop(
                         }
                     }
                 }
-                
+
                 sleep(Duration::from_secs(1)).await;
                 continue;
             }
@@ -1178,6 +1264,7 @@ async fn run_repl(
     leader_addr: SocketAddr,
     mut rl: rustyline_async::Readline,
     stdout: rustyline_async::SharedWriter,
+    name: String,
 ) -> Result<()> {
     loop {
         let input = match rl.readline().await {
@@ -1185,7 +1272,8 @@ async fn run_repl(
                 rl.add_history_entry(line.clone());
                 line
             }
-            Ok(rustyline_async::ReadlineEvent::Eof) | Ok(rustyline_async::ReadlineEvent::Interrupted) => break,
+            Ok(rustyline_async::ReadlineEvent::Eof)
+            | Ok(rustyline_async::ReadlineEvent::Interrupted) => break,
             Err(_) => break,
         };
 
@@ -1194,89 +1282,109 @@ async fn run_repl(
             continue;
         }
 
-        let parts: Vec<&str> = input.split_whitespace().collect();
-        match parts[0] {
-            "play" => {
-                if parts.len() < 2 {
-                    println!("Usage: play <url>");
-                    continue;
-                }
-                let track = Track {
-                    id: Uuid::new_v4().to_string(),
-                    youtube_url: parts[1].to_string(),
-                    title: "Pending".into(),
-                    requested_by: sender,
-                };
-                let envelope = Envelope {
-                    sender,
-                    payload: Message::QueueProposal(QueueCommand::Add(track)),
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    let _ = socket.send_to(&bytes, leader_addr).await;
-                }
+        if let Some(command_str) = input.strip_prefix('/') {
+            let parts: Vec<&str> = command_str.split_whitespace().collect();
+            if parts.is_empty() {
+                continue;
             }
-            "pause" => {
-                let envelope = Envelope {
-                    sender,
-                    payload: Message::Pause { actor: sender },
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    let _ = socket.send_to(&bytes, leader_addr).await;
-                }
-            }
-            "resume" => {
-                let envelope = Envelope {
-                    sender,
-                    payload: Message::Resume { actor: sender },
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    let _ = socket.send_to(&bytes, leader_addr).await;
-                }
-            }
-            "skip" => {
-                let envelope = Envelope {
-                    sender,
-                    payload: Message::QueueProposal(QueueCommand::Skip),
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    let _ = socket.send_to(&bytes, leader_addr).await;
-                }
-            }
-            "queue" => {
-                let queue_state = session.queue_snapshot();
-                let room_code = session.room_code();
-                let mut out = format!("Queue for room {}:\n", room_code);
-                if let Some(current) = queue_state.current {
-                    out.push_str(&format!(
-                        "  [PLAYING] {} (ID: {}, requested by {})\n",
-                        current.title, current.id, current.requested_by
-                    ));
-                } else {
-                    out.push_str("  (Nothing playing)\n");
-                }
-                out.push_str("\n  Upcoming:\n");
-                if queue_state.upcoming.is_empty() {
-                    out.push_str("  (Upcoming queue is empty)\n");
-                } else {
-                    for (i, track) in queue_state.upcoming.iter().enumerate() {
-                        out.push_str(&format!(
-                            "  {}. {} (ID: {}, requested by {})\n",
-                            i + 1,
-                            track.title,
-                            track.id,
-                            track.requested_by
-                        ));
+            match parts[0] {
+                "play" => {
+                    if parts.len() < 2 {
+                        println!("Usage: /play <url>");
+                        continue;
+                    }
+                    let track = Track {
+                        id: Uuid::new_v4().to_string(),
+                        youtube_url: parts[1].to_string(),
+                        title: "Pending".into(),
+                        requested_by: sender,
+                    };
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::QueueProposal(QueueCommand::Add(track)),
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        let _ = socket.send_to(&bytes, leader_addr).await;
                     }
                 }
-                synkrophase::session::runtime::print_event(Some(&stdout), out.trim_end());
+                "pause" => {
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Pause { actor: sender },
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        let _ = socket.send_to(&bytes, leader_addr).await;
+                    }
+                }
+                "resume" => {
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Resume { actor: sender },
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        let _ = socket.send_to(&bytes, leader_addr).await;
+                    }
+                }
+                "skip" => {
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::QueueProposal(QueueCommand::Skip),
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        let _ = socket.send_to(&bytes, leader_addr).await;
+                    }
+                }
+                "queue" => {
+                    let queue_state = session.queue_snapshot();
+                    let room_code = session.room_code();
+                    let mut out = format!("Queue for room {}:\n", room_code);
+                    if let Some(current) = queue_state.current {
+                        out.push_str(&format!(
+                            "  [PLAYING] {} (ID: {}, requested by {})\n",
+                            current.title, current.id, current.requested_by
+                        ));
+                    } else {
+                        out.push_str("  (Nothing playing)\n");
+                    }
+                    out.push_str("\n  Upcoming:\n");
+                    if queue_state.upcoming.is_empty() {
+                        out.push_str("  (Upcoming queue is empty)\n");
+                    } else {
+                        for (i, track) in queue_state.upcoming.iter().enumerate() {
+                            out.push_str(&format!(
+                                "  {}. {} (ID: {}, requested by {})\n",
+                                i + 1,
+                                track.title,
+                                track.id,
+                                track.requested_by
+                            ));
+                        }
+                    }
+                    synkrophase::session::runtime::print_event(Some(&stdout), out.trim_end());
+                }
+                "exit" | "quit" => {
+                    synkrophase::session::runtime::print_event(Some(&stdout), "Exiting...");
+                    std::process::exit(0);
+                }
+                _ => {
+                    println!("Unknown command: /{}", parts[0]);
+                    println!(
+                        "Available commands: /play <url>, /pause, /resume, /skip, /queue, /exit"
+                    );
+                    println!("Anything else is sent as a chat message.");
+                }
             }
-            "exit" | "quit" => {
-                synkrophase::session::runtime::print_event(Some(&stdout), "Exiting...");
-                std::process::exit(0);
-            }
-            _ => {
-                println!("Unknown command: {}", parts[0]);
-                println!("Available commands: play <url>, pause, resume, skip, queue, exit");
+        } else {
+            let envelope = Envelope {
+                sender,
+                payload: Message::Chat {
+                    sender,
+                    name: name.clone(),
+                    text: input.to_string(),
+                },
+            };
+            if let Ok(bytes) = serialize(&envelope) {
+                let _ = socket.send_to(&bytes, leader_addr).await;
             }
         }
     }

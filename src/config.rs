@@ -5,6 +5,7 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct DeviceConfig {
     pub device_id: Uuid,
+    pub name: String,
     pub data_dir: PathBuf,
     pub ytdlp_path: Option<PathBuf>,
 }
