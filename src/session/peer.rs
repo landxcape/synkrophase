@@ -1,4 +1,4 @@
-use crate::protocol::messages::PeerInfo;
+use crate::protocol::messages::{PeerInfo, Role};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::RwLock;
@@ -65,6 +65,11 @@ impl PeerRegistry {
     pub fn is_alive(&self, id: &Uuid) -> bool {
         let peers = self.peers.read().unwrap();
         peers.contains_key(id)
+    }
+
+    pub fn get_role(&self, id: &Uuid) -> Option<Role> {
+        let peers = self.peers.read().unwrap();
+        peers.get(id).map(|entry| entry.info.role)
     }
 
     pub fn all_alive(&self) -> Vec<(Uuid, PeerEntry)> {

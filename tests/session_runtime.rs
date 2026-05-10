@@ -145,10 +145,23 @@ async fn runtime_handles_playback_controls_via_socket() {
     });
 
     let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let sender_id = Uuid::new_v4();
+
+    // Register sender as a Moderator so they have permission to Pause/Resume
+    session.record_peer_heartbeat(
+        synkrophase::protocol::messages::PeerInfo {
+            device_id: sender_id,
+            name: "Moderator".to_string(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Moderator,
+        },
+        client_socket.local_addr().unwrap(),
+    );
 
     // Send Pause
     let env = Envelope {
-        sender: Uuid::new_v4(),
+        sender: sender_id,
         payload: Message::Pause { actor: Uuid::nil() },
     };
     let bytes = serialize(&env).unwrap();
@@ -161,7 +174,7 @@ async fn runtime_handles_playback_controls_via_socket() {
 
     // Send Resume
     let env = Envelope {
-        sender: Uuid::new_v4(),
+        sender: sender_id,
         payload: Message::Resume { actor: Uuid::nil() },
     };
     let bytes = serialize(&env).unwrap();
@@ -210,6 +223,19 @@ async fn leader_broadcasts_playback_controls_to_peers() {
 
     // Send Pause to leader from a "CLI" or another peer
     let sender_id = Uuid::new_v4();
+
+    // Register sender as a Moderator so they have permission to Pause
+    session.record_peer_heartbeat(
+        synkrophase::protocol::messages::PeerInfo {
+            device_id: sender_id,
+            name: "Moderator".to_string(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Moderator,
+        },
+        client_socket.local_addr().unwrap(),
+    );
+
     let env = Envelope {
         sender: sender_id,
         payload: Message::Pause { actor: sender_id },

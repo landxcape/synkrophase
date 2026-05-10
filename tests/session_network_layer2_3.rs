@@ -89,8 +89,9 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
         Message::JoinAccepted {
             peer_list,
             queue_state,
-            assigned_role: _,
+            assigned_role,
         } => {
+            assert_eq!(assigned_role, synkrophase::protocol::messages::Role::Moderator);
             assert!(peer_list.iter().any(|p| p.device_id == leader_id));
             assert_eq!(queue_state, QueueState::default());
         }
@@ -104,7 +105,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
             name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
-            role: synkrophase::protocol::messages::Role::Listener,
+            role: synkrophase::protocol::messages::Role::Moderator,
         },
         follower_socket.local_addr().unwrap(),
     );

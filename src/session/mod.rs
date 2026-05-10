@@ -102,6 +102,13 @@ impl SessionState {
         self.peers.is_alive(id)
     }
 
+    pub fn get_peer_role(&self, id: &Uuid) -> Option<Role> {
+        if *id == self.self_id {
+            return Some(self.role());
+        }
+        self.peers.get_role(id)
+    }
+
     pub fn self_id(&self) -> Uuid {
         self.self_id
     }

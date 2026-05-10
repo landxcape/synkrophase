@@ -128,19 +128,11 @@ impl SessionMessageRuntime {
         src: SocketAddr,
         envelope: Envelope,
     ) -> Result<()> {
+        let sender_role = self.session.get_peer_role(&envelope.sender);
+
         if envelope.sender == self.session.self_id() {
-            // Allow control messages from same device (CLI use case)
-            let allowed = matches!(
-                envelope.payload,
-                Message::Pause { .. }
-                    | Message::Resume { .. }
-                    | Message::Play { .. }
-                    | Message::QueueProposal(_)
-                    | Message::Chat { .. }
-            );
-            if !allowed {
-                return Ok(());
-            }
+            // Self-sent messages from CLI are allowed if they have sufficient role.
+            // (CLI commands are usually executed as Leader/Admin)
         }
 
         match envelope.payload {
@@ -158,12 +150,19 @@ impl SessionMessageRuntime {
                     return Ok(());
                 }
 
+                // Assign Role: First joiner is Moderator, others are Listeners.
+                let assigned_role = if self.session.peer_ids().is_empty() {
+                    Role::Moderator
+                } else {
+                    Role::Listener
+                };
+
                 let peer_info = PeerInfo {
                     device_id: envelope.sender,
                     name: name.clone(),
                     clock_offset_us: 0,
                     last_seen: 0,
-                    role: Role::Listener,
+                    role: assigned_role,
                 };
 
                 self.session.record_peer_heartbeat(peer_info.clone(), src);
@@ -174,7 +173,11 @@ impl SessionMessageRuntime {
 
                 print_event(
                     self.stdout.as_ref(),
-                    &format!("[System] Peer joined: {}", self.session.display_name(&envelope.sender)),
+                    &format!(
+                        "[System] Peer joined: {} (Role: {:?})",
+                        self.session.display_name(&envelope.sender),
+                        assigned_role
+                    ),
                 );
 
                 let mut peer_list = self.session.snapshot().peer_list;
@@ -189,7 +192,7 @@ impl SessionMessageRuntime {
                     Message::JoinAccepted {
                         peer_list: peer_list.clone(),
                         queue_state: queue_state.clone(),
-                        assigned_role: Role::Listener,
+                        assigned_role,
                     },
                 )
                 .await?;
@@ -283,6 +286,19 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::QueueProposal(command) => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    print_event(
+                        self.stdout.as_ref(),
+                        &format!(
+                            "[Warning] Rejected queue proposal from {} due to insufficient role ({:?})",
+                            self.session.display_name(&envelope.sender),
+                            role
+                        ),
+                    );
+                    return Ok(());
+                }
+
                 if !self.session.is_leader() {
                     return Ok(());
                 }
@@ -339,6 +355,11 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::Pause { actor } => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    return Ok(());
+                }
+
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
@@ -356,6 +377,11 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::Resume { actor } => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    return Ok(());
+                }
+
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
@@ -374,6 +400,11 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::Play { actor } => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    return Ok(());
+                }
+
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
@@ -423,6 +454,13 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             message => {
+                if matches!(message, Message::SyncAnchor(_)) {
+                    let role = sender_role.unwrap_or(Role::Listener);
+                    if role < Role::Leader {
+                        return Ok(());
+                    }
+                }
+
                 // Best-effort application message handling. Stale queue updates should not
                 // stop the receive loop.
                 match self.session.apply_message(message.clone()) {
