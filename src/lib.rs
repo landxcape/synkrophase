@@ -1,3 +1,5 @@
+extern crate rodio;
+
 pub mod clock;
 pub mod config;
 pub mod error;

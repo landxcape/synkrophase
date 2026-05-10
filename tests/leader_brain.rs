@@ -1,11 +1,10 @@
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use synkrophase::error::Result;
 use synkrophase::playback::engine::{PlaybackBackend, PlaybackEngine};
 use synkrophase::protocol::messages::{
-    Envelope, Message, QueueState, deserialize, serialize, Role, PeerInfo,
+    Envelope, Message, deserialize, serialize, Role, PeerInfo,
 };
 use synkrophase::session::runtime::SessionMessageRuntime;
 use synkrophase::session::SessionState;

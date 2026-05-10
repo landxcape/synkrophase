@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn evaluate_returns_adjust_rate_for_zone2() {
         let clock = Arc::new(MockClock { now: 1_000_000 });
-        let playback = Arc::new(MockPlayback::with(300_000, 1.0));
+        let playback = Arc::new(MockPlayback::with(200_000, 1.0));
         let controller = SyncController::new(clock, playback, SyncConfig::default());
         controller.set_anchor(SyncAnchor {
             reference_time: 1_000_000,
@@ -236,7 +236,7 @@ mod tests {
             is_playing: true,
         });
 
-        assert_eq!(controller.evaluate(), SyncAction::AdjustRate { rate: 0.98 });
+        assert_eq!(controller.evaluate(), SyncAction::AdjustRate { rate: 0.95 });
     }
 
     #[test]

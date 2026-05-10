@@ -23,7 +23,7 @@ async fn leader_resolves_current_track_into_stream_url_message() {
         .handle_queue_proposal(QueueCommand::Add(track("one")))
         .unwrap();
 
-    let server = Arc::new(MediaServer::new(0));
+    let server = Arc::new(MediaServer::new(0, None));
     let router = MediaRouter::new(server);
 
     let stream = session.resolve_current_track(&router).await.unwrap();

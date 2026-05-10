@@ -12,7 +12,7 @@ fn temp_file(name: &str) -> PathBuf {
 
 #[tokio::test]
 async fn resolve_returns_url_for_direct_link() {
-    let server = Arc::new(MediaServer::new(0)); // Port 0 for random port
+    let server = Arc::new(MediaServer::new(0, None)); // Port 0 for random port
     let router = MediaRouter::new(server);
 
     let input = "https://example.com/audio.mp3";
@@ -23,7 +23,7 @@ async fn resolve_returns_url_for_direct_link() {
 
 #[tokio::test]
 async fn resolve_hosts_local_file_and_returns_server_url() {
-    let server = Arc::new(MediaServer::new(0));
+    let server = Arc::new(MediaServer::new(0, None));
     let router = MediaRouter::new(server);
 
     let path = temp_file("test.mp3");

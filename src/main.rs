@@ -480,7 +480,7 @@ async fn run_join(
     leader_id: Option<Uuid>,
     leader_clock_port: u16,
     session_port: u16,
-    audio_device: Option<usize>,
+    _audio_device: Option<usize>,
 ) -> Result<()> {
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;

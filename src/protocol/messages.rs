@@ -29,6 +29,7 @@ pub enum Message {
         peer_list: Vec<PeerInfo>,
         queue_state: QueueState,
         assigned_role: Role,
+        current_anchor: Option<SyncAnchor>, // NEW
     },
     PeerJoined(PeerInfo),
     PeerLeft(Uuid),
@@ -182,6 +183,7 @@ mod tests {
                 }],
                 queue_state: QueueState::default(),
                 assigned_role: Role::Listener,
+                current_anchor: None,
             },
         };
 

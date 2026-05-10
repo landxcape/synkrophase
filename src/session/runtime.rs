@@ -9,11 +9,12 @@ use crate::clock::sync::ClockSync;
 use crate::config::SyncConfig;
 use crate::error::{Result, SynkroError};
 use crate::playback::engine::PlaybackEngine;
-use crate::protocol::messages::{Envelope, Message, PeerInfo, Role, deserialize, serialize};
+use crate::protocol::messages::{Envelope, Message, PeerInfo, deserialize, serialize};
 use crate::session::{FollowerSyncRuntime, SessionState};
 use crate::sync::controller::ClockSource;
 
 use rustyline_async::SharedWriter;
+use crate::protocol::messages::Role;
 
 pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
@@ -60,11 +61,7 @@ impl SessionMessageRuntime {
             name: self.name.clone(),
             clock_offset_us: 0,
             last_seen: 0,
-            role: if self.session.is_leader() {
-                Role::Leader
-            } else {
-                Role::Listener
-            },
+            role: self.session.role(),
         }
     }
 
@@ -128,12 +125,22 @@ impl SessionMessageRuntime {
         src: SocketAddr,
         envelope: Envelope,
     ) -> Result<()> {
-        let sender_role = self.session.get_peer_role(&envelope.sender);
-
         if envelope.sender == self.session.self_id() {
-            // Self-sent messages from CLI are allowed if they have sufficient role.
-            // (CLI commands are usually executed as Leader/Admin)
+            // Allow control messages from same device (CLI use case)
+            let allowed = matches!(
+                envelope.payload,
+                Message::Pause { .. }
+                    | Message::Resume { .. }
+                    | Message::Play { .. }
+                    | Message::QueueProposal(_)
+                    | Message::Chat { .. }
+            );
+            if !allowed {
+                return Ok(());
+            }
         }
+
+        let sender_role = self.session.get_peer_role(&envelope.sender);
 
         match envelope.payload {
             Message::JoinRequest { room_code, name } => {
@@ -182,6 +189,8 @@ impl SessionMessageRuntime {
                     );
                 }
 
+                let current_anchor = self.session.current_anchor.read().unwrap().clone();
+
                 let mut peer_list = self.session.snapshot().peer_list;
                 peer_list.push(self.self_peer_info());
                 peer_list.sort_by_key(|peer| peer.device_id);
@@ -195,6 +204,7 @@ impl SessionMessageRuntime {
                         peer_list: peer_list.clone(),
                         queue_state: queue_state.clone(),
                         assigned_role,
+                        current_anchor,
                     },
                 )
                 .await?;
@@ -236,6 +246,7 @@ impl SessionMessageRuntime {
                 peer_list,
                 queue_state,
                 assigned_role,
+                current_anchor,
             } => {
                 print_event(self.stdout.as_ref(), "[System] Joined room successfully.");
                 self.session.accept_join_accepted(
@@ -245,6 +256,12 @@ impl SessionMessageRuntime {
                     queue_state,
                     assigned_role,
                 );
+                if let Some(anchor) = current_anchor {
+                    self.session.accept_sync_anchor(anchor.clone());
+                    if let Some(follower_sync) = &self.follower_sync {
+                        follower_sync.ingest_message(&self.session, &Message::SyncAnchor(anchor));
+                    }
+                }
                 Ok(())
             }
             Message::PeerJoined(_) => {
@@ -264,13 +281,14 @@ impl SessionMessageRuntime {
                 self.session.remove_peer(&peer_id);
                 Ok(())
             }
-            Message::Heartbeat { room_code, info } => {
+            Message::Heartbeat {
+                room_code,
+                info,
+            } => {
                 if room_code != self.session.room_code() {
                     return Ok(());
                 }
-                if self.session.is_leader() || info.role == Role::Leader {
-                    self.session.record_peer_heartbeat(info.clone(), src);
-                }
+                self.session.record_peer_heartbeat(info.clone(), src);
                 if info.role == Role::Leader {
                     self.session.set_leader_id(envelope.sender);
                 }
@@ -280,39 +298,30 @@ impl SessionMessageRuntime {
                 self.session.set_leader_id(leader_id);
                 if self.session.role() >= Role::Moderator {
                     if leader_id == self.session.self_id() {
-                        print_event(
-                            self.stdout.as_ref(),
-                            "[System] You have been elected as the Leader!",
-                        );
+                        print_event(self.stdout.as_ref(), "[System] You have been elected as the Leader!");
                     } else {
                         let name = self.session.display_name(&leader_id);
-                        print_event(
-                            self.stdout.as_ref(),
-                            &format!("[System] {} is now the Leader.", name),
-                        );
+                        print_event(self.stdout.as_ref(), &format!("[System] {} is now the Leader.", name));
                     }
                 }
                 Ok(())
             }
             Message::QueueProposal(command) => {
-                let role = sender_role.unwrap_or(Role::Listener);
-                if role < Role::Moderator {
-                    if self.session.is_leader() {
-                        let _ = Self::send_message(
-                            socket,
-                            self.session.self_id(),
-                            src,
-                            Message::Notification {
-                                text: "Permission Denied: Only Moderators can modify the queue."
-                                    .into(),
-                            },
-                        )
-                        .await;
-                    }
+                if !self.session.is_leader() {
                     return Ok(());
                 }
 
-                if !self.session.is_leader() {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    let _ = Self::send_message(
+                        socket,
+                        self.session.self_id(),
+                        src,
+                        Message::Notification {
+                            text: "Permission Denied: Only Moderators can control the queue.".into(),
+                        },
+                    )
+                    .await;
                     return Ok(());
                 }
 
@@ -377,10 +386,11 @@ impl SessionMessageRuntime {
                         let stdout = self.stdout.clone();
                         tokio::task::spawn_blocking(move || {
                             if let Err(err) = playback.load_and_play(&track_id, &url) {
-                                print_event(
-                                    stdout.as_ref(),
-                                    &format!("[System] Playback error: {}", err),
-                                );
+                                if let Some(out) = stdout.as_ref() {
+                                    use std::io::Write;
+                                    let mut out = out.clone();
+                                    let _ = writeln!(out, "[System] Playback error: {}", err);
+                                }
                             }
                         });
                     }
@@ -549,63 +559,44 @@ impl SessionMessageRuntime {
                     return Ok(());
                 }
 
-                if !self.session.is_leader() {
-                    return Ok(());
-                }
-
-                let updated =
-                    self.session
-                        .handle_queue_proposal(crate::protocol::messages::QueueCommand::Skip)?;
-                let log_msg = format!(
-                    "[System] {} skipped the track",
-                    self.session.display_name(&envelope.sender)
-                );
-                print_event(self.stdout.as_ref(), &log_msg);
-                self.send_to_peers(socket, Message::SystemLog(log_msg))
-                    .await?;
-                self.send_to_peers(socket, Message::QueueUpdate(updated))
-                    .await?;
-                Ok(())
-            }
-            Message::SystemLog(log) => {
-                if self.session.role() >= Role::Moderator {
-                    print_event(self.stdout.as_ref(), &log);
+                if let Some(playback) = &self.playback {
+                    playback.stop()?;
                 }
                 Ok(())
             }
-            Message::Chat {
-                sender,
-                name: _,
-                text,
-            } => {
+            Message::Chat { sender, text, .. } => {
+                if envelope.sender != self.session.self_id() {
+                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let mut info = Self::peer_info_for(envelope.sender);
+                    info.role = role;
+                    self.session.record_peer_heartbeat(info, src);
+                }
+                
+                let display_name = self.session.display_name(&sender);
+                
                 if self.session.is_leader() {
-                    if envelope.sender != self.session.self_id() {
-                        let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
-                        let mut info = Self::peer_info_for(envelope.sender);
-                        info.role = role;
-                        self.session.record_peer_heartbeat(info, src);
-                    }
-
-                    let display_name = self.session.display_name(&sender);
-                    // 1. Local display
+                    // Leader formats and broadcasts to all peers
+                    let broadcast = Message::ChatBroadcast {
+                        display_name: display_name.clone(),
+                        text: text.clone(),
+                    };
+                    self.send_to_peers(socket, broadcast).await?;
+                    // Leader also prints locally
                     print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
-                    // 2. Broadcast as ChatBroadcast
-                    self.send_to_peers(
-                        socket,
-                        Message::ChatBroadcast {
-                            display_name,
-                            text: text.clone(),
-                        },
-                    )
-                    .await?;
                 }
                 Ok(())
             }
             Message::ChatBroadcast { display_name, text } => {
+                if envelope.sender != self.session.leader_id() {
+                    return Ok(());
+                }
                 print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
                 Ok(())
             }
             Message::Notification { text } => {
+                if envelope.sender != self.session.leader_id() {
+                    return Ok(());
+                }
                 print_event(self.stdout.as_ref(), &text);
                 Ok(())
             }

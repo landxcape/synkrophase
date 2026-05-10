@@ -90,6 +90,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
             peer_list,
             queue_state,
             assigned_role,
+            current_anchor: _,
         } => {
             assert_eq!(assigned_role, synkrophase::protocol::messages::Role::Moderator);
             assert!(peer_list.iter().any(|p| p.device_id == leader_id));

@@ -18,6 +18,7 @@ enum BackendCall {
 #[derive(Clone, Default)]
 struct MockBackend {
     calls: Arc<Mutex<Vec<BackendCall>>>,
+    position: Arc<Mutex<i64>>,
 }
 
 impl MockBackend {
@@ -36,7 +37,7 @@ impl PlaybackBackend for MockBackend {
     }
 
     fn position_us(&self) -> i64 {
-        0
+        *self.position.lock().unwrap()
     }
 
     fn set_rate(&self, rate: f32) -> synkrophase::error::Result<()> {
@@ -49,6 +50,7 @@ impl PlaybackBackend for MockBackend {
             .lock()
             .unwrap()
             .push(BackendCall::Seek(position_us));
+        *self.position.lock().unwrap() = position_us;
         Ok(())
     }
 
