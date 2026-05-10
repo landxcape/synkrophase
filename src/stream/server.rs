@@ -7,10 +7,11 @@ use tiny_http::{Response, Server};
 pub struct MediaServer {
     current_file: Arc<Mutex<Option<PathBuf>>>,
     port: u16,
+    host_ip: Option<std::net::IpAddr>,
 }
 
 impl MediaServer {
-    pub fn new(port: u16) -> Self {
+    pub fn new(port: u16, host_ip: Option<std::net::IpAddr>) -> Self {
         let current_file = Arc::new(Mutex::new(None));
         let server_file = Arc::clone(&current_file);
 
@@ -30,6 +31,7 @@ impl MediaServer {
         Self {
             current_file,
             port,
+            host_ip,
         }
     }
 
@@ -39,7 +41,7 @@ impl MediaServer {
     }
 
     pub fn get_url(&self) -> String {
-        let ip = local_ip_address::local_ip().unwrap();
+        let ip = self.host_ip.unwrap_or_else(|| local_ip_address::local_ip().unwrap());
         format!("http://{}:{}/media", ip, self.port)
     }
 }

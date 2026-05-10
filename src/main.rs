@@ -57,6 +57,9 @@ enum Commands {
         /// TCP port for media server.
         #[arg(long, default_value_t = DEFAULT_MEDIA_PORT)]
         media_port: u16,
+        /// Optional hostname/IP to use for media server URLs.
+        #[arg(long)]
+        media_host: Option<std::net::IpAddr>,
     },
     /// Join an existing session and run follower sync loop.
     Join {
@@ -175,9 +178,19 @@ async fn main() -> Result<()> {
             clock_port,
             session_port,
             media_port,
+            media_host,
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
-            run_host(device, sync_config, room, clock_port, session_port, media_port).await
+            run_host(
+                device,
+                sync_config,
+                room,
+                clock_port,
+                session_port,
+                media_port,
+                media_host,
+            )
+            .await
         }
         Commands::Join {
             room_code,
@@ -283,6 +296,7 @@ async fn run_host(
     clock_port: u16,
     session_port: u16,
     media_port: u16,
+    media_host: Option<std::net::IpAddr>,
 ) -> Result<()> {
     let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::UNSPECIFIED,
@@ -310,7 +324,7 @@ async fn run_host(
         device.name.clone(),
     ));
     let playback = Arc::new(build_playback_engine());
-    let media_server = Arc::new(MediaServer::new(media_port));
+    let media_server = Arc::new(MediaServer::new(media_port, media_host));
     let media_router = MediaRouter::new(media_server);
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
