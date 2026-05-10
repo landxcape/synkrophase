@@ -1,4 +1,5 @@
 use std::sync::RwLock;
+use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
 use crate::clock::sync::local_now;
 use crate::error::Result;
@@ -135,9 +136,9 @@ struct RodioInner {
 impl RodioPlaybackBackend {
     pub fn new() -> Result<Self> {
         // Debug: List available devices on startup
-        if let Ok(host) = cpal::default_host().devices() {
+        if let Ok(devices) = rodio::cpal::default_host().output_devices() {
             println!("[Audio] Detected output devices:");
-            for (i, device) in host.enumerate() {
+            for (i, device) in devices.enumerate() {
                 let name = device.name().unwrap_or_else(|_| "Unknown".into());
                 println!("  {}: {}", i, name);
             }
