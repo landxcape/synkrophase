@@ -55,8 +55,8 @@ impl PlaybackEngine {
         }
     }
 
-    pub fn new_rodio() -> Result<Self> {
-        Ok(Self::new(Box::new(RodioPlaybackBackend::new()?)))
+    pub fn new_rodio(device_index: Option<usize>) -> Result<Self> {
+        Ok(Self::new(Box::new(RodioPlaybackBackend::new(device_index)?)))
     }
 
     pub fn load_and_play(&self, track_id: &str, stream_url: &str) -> Result<()> {
@@ -126,6 +126,7 @@ impl PlaybackEngine {
 
 pub struct RodioPlaybackBackend {
     inner: std::sync::Mutex<Option<RodioInner>>,
+    device_index: Option<usize>,
 }
 
 struct RodioInner {
@@ -134,7 +135,7 @@ struct RodioInner {
 }
 
 impl RodioPlaybackBackend {
-    pub fn new() -> Result<Self> {
+    pub fn new(device_index: Option<usize>) -> Result<Self> {
         // Debug: List available devices on startup
         if let Ok(devices) = rodio::cpal::default_host().output_devices() {
             println!("[Audio] Detected output devices:");
@@ -142,12 +143,11 @@ impl RodioPlaybackBackend {
                 let name = device.name().unwrap_or_else(|_| "Unknown".into());
                 println!("  {}: {}", i, name);
             }
-        } else {
-            eprintln!("[Audio] WARNING: No audio host detected.");
         }
 
         Ok(Self {
             inner: std::sync::Mutex::new(None),
+            device_index,
         })
     }
 
@@ -197,13 +197,24 @@ impl PlaybackBackend for RodioPlaybackBackend {
                 e
             })?;
 
-        println!("[Audio] Opening default output device...");
-        let sink_handle = rodio::DeviceSinkBuilder::open_default_sink()
-            .map_err(|err| {
-                let e = crate::error::SynkroError::Playback(format!("Hardware error: {}", err));
-                eprintln!("[Audio] Error: {}", e);
-                e
+        println!("[Audio] Opening output device...");
+        let sink_handle = if let Some(idx) = self.device_index {
+            let host = rodio::cpal::default_host();
+            let mut devices = host.output_devices().map_err(|e| {
+                crate::error::SynkroError::Playback(format!("Host error: {}", e))
             })?;
+            devices.nth(idx).ok_or_else(|| {
+                crate::error::SynkroError::Playback(format!("Device index {} not found", idx))
+            })
+            .and_then(|device| rodio::DeviceSinkBuilder::open_sink(&device).map_err(|e| e.into()))
+        } else {
+            rodio::DeviceSinkBuilder::open_default_sink().map_err(|e| e.into())
+        }
+        .map_err(|err| {
+            let e = crate::error::SynkroError::Playback(format!("Hardware error: {}", err));
+            eprintln!("[Audio] Error: {}", e);
+            e
+        })?;
         
         let player = rodio::Player::connect_new(sink_handle.mixer());
         player.append(decoder);

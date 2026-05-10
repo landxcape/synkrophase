@@ -77,6 +77,9 @@ enum Commands {
         /// Local UDP port for session traffic.
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
+        /// Audio output device index (from the detected list).
+        #[arg(long)]
+        audio_device: Option<usize>,
     },
     /// Add a YouTube URL to the queue for a room (leader serializes + resolves stream URL).
     Play {
@@ -198,6 +201,7 @@ async fn main() -> Result<()> {
             leader_id,
             leader_clock_port,
             session_port,
+            audio_device,
         } => {
             run_join(
                 device,
@@ -207,6 +211,7 @@ async fn main() -> Result<()> {
                 leader_id,
                 leader_clock_port,
                 session_port,
+                audio_device,
             )
             .await
         }
@@ -323,7 +328,7 @@ async fn run_host(
         device.device_id,
         device.name.clone(),
     ));
-    let playback = Arc::new(build_playback_engine());
+    let playback = Arc::new(build_playback_engine(None));
     let media_server = Arc::new(MediaServer::new(media_port, media_host));
     let media_router = MediaRouter::new(media_server);
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
@@ -475,6 +480,7 @@ async fn run_join(
     leader_id: Option<Uuid>,
     leader_clock_port: u16,
     session_port: u16,
+    audio_device: Option<usize>,
 ) -> Result<()> {
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;
@@ -516,7 +522,7 @@ async fn run_join(
         }],
         QueueState::default(),
     ));
-    let playback = Arc::new(build_playback_engine());
+    let playback = Arc::new(build_playback_engine(None));
     let clock_source: Arc<dyn ClockSource> = clock.clone();
     let playback_control: Arc<dyn PlaybackControl> = playback.clone();
     let controller = Arc::new(SyncController::new(
@@ -678,8 +684,8 @@ async fn send_join_request(
     Ok(())
 }
 
-fn build_playback_engine() -> PlaybackEngine {
-    match PlaybackEngine::new_rodio() {
+fn build_playback_engine(audio_device: Option<usize>) -> PlaybackEngine {
+    match PlaybackEngine::new_rodio(audio_device) {
         Ok(engine) => engine,
         Err(err) => {
             eprintln!("rodio backend unavailable, using noop playback backend: {err}");
