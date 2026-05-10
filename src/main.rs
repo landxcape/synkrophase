@@ -340,11 +340,13 @@ async fn run_host(
     let discovery = Discovery::new()?;
     discovery.register_session(&room_code, device.device_id, session_port)?;
 
+    let local_ip = media_host.unwrap_or_else(|| local_ip_address::local_ip().unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+
     synkrophase::session::runtime::print_event(
         Some(&stdout),
         &format!(
-            "Hosting room {room_code} as leader {} (clock {}, session {})",
-            device.device_id, clock_port, session_port
+            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n  - Media Port: {media_port}\n\nJoin with: cargo run -- join {room_code} --leader-addr {local_ip}:{session_port}",
+            device.device_id
         ),
     );
 
