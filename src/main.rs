@@ -1237,21 +1237,73 @@ async fn run_election_loop(
     let port = socket.local_addr()?.port();
     let mut last_leader = session.leader_id();
     loop {
-        session.prune_and_elect(timeout);
+        let expired = session.prune_and_elect(timeout);
+
+        // Broadcast PeerLeft and SystemLog for each expired peer
+        for id in expired {
+            let name = session.display_name(&id);
+            let peer_left_env = Envelope {
+                sender,
+                payload: Message::PeerLeft(id),
+            };
+            let log_env = Envelope {
+                sender,
+                payload: Message::SystemLog(format!("[System] {} timed out.", name)),
+            };
+
+            if let Ok(bytes) = serialize(&peer_left_env) {
+                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
+                let _ = socket.send_to(&bytes, addr).await;
+                for peer_addr in session.peer_socket_addrs() {
+                    if peer_addr.port() != port {
+                        let _ = socket.send_to(&bytes, peer_addr).await;
+                    }
+                }
+            }
+            if let Ok(bytes) = serialize(&log_env) {
+                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
+                let _ = socket.send_to(&bytes, addr).await;
+                for peer_addr in session.peer_socket_addrs() {
+                    if peer_addr.port() != port {
+                        let _ = socket.send_to(&bytes, peer_addr).await;
+                    }
+                }
+            }
+        }
+
         let leader = session.leader_id();
         if leader != last_leader {
+            let name = session.display_name(&leader);
             last_leader = leader;
+
+            // Broadcast LeaderElected
             let envelope = Envelope {
                 sender,
                 payload: Message::LeaderElected(leader),
             };
-            let bytes = serialize(&envelope)?;
-            let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-            let _ = socket.send_to(&bytes, addr).await?;
+            if let Ok(bytes) = serialize(&envelope) {
+                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
+                let _ = socket.send_to(&bytes, addr).await?;
 
-            for peer_addr in session.peer_socket_addrs() {
-                if peer_addr.port() != port {
-                    let _ = socket.send_to(&bytes, peer_addr).await;
+                for peer_addr in session.peer_socket_addrs() {
+                    if peer_addr.port() != port {
+                        let _ = socket.send_to(&bytes, peer_addr).await;
+                    }
+                }
+            }
+
+            // Broadcast SystemLog for leader change
+            let log_env = Envelope {
+                sender,
+                payload: Message::SystemLog(format!("[System] {} is now the Leader.", name)),
+            };
+            if let Ok(bytes) = serialize(&log_env) {
+                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
+                let _ = socket.send_to(&bytes, addr).await;
+                for peer_addr in session.peer_socket_addrs() {
+                    if peer_addr.port() != port {
+                        let _ = socket.send_to(&bytes, peer_addr).await;
+                    }
                 }
             }
         }
