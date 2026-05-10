@@ -264,6 +264,12 @@ impl SessionMessageRuntime {
             }
             Message::LeaderElected(leader_id) => {
                 self.session.set_leader_id(leader_id);
+                if leader_id == self.session.self_id() {
+                    print_event(self.stdout.as_ref(), "[System] You have been elected as the Leader!");
+                } else {
+                    let name = self.session.display_name(&leader_id);
+                    print_event(self.stdout.as_ref(), &format!("[System] {} is now the Leader.", name));
+                }
                 Ok(())
             }
             Message::QueueProposal(command) => {
