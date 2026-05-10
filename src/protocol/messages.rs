@@ -23,6 +23,7 @@ pub enum Message {
     },
     JoinRequest {
         room_code: String,
+        name: String,
     },
     JoinAccepted {
         peer_list: Vec<PeerInfo>,
@@ -34,20 +35,32 @@ pub enum Message {
     TransferLeadership {
         to: Uuid,
     },
-    Play { actor: Uuid },
-    Pause { actor: Uuid },
-    Resume { actor: Uuid },
+    Play {
+        actor: Uuid,
+    },
+    Pause {
+        actor: Uuid,
+    },
+    Resume {
+        actor: Uuid,
+    },
     Skip,
     QueueProposal(QueueCommand),
     QueueUpdate(QueueState),
     StreamUrl(StreamUrl),
     SyncAnchor(SyncAnchor),
     SystemLog(String),
+    Chat {
+        sender: Uuid,
+        name: String,
+        text: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PeerInfo {
     pub device_id: Uuid,
+    pub name: String,
     pub clock_offset_us: i64,
     pub last_seen: u64,
 }
@@ -143,6 +156,7 @@ mod tests {
             payload: Message::JoinAccepted {
                 peer_list: vec![PeerInfo {
                     device_id: Uuid::new_v4(),
+                    name: "Alice".into(),
                     clock_offset_us: 42,
                     last_seen: 99,
                 }],
