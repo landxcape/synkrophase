@@ -25,6 +25,7 @@ fn peer_info(id: Uuid) -> PeerInfo {
         name: "TestUser".to_string(),
         clock_offset_us: 0,
         last_seen: 0,
+        role: synkrophase::protocol::messages::Role::Listener,
     }
 }
 

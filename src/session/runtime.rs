@@ -9,7 +9,7 @@ use crate::clock::sync::ClockSync;
 use crate::config::SyncConfig;
 use crate::error::{Result, SynkroError};
 use crate::playback::engine::PlaybackEngine;
-use crate::protocol::messages::{Envelope, Message, PeerInfo, deserialize, serialize};
+use crate::protocol::messages::{Envelope, Message, PeerInfo, Role, deserialize, serialize};
 use crate::session::{FollowerSyncRuntime, SessionState};
 use crate::sync::controller::ClockSource;
 
@@ -60,6 +60,11 @@ impl SessionMessageRuntime {
             name: self.name.clone(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: if self.session.is_leader() {
+                Role::Leader
+            } else {
+                Role::Listener
+            },
         }
     }
 
@@ -69,6 +74,7 @@ impl SessionMessageRuntime {
             name: "Unknown".into(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: Role::Listener,
         }
     }
 
@@ -174,6 +180,7 @@ impl SessionMessageRuntime {
                     name: name.clone(),
                     clock_offset_us: 0,
                     last_seen: 0,
+                    role: Role::Listener,
                 };
 
                 self.session.record_peer_heartbeat(peer_info.clone(), src);
@@ -199,6 +206,7 @@ impl SessionMessageRuntime {
                     Message::JoinAccepted {
                         peer_list: peer_list.clone(),
                         queue_state: queue_state.clone(),
+                        assigned_role: Role::Listener,
                     },
                 )
                 .await?;
@@ -228,10 +236,16 @@ impl SessionMessageRuntime {
             Message::JoinAccepted {
                 peer_list,
                 queue_state,
+                assigned_role,
             } => {
                 print_event(self.stdout.as_ref(), "[System] Joined room successfully.");
-                self.session
-                    .accept_join_accepted(envelope.sender, src, peer_list, queue_state);
+                self.session.accept_join_accepted(
+                    envelope.sender,
+                    src,
+                    peer_list,
+                    queue_state,
+                    assigned_role,
+                );
                 Ok(())
             }
             Message::PeerJoined(peer) => {

@@ -28,6 +28,7 @@ pub enum Message {
     JoinAccepted {
         peer_list: Vec<PeerInfo>,
         queue_state: QueueState,
+        assigned_role: Role,
     },
     PeerJoined(PeerInfo),
     PeerLeft(Uuid),
@@ -57,12 +58,20 @@ pub enum Message {
     },
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Role {
+    Listener = 0,
+    Moderator = 1,
+    Leader = 2,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PeerInfo {
     pub device_id: Uuid,
     pub name: String,
     pub clock_offset_us: i64,
     pub last_seen: u64,
+    pub role: Role,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -159,8 +168,10 @@ mod tests {
                     name: "Alice".into(),
                     clock_offset_us: 42,
                     last_seen: 99,
+                    role: Role::Listener,
                 }],
                 queue_state: QueueState::default(),
+                assigned_role: Role::Listener,
             },
         };
 

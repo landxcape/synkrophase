@@ -488,6 +488,7 @@ async fn run_join(
             name: "Leader".into(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Leader,
         }],
         QueueState::default(),
     ));

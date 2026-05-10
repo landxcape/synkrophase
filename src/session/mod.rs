@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::error::{Result, SynkroError};
 use crate::playback::engine::PlaybackStatus;
 use crate::protocol::messages::{
-    Message, PeerInfo, QueueCommand, QueueState, StreamUrl, SyncAnchor,
+    Message, PeerInfo, QueueCommand, QueueState, Role, StreamUrl, SyncAnchor,
 };
 use crate::queue::state::QueueManager;
 use crate::stream::resolver::StreamResolver;
@@ -189,6 +189,7 @@ impl SessionState {
         leader_addr: SocketAddr,
         peer_list: Vec<PeerInfo>,
         queue: QueueState,
+        _assigned_role: Role,
     ) {
         self.set_leader_id(leader_id);
         for peer in peer_list {

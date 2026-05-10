@@ -166,6 +166,7 @@ mod tests {
             name: "Test".into(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: crate::protocol::messages::Role::Listener,
         };
 
         registry.add(

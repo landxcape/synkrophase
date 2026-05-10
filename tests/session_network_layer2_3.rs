@@ -89,6 +89,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
         Message::JoinAccepted {
             peer_list,
             queue_state,
+            assigned_role: _,
         } => {
             assert!(peer_list.iter().any(|p| p.device_id == leader_id));
             assert_eq!(queue_state, QueueState::default());
@@ -103,6 +104,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
             name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Listener,
         },
         follower_socket.local_addr().unwrap(),
     );
@@ -157,6 +159,7 @@ async fn heartbeats_update_peer_registry_and_election_can_flip_leader() {
             name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Leader,
         }],
         QueueState::default(),
     ));

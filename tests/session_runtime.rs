@@ -191,6 +191,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
             name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Listener,
         },
         peer_addr,
     );
@@ -242,6 +243,7 @@ async fn leader_anchor_broadcast_sends_sync_anchor_envelope() {
             name: "TestUser".to_string(),
             clock_offset_us: 0,
             last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Listener,
         },
         peer_addr,
     );
