@@ -56,6 +56,16 @@ pub enum Message {
         name: String,
         text: String,
     },
+    ChatBroadcast {
+        display_name: String,
+        text: String,
+    },
+    Notification {
+        text: String,
+    },
+    PeerListUpdate {
+        names: Vec<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
