@@ -14,9 +14,6 @@ pub enum SynkroError {
     #[error("stale queue version: local={local}, received={received}")]
     StaleQueue { local: u64, received: u64 },
 
-    #[error("yt-dlp not found and user declined auto-install")]
-    YtdlpMissing,
-
     #[error("stream resolution failed: {0}")]
     StreamResolution(String),
 

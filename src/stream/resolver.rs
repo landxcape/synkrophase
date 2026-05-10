@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use tokio::process::Command;
 
 use crate::error::{Result, SynkroError};
-use crate::stream::bootstrap::parse_expiry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedStream {
@@ -32,7 +31,7 @@ impl StreamResolver {
         let url = first_line(&output)?;
 
         Ok(ResolvedStream {
-            expires_at: parse_expiry(url),
+            expires_at: None, // Expiry parsing removed with bootstrap
             url: url.to_string(),
         })
     }
