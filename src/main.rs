@@ -345,7 +345,7 @@ async fn run_host(
     synkrophase::session::runtime::print_event(
         Some(&stdout),
         &format!(
-            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n  - Media Port: {media_port}\n\nJoin with: cargo run -- join {room_code} --leader-addr {local_ip}:{session_port}",
+            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n  - Media Port: {media_port}\n\nJoin with: synkro join {room_code} --leader-addr {local_ip}:{session_port}",
             device.device_id
         ),
     );
