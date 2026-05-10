@@ -20,6 +20,7 @@ pub struct SessionMessageRuntime {
     follower_sync: Option<Arc<FollowerSyncRuntime>>,
     playback: Option<Arc<PlaybackEngine>>,
     stdout: Option<SharedWriter>,
+    name: String,
 }
 
 pub fn print_event(stdout: Option<&SharedWriter>, msg: &str) {
@@ -33,12 +34,13 @@ pub fn print_event(stdout: Option<&SharedWriter>, msg: &str) {
 }
 
 impl SessionMessageRuntime {
-    pub fn new(session: Arc<SessionState>, stdout: Option<SharedWriter>) -> Self {
+    pub fn new(session: Arc<SessionState>, stdout: Option<SharedWriter>, name: String) -> Self {
         Self {
             session,
             follower_sync: None,
             playback: None,
             stdout,
+            name,
         }
     }
 
@@ -55,6 +57,7 @@ impl SessionMessageRuntime {
     fn self_peer_info(&self) -> PeerInfo {
         PeerInfo {
             device_id: self.session.self_id(),
+            name: self.name.clone(),
             clock_offset_us: 0,
             last_seen: 0,
         }
@@ -63,6 +66,7 @@ impl SessionMessageRuntime {
     fn peer_info_for(sender: Uuid) -> PeerInfo {
         PeerInfo {
             device_id: sender,
+            name: "Unknown".into(),
             clock_offset_us: 0,
             last_seen: 0,
         }
@@ -132,7 +136,11 @@ impl SessionMessageRuntime {
             // Allow control messages from same device (CLI use case)
             let allowed = matches!(
                 envelope.payload,
-                Message::Pause { .. } | Message::Resume { .. } | Message::Play { .. } | Message::QueueProposal(_)
+                Message::Pause { .. }
+                    | Message::Resume { .. }
+                    | Message::Play { .. }
+                    | Message::QueueProposal(_)
+                    | Message::Chat { .. }
             );
             if !allowed {
                 return Ok(());
@@ -140,19 +148,37 @@ impl SessionMessageRuntime {
         }
 
         match envelope.payload {
-            Message::JoinRequest { room_code } => {
+            Message::JoinRequest { room_code, name } => {
                 if room_code != self.session.room_code() {
+                    print_event(
+                        self.stdout.as_ref(),
+                        &format!(
+                            "[Warning] Rejected join from {} due to room code mismatch ({} != {})",
+                            name,
+                            room_code,
+                            self.session.room_code()
+                        ),
+                    );
                     return Ok(());
                 }
 
-                self.session
-                    .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                let peer_info = PeerInfo {
+                    device_id: envelope.sender,
+                    name: name.clone(),
+                    clock_offset_us: 0,
+                    last_seen: 0,
+                };
+
+                self.session.record_peer_heartbeat(peer_info.clone(), src);
 
                 if !self.session.is_leader() {
                     return Ok(());
                 }
 
-                print_event(self.stdout.as_ref(), &format!("[System] Peer joined: {}", envelope.sender));
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!("[System] Peer joined: {}", peer_info.name),
+                );
 
                 let mut peer_list = self.session.snapshot().peer_list;
                 peer_list.push(self.self_peer_info());
@@ -189,7 +215,7 @@ impl SessionMessageRuntime {
                     socket,
                     self.session.self_id(),
                     port,
-                    Message::PeerJoined(Self::peer_info_for(envelope.sender)),
+                    Message::PeerJoined(peer_info.clone()),
                 )
                 .await;
                 Ok(())
@@ -200,18 +226,32 @@ impl SessionMessageRuntime {
             } => {
                 print_event(self.stdout.as_ref(), "[System] Joined room successfully.");
                 self.session
-                    .accept_join_accepted(envelope.sender, peer_list, queue_state);
+                    .accept_join_accepted(envelope.sender, src, peer_list, queue_state);
                 Ok(())
             }
             Message::PeerJoined(peer) => {
                 if peer.device_id != self.session.self_id() {
-                    print_event(self.stdout.as_ref(), &format!("[System] Peer joined: {}", peer.device_id));
+                    print_event(
+                        self.stdout.as_ref(),
+                        &format!("[System] Peer joined: {}", peer.name),
+                    );
                     self.session.record_peer_seen(peer);
                 }
                 Ok(())
             }
             Message::PeerLeft(peer_id) => {
-                print_event(self.stdout.as_ref(), &format!("[System] Peer left: {}", peer_id));
+                let peer_name = self
+                    .session
+                    .snapshot()
+                    .peer_list
+                    .iter()
+                    .find(|p| p.device_id == peer_id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| peer_id.to_string());
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!("[System] Peer left: {}", peer_name),
+                );
                 self.session.remove_peer(&peer_id);
                 Ok(())
             }
@@ -244,7 +284,7 @@ impl SessionMessageRuntime {
                 }
 
                 let updated = self.session.handle_queue_proposal(command.clone())?;
-                
+
                 let action = match command {
                     crate::protocol::messages::QueueCommand::Add(_) => "queued a track",
                     crate::protocol::messages::QueueCommand::Skip => "skipped the current track",
@@ -252,9 +292,16 @@ impl SessionMessageRuntime {
                 };
                 let log_msg = format!("[System] {} {}", envelope.sender, action);
                 print_event(self.stdout.as_ref(), &log_msg);
-                self.send_to_peers(socket, Message::SystemLog(log_msg)).await?;
-                
-                print_event(self.stdout.as_ref(), &format!("[System] Queue updated ({} upcoming)", updated.upcoming.len()));
+                self.send_to_peers(socket, Message::SystemLog(log_msg))
+                    .await?;
+
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!(
+                        "[System] Queue updated ({} upcoming)",
+                        updated.upcoming.len()
+                    ),
+                );
                 self.send_to_peers(socket, Message::QueueUpdate(updated))
                     .await?;
                 Ok(())
@@ -272,7 +319,10 @@ impl SessionMessageRuntime {
                         let stdout = self.stdout.clone();
                         tokio::task::spawn_blocking(move || {
                             if let Err(err) = playback.load_and_play(&track_id, &url) {
-                                print_event(stdout.as_ref(), &format!("[System] Playback error: {}", err));
+                                print_event(
+                                    stdout.as_ref(),
+                                    &format!("[System] Playback error: {}", err),
+                                );
                             }
                         });
                     }
@@ -284,11 +334,14 @@ impl SessionMessageRuntime {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
-                print_event(self.stdout.as_ref(), &format!("[System] Playback paused by {}", actor));
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!("[System] Playback paused by {}", actor),
+                );
                 if let Some(playback) = &self.playback {
                     playback.pause()?;
                 }
-                if self.session.is_leader() {
+                if self.session.is_leader() && envelope.sender == actor {
                     self.send_to_peers(socket, Message::Pause { actor }).await?;
                 }
                 Ok(())
@@ -298,12 +351,16 @@ impl SessionMessageRuntime {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
-                print_event(self.stdout.as_ref(), &format!("[System] Playback resumed by {}", actor));
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!("[System] Playback resumed by {}", actor),
+                );
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
-                if self.session.is_leader() {
-                    self.send_to_peers(socket, Message::Resume { actor }).await?;
+                if self.session.is_leader() && envelope.sender == actor {
+                    self.send_to_peers(socket, Message::Resume { actor })
+                        .await?;
                 }
                 Ok(())
             }
@@ -312,17 +369,47 @@ impl SessionMessageRuntime {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
-                print_event(self.stdout.as_ref(), &format!("[System] Playback started by {}", actor));
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!("[System] Playback started by {}", actor),
+                );
                 if let Some(playback) = &self.playback {
                     playback.resume()?;
                 }
-                if self.session.is_leader() {
+                if self.session.is_leader() && envelope.sender == actor {
                     self.send_to_peers(socket, Message::Play { actor }).await?;
                 }
                 Ok(())
             }
             Message::SystemLog(log) => {
                 print_event(self.stdout.as_ref(), &log);
+                Ok(())
+            }
+            Message::Chat { sender, name, text } => {
+                if envelope.sender != self.session.self_id() {
+                    self.session
+                        .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
+                }
+                print_event(self.stdout.as_ref(), &format!("[{}]: {}", name, text));
+                if self.session.is_leader() && envelope.sender == sender {
+                    // Relay to everyone EXCEPT the original sender to avoid double-printing
+                    let relay_message = Message::Chat {
+                        sender,
+                        name: name.clone(),
+                        text: text.clone(),
+                    };
+                    let envelope = Envelope {
+                        sender: self.session.self_id(),
+                        payload: relay_message,
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        for (peer_id, entry) in self.session.all_alive_peers() {
+                            if peer_id != sender {
+                                let _ = socket.send_to(&bytes, entry.addr).await;
+                            }
+                        }
+                    }
+                }
                 Ok(())
             }
             message => {

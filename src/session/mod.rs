@@ -16,7 +16,7 @@ use crate::stream::resolver::StreamResolver;
 use crate::sync::controller::SyncController;
 
 use self::leader::elect_leader;
-use self::peer::PeerRegistry;
+use self::peer::{PeerEntry, PeerRegistry};
 
 pub mod discovery;
 pub mod leader;
@@ -58,6 +58,7 @@ impl SessionState {
         room_code: String,
         self_id: Uuid,
         leader_id: Uuid,
+        leader_addr: SocketAddr,
         peer_list: Vec<PeerInfo>,
         queue_state: QueueState,
     ) -> Self {
@@ -72,9 +73,14 @@ impl SessionState {
         };
 
         for peer in peer_list {
+            let addr = if peer.device_id == leader_id {
+                leader_addr
+            } else {
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+            };
             session.peers.upsert(
                 peer,
-                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+                addr,
             );
         }
 
@@ -107,6 +113,10 @@ impl SessionState {
 
     pub fn peer_socket_addrs(&self) -> Vec<SocketAddr> {
         self.peers.peer_addrs()
+    }
+
+    pub fn all_alive_peers(&self) -> Vec<(Uuid, PeerEntry)> {
+        self.peers.all_alive()
     }
 
     pub fn queue_snapshot(&self) -> QueueState {
@@ -167,15 +177,21 @@ impl SessionState {
     pub fn accept_join_accepted(
         &self,
         leader_id: Uuid,
+        leader_addr: SocketAddr,
         peer_list: Vec<PeerInfo>,
         queue: QueueState,
     ) {
         self.set_leader_id(leader_id);
         for peer in peer_list {
             if peer.device_id != self.self_id {
-                self.record_peer_seen(peer);
+                if peer.device_id == leader_id {
+                    self.peers.upsert(peer, leader_addr);
+                } else {
+                    self.record_peer_seen(peer);
+                }
             }
         }
+        self.peers.remove(&Uuid::nil());
         self.force_queue_state(queue);
     }
 

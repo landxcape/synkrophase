@@ -36,14 +36,25 @@ impl PeerRegistry {
 
     pub fn upsert(&self, info: PeerInfo, addr: SocketAddr) {
         let mut peers = self.peers.write().unwrap();
-        peers.insert(
-            info.device_id,
-            PeerEntry {
-                info,
-                addr,
-                last_heartbeat: Instant::now(),
-            },
-        );
+        if let Some(existing) = peers.get_mut(&info.device_id) {
+            existing.last_heartbeat = Instant::now();
+            if addr.port() != 0 {
+                existing.addr = addr;
+            }
+            existing.info.clock_offset_us = info.clock_offset_us;
+            if info.name != "Unknown" {
+                existing.info.name = info.name.clone();
+            }
+        } else {
+            peers.insert(
+                info.device_id,
+                PeerEntry {
+                    info,
+                    addr,
+                    last_heartbeat: Instant::now(),
+                },
+            );
+        }
     }
 
     pub fn remove(&self, id: &Uuid) {
@@ -122,6 +133,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let info = PeerInfo {
             device_id: id,
+            name: "Test".into(),
             clock_offset_us: 0,
             last_seen: 0,
         };
