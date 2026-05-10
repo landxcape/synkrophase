@@ -16,7 +16,8 @@ use synkrophase::protocol::messages::{
 use synkrophase::session::discovery::Discovery;
 use synkrophase::session::runtime::{LeaderAnchorBroadcaster, SessionMessageRuntime};
 use synkrophase::session::{FollowerSyncRuntime, SessionState};
-use synkrophase::stream::resolver::StreamResolver;
+use synkrophase::stream::resolver::MediaRouter;
+use synkrophase::stream::server::MediaServer;
 use synkrophase::sync::controller::{ClockSource, PlaybackControl, SyncController};
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
@@ -24,6 +25,7 @@ use uuid::Uuid;
 
 const DEFAULT_CLOCK_PORT: u16 = 5870;
 const DEFAULT_SESSION_PORT: u16 = 5871;
+const DEFAULT_MEDIA_PORT: u16 = 5872;
 
 #[derive(Parser, Debug)]
 #[command(name = "synkro", about = "Synchronized LAN media playback")]
@@ -53,6 +55,9 @@ enum Commands {
         /// UDP port for session traffic.
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
+        /// TCP port for media server.
+        #[arg(long, default_value_t = DEFAULT_MEDIA_PORT)]
+        media_port: u16,
     },
     /// Join an existing session and run follower sync loop.
     Join {
@@ -170,9 +175,10 @@ async fn main() -> Result<()> {
             room_code,
             clock_port,
             session_port,
+            media_port,
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
-            run_host(device, sync_config, room, clock_port, session_port).await
+            run_host(device, sync_config, room, clock_port, session_port, media_port).await
         }
         Commands::Join {
             room_code,
@@ -277,6 +283,7 @@ async fn run_host(
     room_code: String,
     clock_port: u16,
     session_port: u16,
+    media_port: u16,
 ) -> Result<()> {
     let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::UNSPECIFIED,
@@ -304,6 +311,8 @@ async fn run_host(
         device.name.clone(),
     ));
     let playback = Arc::new(build_playback_engine());
+    let media_server = Arc::new(MediaServer::new(media_port));
+    let media_router = MediaRouter::new(media_server);
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
     let runtime =
@@ -354,7 +363,6 @@ async fn run_host(
         async move { run_role_manager_loop(session, socket, sender, cfg).await }
     });
 
-    let resolver: Option<StreamResolver> = None;
     let stream_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
@@ -362,7 +370,15 @@ async fn run_host(
         let playback = Arc::clone(&playback);
         let stdout = stdout.clone();
         async move {
-            run_stream_distribution_loop(session, socket, sender, resolver, playback, stdout).await
+            run_stream_distribution_loop(
+                session,
+                socket,
+                sender,
+                Some(media_router),
+                playback,
+                stdout,
+            )
+            .await
         }
     });
 
@@ -1011,7 +1027,7 @@ async fn run_stream_distribution_loop(
     session: Arc<SessionState>,
     socket: Arc<UdpSocket>,
     sender: Uuid,
-    resolver: Option<StreamResolver>,
+    resolver: Option<MediaRouter>,
     playback: Arc<PlaybackEngine>,
     stdout: rustyline_async::SharedWriter,
 ) -> Result<()> {

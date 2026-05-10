@@ -12,7 +12,7 @@ use crate::protocol::messages::{
     Message, PeerInfo, QueueCommand, QueueState, Role, StreamUrl, SyncAnchor,
 };
 use crate::queue::state::QueueManager;
-use crate::stream::resolver::StreamResolver;
+use crate::stream::resolver::MediaRouter;
 use crate::sync::controller::SyncController;
 
 use self::leader::appoint_successor;
@@ -244,7 +244,7 @@ impl SessionState {
         self.force_queue_state(queue);
     }
 
-    pub async fn resolve_current_track(&self, resolver: &StreamResolver) -> Result<StreamUrl> {
+    pub async fn resolve_current_track(&self, resolver: &MediaRouter) -> Result<StreamUrl> {
         if !self.is_leader() {
             return Err(SynkroError::NotLeader);
         }
@@ -257,7 +257,7 @@ impl SessionState {
         let stream = StreamUrl {
             track_id: track.id.clone(),
             url: resolved.url,
-            expires_at: resolved.expires_at.unwrap_or_default(),
+            expires_at: 0,
         };
 
         self.accept_stream_url(stream.clone());
