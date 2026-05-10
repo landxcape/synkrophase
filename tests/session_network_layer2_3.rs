@@ -5,7 +5,7 @@ use std::time::Duration;
 use synkrophase::clock::sync::ClockSync;
 use synkrophase::config::SyncConfig;
 use synkrophase::playback::engine::{PlaybackBackend, PlaybackEngine};
-use synkrophase::protocol::messages::{Envelope, Message, QueueCommand, QueueState, deserialize};
+use synkrophase::protocol::messages::{Envelope, Message, PeerInfo, QueueCommand, QueueState, Role, deserialize};
 use synkrophase::session::SessionState;
 use synkrophase::session::runtime::SessionMessageRuntime;
 use tokio::net::UdpSocket;
@@ -182,7 +182,13 @@ async fn heartbeats_update_peer_registry_and_election_can_flip_leader() {
         sender: id_b,
         payload: Message::Heartbeat {
             room_code: "ROOM42".into(),
-            is_leader: true,
+            info: PeerInfo {
+                device_id: id_b,
+                name: "Leader-B".into(),
+                clock_offset_us: 0,
+                last_seen: 0,
+                role: Role::Leader,
+            },
         },
     };
     let bytes = synkrophase::protocol::messages::serialize(&leader_hb).unwrap();

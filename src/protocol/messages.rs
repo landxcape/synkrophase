@@ -19,7 +19,7 @@ pub enum Message {
     },
     Heartbeat {
         room_code: String,
-        is_leader: bool,
+        info: PeerInfo,
     },
     JoinRequest {
         room_code: String,

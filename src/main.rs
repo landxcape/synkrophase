@@ -963,12 +963,10 @@ async fn run_debug(
                             anchor.is_playing
                         );
                     }
-                    Message::Heartbeat { is_leader, .. } => {
+                    Message::Heartbeat { info, .. } => {
                         println!(
-                            "{:<10} {:<40} Role: {}",
-                            "Heartbeat",
-                            envelope.sender,
-                            if is_leader { "Leader" } else { "Follower" }
+                            "{:<10} {:<40} Role: {:?}",
+                            "Heartbeat", envelope.sender, info.role
                         );
                     }
                     Message::JoinAccepted { peer_list, .. } => {
@@ -1209,7 +1207,7 @@ async fn run_heartbeat_loop(
             sender,
             payload: Message::Heartbeat {
                 room_code: room_code.clone(),
-                is_leader: session.is_leader(),
+                info: session.self_info(),
             },
         };
         let bytes = serialize(&envelope)?;
@@ -1231,11 +1229,18 @@ async fn run_role_manager_loop(
     let mut last_leader = session.leader_id();
 
     loop {
+        // Resolve names for all peers before pruning
+        let peer_names: std::collections::HashMap<Uuid, String> = session
+            .peer_ids()
+            .into_iter()
+            .map(|id| (id, session.display_name(&id)))
+            .collect();
+
         let (expired, heir) = session.prune_and_appoint(timeout);
 
         // Notify about expired peers
         for id in expired {
-            let name = session.display_name(&id);
+            let name = peer_names.get(&id).cloned().unwrap_or_else(|| id.to_string());
             let peer_left_env = Envelope {
                 sender,
                 payload: Message::PeerLeft(id),

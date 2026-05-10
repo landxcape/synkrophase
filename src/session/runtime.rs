@@ -269,14 +269,13 @@ impl SessionMessageRuntime {
             }
             Message::Heartbeat {
                 room_code,
-                is_leader,
+                info,
             } => {
                 if room_code != self.session.room_code() {
                     return Ok(());
                 }
-                self.session
-                    .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
-                if is_leader {
+                self.session.record_peer_heartbeat(info.clone(), src);
+                if info.role == Role::Leader {
                     self.session.set_leader_id(envelope.sender);
                 }
                 Ok(())

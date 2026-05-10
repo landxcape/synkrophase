@@ -99,6 +99,9 @@ impl SessionState {
     }
 
     pub fn is_alive(&self, id: &Uuid) -> bool {
+        if *id == self.self_id {
+            return true;
+        }
         self.peers.is_alive(id)
     }
 
