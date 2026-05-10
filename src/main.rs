@@ -16,7 +16,6 @@ use synkrophase::protocol::messages::{
 use synkrophase::session::discovery::Discovery;
 use synkrophase::session::runtime::{LeaderAnchorBroadcaster, SessionMessageRuntime};
 use synkrophase::session::{FollowerSyncRuntime, SessionState};
-use synkrophase::stream::bootstrap::ensure_ytdlp;
 use synkrophase::stream::resolver::StreamResolver;
 use synkrophase::sync::controller::{ClockSource, PlaybackControl, SyncController};
 use tokio::net::UdpSocket;
@@ -355,13 +354,7 @@ async fn run_host(
         async move { run_role_manager_loop(session, socket, sender, cfg).await }
     });
 
-    let resolver = match ensure_ytdlp(&device) {
-        Ok(path) => Some(StreamResolver::new(path)),
-        Err(err) => {
-            eprintln!("stream resolver disabled (yt-dlp missing): {err}");
-            None
-        }
-    };
+    let resolver: Option<StreamResolver> = None;
     let stream_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
