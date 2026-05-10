@@ -130,8 +130,9 @@ pub struct RodioPlaybackBackend {
 }
 
 struct RodioInner {
-    _sink_handle: rodio::MixerDeviceSink,
-    player: rodio::Player,
+    _stream: rodio::OutputStream,
+    _handle: rodio::OutputStreamHandle,
+    sink: rodio::Sink,
 }
 
 impl RodioPlaybackBackend {
@@ -151,9 +152,9 @@ impl RodioPlaybackBackend {
         })
     }
 
-    fn with_player<F>(&self, f: F) -> Result<()>
+    fn with_sink<F, T>(&self, f: F) -> Result<T>
     where
-        F: FnOnce(&rodio::Player) -> Result<()>,
+        F: FnOnce(&rodio::Sink) -> T,
     {
         let guard = self.inner.lock().unwrap();
         let Some(inner) = guard.as_ref() else {
@@ -161,7 +162,7 @@ impl RodioPlaybackBackend {
                 "no active playback stream".to_string(),
             ));
         };
-        f(&inner.player)
+        Ok(f(&inner.sink))
     }
 }
 
@@ -198,7 +199,7 @@ impl PlaybackBackend for RodioPlaybackBackend {
             })?;
 
         println!("[Audio] Opening output device...");
-        let sink_handle = if let Some(idx) = self.device_index {
+        let (stream, handle) = if let Some(idx) = self.device_index {
             let host = rodio::cpal::default_host();
             let mut devices = host.output_devices().map_err(|e| {
                 crate::error::SynkroError::Playback(format!("Host error: {}", e))
@@ -206,72 +207,53 @@ impl PlaybackBackend for RodioPlaybackBackend {
             let device = devices.nth(idx).ok_or_else(|| {
                 crate::error::SynkroError::Playback(format!("Device index {} not found", idx))
             })?;
-            rodio::DeviceSinkBuilder::from_device(device)
-                .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))?
-                .build()
-                .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))
+            rodio::OutputStream::try_from_device(&device)
         } else {
-            rodio::DeviceSinkBuilder::open_default_sink()
-                .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))
+            rodio::OutputStream::try_default()
         }
         .map_err(|err| {
-            eprintln!("[Audio] Error: {}", err);
-            err
+            let e = crate::error::SynkroError::Playback(format!("Hardware error: {}", err));
+            eprintln!("[Audio] Error: {}", e);
+            e
         })?;
         
-        let player = rodio::Player::connect_new(sink_handle.mixer());
-        player.append(decoder);
-        player.play();
+        let sink = rodio::Sink::try_new(&handle).map_err(|e| crate::error::SynkroError::Playback(e.to_string()))?;
+        sink.append(decoder);
+        sink.play();
         println!("[Audio] Playback started.");
 
         *self.inner.lock().unwrap() = Some(RodioInner {
-            _sink_handle: sink_handle,
-            player,
+            _stream: stream,
+            _handle: handle,
+            sink,
         });
         Ok(())
     }
 
     fn position_us(&self) -> i64 {
-        let guard = self.inner.lock().unwrap();
-        guard
-            .as_ref()
-            .map(|inner| inner.player.get_pos().as_micros() as i64)
-            .unwrap_or(0)
+        self.with_sink(|sink| sink.get_pos().as_micros() as i64).unwrap_or(0)
     }
 
     fn set_rate(&self, rate: f32) -> Result<()> {
-        self.with_player(|player| {
-            player.set_speed(rate);
-            Ok(())
-        })
+        self.with_sink(|sink| sink.set_speed(rate))
     }
 
     fn seek(&self, position_us: i64) -> Result<()> {
-        self.with_player(|player| {
-            player
-                .try_seek(std::time::Duration::from_micros(position_us.max(0) as u64))
+        self.with_sink(|sink| {
+            sink.try_seek(std::time::Duration::from_micros(position_us.max(0) as u64))
                 .map_err(|err| crate::error::SynkroError::Playback(err.to_string()))
-        })
+        })?
     }
 
     fn pause(&self) -> Result<()> {
-        self.with_player(|player| {
-            player.pause();
-            Ok(())
-        })
+        self.with_sink(|sink| sink.pause())
     }
 
     fn resume(&self) -> Result<()> {
-        self.with_player(|player| {
-            player.play();
-            Ok(())
-        })
+        self.with_sink(|sink| sink.play())
     }
 
     fn stop(&self) -> Result<()> {
-        self.with_player(|player| {
-            player.stop();
-            Ok(())
-        })
+        self.with_sink(|sink| sink.stop())
     }
 }
