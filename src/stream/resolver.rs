@@ -45,6 +45,7 @@ impl StreamResolver {
     async fn run_command<const N: usize>(&self, args: [&str; N]) -> Result<String> {
         let output = Command::new(&self.ytdlp_path)
             .args(["--cookies-from-browser", "chrome"])
+            .args(["--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"])
             .args(args)
             .output()
             .await

@@ -9,20 +9,28 @@ use crate::error::{Result, SynkroError};
 const YTDLP_RELEASE_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
 
 pub fn ensure_ytdlp(config: &DeviceConfig) -> Result<PathBuf> {
-    if let Some(path) = config.ytdlp_path.as_ref().filter(|path| path.exists()) {
-        return Ok(path.clone());
-    }
+    let path = if let Some(path) = config.ytdlp_path.as_ref().filter(|path| path.exists()) {
+        path.clone()
+    } else if let Some(path) = find_in_path("yt-dlp") {
+        path
+    } else {
+        let workspace_binary = config.data_dir.join("bin").join("yt-dlp");
+        if workspace_binary.exists() {
+            workspace_binary
+        } else {
+            return Err(SynkroError::YtdlpMissing);
+        }
+    };
 
-    if let Some(path) = find_in_path("yt-dlp") {
-        return Ok(path);
-    }
+    // Try to update in background (non-blocking, don't care if it fails)
+    let update_path = path.clone();
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new(update_path)
+            .arg("-U")
+            .output();
+    });
 
-    let workspace_binary = config.data_dir.join("bin").join("yt-dlp");
-    if workspace_binary.exists() {
-        return Ok(workspace_binary);
-    }
-
-    Err(SynkroError::YtdlpMissing)
+    Ok(path)
 }
 
 pub fn parse_expiry(url: &str) -> Option<u64> {
