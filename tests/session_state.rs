@@ -76,7 +76,10 @@ fn heartbeat_expiry_re_elects_lowest_live_peer() {
     session.record_peer_heartbeat(peer_info(other_peer), addr);
     session.mark_peer_stale(&old_leader, Duration::from_secs(5));
 
-    let expired = session.prune_and_elect(Duration::from_secs(3));
+    let (expired, heir) = session.prune_and_appoint(Duration::from_secs(3));
+    if heir == self_id {
+        session.promote_to_leader();
+    }
 
     assert_eq!(expired, vec![old_leader]);
     assert_eq!(session.leader_id(), self_id);

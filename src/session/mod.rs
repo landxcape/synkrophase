@@ -15,7 +15,7 @@ use crate::queue::state::QueueManager;
 use crate::stream::resolver::StreamResolver;
 use crate::sync::controller::SyncController;
 
-use self::leader::elect_leader;
+use self::leader::appoint_successor;
 use self::peer::{PeerEntry, PeerRegistry};
 
 pub mod discovery;
@@ -27,6 +27,7 @@ pub struct SessionState {
     room_code: String,
     self_id: Uuid,
     self_name: String,
+    self_role: RwLock<Role>,
     leader_id: RwLock<Uuid>,
     peers: PeerRegistry,
     queue: QueueManager,
@@ -48,6 +49,7 @@ impl SessionState {
             room_code,
             self_id,
             self_name,
+            self_role: RwLock::new(Role::Leader),
             leader_id: RwLock::new(self_id),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
@@ -69,6 +71,7 @@ impl SessionState {
             room_code,
             self_id,
             self_name,
+            self_role: RwLock::new(Role::Listener),
             leader_id: RwLock::new(leader_id),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
@@ -92,11 +95,28 @@ impl SessionState {
     }
 
     pub fn is_leader(&self) -> bool {
-        self.leader_id() == self.self_id
+        self.role() == Role::Leader
+    }
+
+    pub fn is_alive(&self, id: &Uuid) -> bool {
+        self.peers.is_alive(id)
     }
 
     pub fn self_id(&self) -> Uuid {
         self.self_id
+    }
+
+    pub fn role(&self) -> Role {
+        *self.self_role.read().unwrap()
+    }
+
+    pub fn set_role(&self, role: Role) {
+        *self.self_role.write().unwrap() = role;
+    }
+
+    pub fn promote_to_leader(&self) {
+        self.set_role(Role::Leader);
+        self.set_leader_id(self.self_id);
     }
 
     pub fn room_code(&self) -> &str {
@@ -109,6 +129,16 @@ impl SessionState {
 
     pub fn set_leader_id(&self, leader_id: Uuid) {
         *self.leader_id.write().unwrap() = leader_id;
+    }
+
+    pub fn self_info(&self) -> PeerInfo {
+        PeerInfo {
+            device_id: self.self_id,
+            name: self.self_name.clone(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: self.role(),
+        }
     }
 
     pub fn peer_ids(&self) -> Vec<Uuid> {
@@ -159,12 +189,10 @@ impl SessionState {
         self.peers.mark_stale(id, elapsed);
     }
 
-    pub fn prune_and_elect(&self, timeout: Duration) -> Vec<Uuid> {
+    pub fn prune_and_appoint(&self, timeout: Duration) -> (Vec<Uuid>, Uuid) {
         let expired = self.peers.prune_expired(timeout);
-        let current = self.leader_id();
-        let next = elect_leader(&self.peers.peer_ids(), self.self_id, Some(current));
-        *self.leader_id.write().unwrap() = next;
-        expired
+        let heir = appoint_successor(&self.peers.peer_infos(), &self.self_info());
+        (expired, heir)
     }
 
     pub fn handle_queue_proposal(&self, command: QueueCommand) -> Result<QueueState> {
@@ -189,9 +217,10 @@ impl SessionState {
         leader_addr: SocketAddr,
         peer_list: Vec<PeerInfo>,
         queue: QueueState,
-        _assigned_role: Role,
+        assigned_role: Role,
     ) {
         self.set_leader_id(leader_id);
+        self.set_role(assigned_role);
         for peer in peer_list {
             if peer.device_id != self.self_id {
                 if peer.device_id == leader_id {

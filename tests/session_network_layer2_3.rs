@@ -191,7 +191,10 @@ async fn heartbeats_update_peer_registry_and_election_can_flip_leader() {
         .unwrap();
 
     tokio::time::sleep(Duration::from_millis(cfg.heartbeat_timeout_ms + 10)).await;
-    session_a.prune_and_elect(Duration::from_millis(cfg.heartbeat_timeout_ms));
+    let (_expired, heir) = session_a.prune_and_appoint(Duration::from_millis(cfg.heartbeat_timeout_ms));
+    if heir == session_a.self_id() {
+        session_a.promote_to_leader();
+    }
     assert!(
         session_a.is_leader(),
         "A should elect itself after leader timeout"

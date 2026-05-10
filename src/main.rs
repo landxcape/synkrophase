@@ -344,15 +344,15 @@ async fn run_host(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         let room = room_code.clone();
-        async move { run_heartbeat_loop(session, socket, sender, room, true, cfg).await }
+        async move { run_heartbeat_loop(session, socket, sender, room, cfg).await }
     });
 
-    let election_task = tokio::spawn({
+    let role_manager_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
         let cfg = sync_config.clone();
-        async move { run_election_loop(session, socket, sender, cfg).await }
+        async move { run_role_manager_loop(session, socket, sender, cfg).await }
     });
 
     let resolver = match ensure_ytdlp(&device) {
@@ -413,11 +413,11 @@ async fn run_host(
                 Err(err) => eprintln!("heartbeat task cancelled: {err}"),
             }
         }
-        res = election_task => {
+        res = role_manager_task => {
             match res {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("election loop stopped: {err}"),
-                Err(err) => eprintln!("election task cancelled: {err}"),
+                Ok(Err(err)) => eprintln!("role manager loop stopped: {err}"),
+                Err(err) => eprintln!("role manager task cancelled: {err}"),
             }
         }
         res = stream_task => {
@@ -538,15 +538,15 @@ async fn run_join(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         let room = room_code.clone();
-        async move { run_heartbeat_loop(session, socket, sender, room, false, cfg).await }
+        async move { run_heartbeat_loop(session, socket, sender, room, cfg).await }
     });
 
-    let election_task = tokio::spawn({
+    let role_manager_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
         let cfg = sync_config.clone();
-        async move { run_election_loop(session, socket, sender, cfg).await }
+        async move { run_role_manager_loop(session, socket, sender, cfg).await }
     });
 
     let repl_task = tokio::spawn({
@@ -591,11 +591,11 @@ async fn run_join(
                 Err(err) => eprintln!("heartbeat task cancelled: {err}"),
             }
         }
-        res = election_task => {
+        res = role_manager_task => {
             match res {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("election loop stopped: {err}"),
-                Err(err) => eprintln!("election task cancelled: {err}"),
+                Ok(Err(err)) => eprintln!("role manager loop stopped: {err}"),
+                Err(err) => eprintln!("role manager task cancelled: {err}"),
             }
         }
         res = repl_task => {
@@ -1202,7 +1202,6 @@ async fn run_heartbeat_loop(
     socket: Arc<UdpSocket>,
     sender: Uuid,
     room_code: String,
-    is_leader: bool,
     config: SyncConfig,
 ) -> Result<()> {
     loop {
@@ -1210,7 +1209,7 @@ async fn run_heartbeat_loop(
             sender,
             payload: Message::Heartbeat {
                 room_code: room_code.clone(),
-                is_leader,
+                is_leader: session.is_leader(),
             },
         };
         let bytes = serialize(&envelope)?;
@@ -1222,7 +1221,7 @@ async fn run_heartbeat_loop(
     }
 }
 
-async fn run_election_loop(
+async fn run_role_manager_loop(
     session: Arc<SessionState>,
     socket: Arc<UdpSocket>,
     sender: Uuid,
@@ -1230,10 +1229,11 @@ async fn run_election_loop(
 ) -> Result<()> {
     let timeout = Duration::from_millis(config.heartbeat_timeout_ms);
     let mut last_leader = session.leader_id();
-    loop {
-        let expired = session.prune_and_elect(timeout);
 
-        // Broadcast PeerLeft and SystemLog for each expired peer
+    loop {
+        let (expired, heir) = session.prune_and_appoint(timeout);
+
+        // Notify about expired peers
         for id in expired {
             let name = session.display_name(&id);
             let peer_left_env = Envelope {
@@ -1257,12 +1257,18 @@ async fn run_election_loop(
             }
         }
 
+        // Handle Succession
+        if !session.is_alive(&session.leader_id()) && heir == session.self_id() {
+            // We are the heir, and the leader is dead. Promote!
+            session.promote_to_leader();
+        }
+
         let leader = session.leader_id();
         if leader != last_leader {
             let name = session.display_name(&leader);
             last_leader = leader;
 
-            // Unicast LeaderElected
+            // Broadcast LeaderElected
             let envelope = Envelope {
                 sender,
                 payload: Message::LeaderElected(leader),
@@ -1273,7 +1279,7 @@ async fn run_election_loop(
                 }
             }
 
-            // Unicast SystemLog for leader change
+            // Broadcast SystemLog
             let log_env = Envelope {
                 sender,
                 payload: Message::SystemLog(format!("[System] {} is now the Leader.", name)),
@@ -1284,7 +1290,8 @@ async fn run_election_loop(
                 }
             }
         }
-        sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
+
+        sleep(Duration::from_millis(500)).await;
     }
 }
 
