@@ -117,13 +117,20 @@ impl SessionMessageRuntime {
     }
 
     async fn broadcast_message(
+        &self,
         socket: &UdpSocket,
         sender: Uuid,
-        port: u16,
         message: Message,
     ) -> Result<()> {
-        let broadcast_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-        Self::send_message(socket, sender, broadcast_addr, message).await
+        let envelope = Envelope {
+            sender,
+            payload: message,
+        };
+        let bytes = serialize(&envelope)?;
+        for addr in self.session.peer_socket_addrs() {
+            let _ = socket.send_to(&bytes, addr).await;
+        }
+        Ok(())
     }
 
     async fn handle_incoming(
@@ -210,11 +217,9 @@ impl SessionMessageRuntime {
                     .await;
                 }
 
-                let port = socket.local_addr()?.port();
-                let _ = Self::broadcast_message(
+                let _ = self.broadcast_message(
                     socket,
                     self.session.self_id(),
-                    port,
                     Message::PeerJoined(peer_info.clone()),
                 )
                 .await;

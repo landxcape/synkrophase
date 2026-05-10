@@ -1204,7 +1204,6 @@ async fn run_heartbeat_loop(
     is_leader: bool,
     config: SyncConfig,
 ) -> Result<()> {
-    let port = socket.local_addr()?.port();
     loop {
         let envelope = Envelope {
             sender,
@@ -1214,13 +1213,8 @@ async fn run_heartbeat_loop(
             },
         };
         let bytes = serialize(&envelope)?;
-        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-        let _ = socket.send_to(&bytes, addr).await?;
-
         for peer_addr in session.peer_socket_addrs() {
-            if peer_addr.port() != port {
-                let _ = socket.send_to(&bytes, peer_addr).await;
-            }
+            let _ = socket.send_to(&bytes, peer_addr).await;
         }
 
         sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
@@ -1234,7 +1228,6 @@ async fn run_election_loop(
     config: SyncConfig,
 ) -> Result<()> {
     let timeout = Duration::from_millis(config.heartbeat_timeout_ms);
-    let port = socket.local_addr()?.port();
     let mut last_leader = session.leader_id();
     loop {
         let expired = session.prune_and_elect(timeout);
@@ -1252,21 +1245,13 @@ async fn run_election_loop(
             };
 
             if let Ok(bytes) = serialize(&peer_left_env) {
-                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-                let _ = socket.send_to(&bytes, addr).await;
                 for peer_addr in session.peer_socket_addrs() {
-                    if peer_addr.port() != port {
-                        let _ = socket.send_to(&bytes, peer_addr).await;
-                    }
+                    let _ = socket.send_to(&bytes, peer_addr).await;
                 }
             }
             if let Ok(bytes) = serialize(&log_env) {
-                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-                let _ = socket.send_to(&bytes, addr).await;
                 for peer_addr in session.peer_socket_addrs() {
-                    if peer_addr.port() != port {
-                        let _ = socket.send_to(&bytes, peer_addr).await;
-                    }
+                    let _ = socket.send_to(&bytes, peer_addr).await;
                 }
             }
         }
@@ -1276,34 +1261,25 @@ async fn run_election_loop(
             let name = session.display_name(&leader);
             last_leader = leader;
 
-            // Broadcast LeaderElected
+            // Unicast LeaderElected
             let envelope = Envelope {
                 sender,
                 payload: Message::LeaderElected(leader),
             };
             if let Ok(bytes) = serialize(&envelope) {
-                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-                let _ = socket.send_to(&bytes, addr).await?;
-
                 for peer_addr in session.peer_socket_addrs() {
-                    if peer_addr.port() != port {
-                        let _ = socket.send_to(&bytes, peer_addr).await;
-                    }
+                    let _ = socket.send_to(&bytes, peer_addr).await;
                 }
             }
 
-            // Broadcast SystemLog for leader change
+            // Unicast SystemLog for leader change
             let log_env = Envelope {
                 sender,
                 payload: Message::SystemLog(format!("[System] {} is now the Leader.", name)),
             };
             if let Ok(bytes) = serialize(&log_env) {
-                let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, port));
-                let _ = socket.send_to(&bytes, addr).await;
                 for peer_addr in session.peer_socket_addrs() {
-                    if peer_addr.port() != port {
-                        let _ = socket.send_to(&bytes, peer_addr).await;
-                    }
+                    let _ = socket.send_to(&bytes, peer_addr).await;
                 }
             }
         }
