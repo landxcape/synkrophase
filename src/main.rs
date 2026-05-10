@@ -302,6 +302,7 @@ async fn run_host(
     let session = Arc::new(SessionState::new_leader(
         room_code.clone(),
         device.device_id,
+        device.name.clone(),
     ));
     let playback = Arc::new(build_playback_engine());
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
@@ -479,6 +480,7 @@ async fn run_join(
     let session = Arc::new(SessionState::from_join(
         room_code.clone(),
         device.device_id,
+        device.name.clone(),
         resolved_leader_id,
         resolved_leader_addr,
         vec![synkrophase::protocol::messages::PeerInfo {

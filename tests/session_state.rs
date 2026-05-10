@@ -41,6 +41,7 @@ fn join_accepted_initializes_peer_session() {
     let session = SessionState::from_join(
         "ROOM42".into(),
         self_id,
+        "Self".into(),
         leader_id,
         "127.0.0.1:8080".parse().unwrap(),
         vec![peer_info(leader_id)],
@@ -63,6 +64,7 @@ fn heartbeat_expiry_re_elects_lowest_live_peer() {
     let session = SessionState::from_join(
         "ROOM42".into(),
         self_id,
+        "Self".into(),
         old_leader,
         addr,
         vec![peer_info(old_leader), peer_info(other_peer)],
@@ -83,7 +85,7 @@ fn heartbeat_expiry_re_elects_lowest_live_peer() {
 #[test]
 fn leader_serializes_concurrent_queue_proposals() {
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "Leader".into()));
 
     let first = Arc::clone(&session);
     let handle_a = thread::spawn(move || {
@@ -118,7 +120,7 @@ fn leader_serializes_concurrent_queue_proposals() {
 #[test]
 fn leader_snapshot_preserves_last_queue_state_for_handoff() {
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let session = SessionState::new_leader("ROOM42".into(), leader_id);
+    let session = SessionState::new_leader("ROOM42".into(), leader_id, "Leader".into());
     session
         .handle_queue_proposal(QueueCommand::Add(track("one")))
         .unwrap();
@@ -147,6 +149,7 @@ fn apply_message_updates_stream_and_sync_anchor_state() {
     let session = SessionState::from_join(
         "ROOM42".into(),
         self_id,
+        "Self".into(),
         leader_id,
         "127.0.0.1:8080".parse().unwrap(),
         vec![],
@@ -179,7 +182,7 @@ fn apply_message_updates_stream_and_sync_anchor_state() {
 #[test]
 fn leader_builds_sync_anchor_message_from_playback_status() {
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let session = SessionState::new_leader("ROOM42".into(), leader_id);
+    let session = SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string());
     let status = PlaybackStatus {
         track_id: Some("track-1".into()),
         stream_url: Some("https://cdn.example.com/audio".into()),

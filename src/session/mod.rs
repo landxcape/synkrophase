@@ -26,6 +26,7 @@ pub mod runtime;
 pub struct SessionState {
     room_code: String,
     self_id: Uuid,
+    self_name: String,
     leader_id: RwLock<Uuid>,
     peers: PeerRegistry,
     queue: QueueManager,
@@ -42,10 +43,11 @@ pub struct SessionSnapshot {
 }
 
 impl SessionState {
-    pub fn new_leader(room_code: String, self_id: Uuid) -> Self {
+    pub fn new_leader(room_code: String, self_id: Uuid, self_name: String) -> Self {
         Self {
             room_code,
             self_id,
+            self_name,
             leader_id: RwLock::new(self_id),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
@@ -57,6 +59,7 @@ impl SessionState {
     pub fn from_join(
         room_code: String,
         self_id: Uuid,
+        self_name: String,
         leader_id: Uuid,
         leader_addr: SocketAddr,
         peer_list: Vec<PeerInfo>,
@@ -65,6 +68,7 @@ impl SessionState {
         let session = Self {
             room_code,
             self_id,
+            self_name,
             leader_id: RwLock::new(leader_id),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
@@ -109,6 +113,10 @@ impl SessionState {
 
     pub fn peer_ids(&self) -> Vec<Uuid> {
         self.peers.peer_ids()
+    }
+
+    pub fn display_name(&self, id: &Uuid) -> String {
+        self.peers.display_name(id, self.self_id, &self.self_name)
     }
 
     pub fn peer_socket_addrs(&self) -> Vec<SocketAddr> {

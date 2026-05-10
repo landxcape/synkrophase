@@ -77,6 +77,7 @@ async fn process_envelope_applies_stream_and_sync_anchor() {
     let session = Arc::new(SessionState::from_join(
         "ROOM42".into(),
         Uuid::new_v4(),
+        "TestUser".to_string(),
         Uuid::new_v4(),
         "127.0.0.1:8080".parse().unwrap(),
         vec![],
@@ -126,7 +127,7 @@ async fn process_envelope_applies_stream_and_sync_anchor() {
 #[tokio::test]
 async fn runtime_handles_playback_controls_via_socket() {
     let leader_id = Uuid::new_v4();
-    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string()));
 
     let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let addr = socket.local_addr().unwrap();
@@ -176,7 +177,7 @@ async fn runtime_handles_playback_controls_via_socket() {
 #[tokio::test]
 async fn leader_broadcasts_playback_controls_to_peers() {
     let leader_id = Uuid::new_v4();
-    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string()));
 
     let leader_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let leader_addr = leader_socket.local_addr().unwrap();
@@ -232,7 +233,7 @@ async fn leader_broadcasts_playback_controls_to_peers() {
 #[tokio::test]
 async fn leader_anchor_broadcast_sends_sync_anchor_envelope() {
     let leader_id = Uuid::new_v4();
-    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string()));
     let peer_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let peer_addr: SocketAddr = peer_socket.local_addr().unwrap();
     session.record_peer_heartbeat(
@@ -290,6 +291,7 @@ async fn stream_url_refresh_does_not_restart_playback() {
     let session = Arc::new(SessionState::from_join(
         "ROOM42".into(),
         Uuid::new_v4(),
+        "TestUser".to_string(),
         leader_id,
         "127.0.0.1:8080".parse().unwrap(),
         vec![],

@@ -32,7 +32,7 @@ fn track(id: &str) -> Track {
 #[tokio::test]
 async fn leader_resolves_current_track_into_stream_url_message() {
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let session = SessionState::new_leader("ROOM42".into(), leader_id);
+    let session = SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string());
     session
         .handle_queue_proposal(QueueCommand::Add(track("one")))
         .unwrap();
@@ -62,7 +62,7 @@ async fn leader_resolves_current_track_into_stream_url_message() {
 #[tokio::test]
 async fn expiry_refresh_logic_triggers_re_resolution() {
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let session = std::sync::Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    let session = std::sync::Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string()));
     session
         .handle_queue_proposal(QueueCommand::Add(track("refresh")))
         .unwrap();
@@ -142,10 +142,11 @@ fn peer_accepts_stream_url_distribution() {
     let session = SessionState::from_join(
         "ROOM42".into(),
         self_id,
+        "TestUser".to_string(),
         leader_id,
         "127.0.0.1:8080".parse().unwrap(),
         vec![],
-        Default::default(),
+        synkrophase::protocol::messages::QueueState::default(),
     );
 
     let stream = StreamUrl {

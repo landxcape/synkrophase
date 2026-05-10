@@ -177,7 +177,7 @@ impl SessionMessageRuntime {
 
                 print_event(
                     self.stdout.as_ref(),
-                    &format!("[System] Peer joined: {}", peer_info.name),
+                    &format!("[System] Peer joined: {}", self.session.display_name(&envelope.sender)),
                 );
 
                 let mut peer_list = self.session.snapshot().peer_list;
@@ -231,23 +231,16 @@ impl SessionMessageRuntime {
             }
             Message::PeerJoined(peer) => {
                 if peer.device_id != self.session.self_id() {
+                    self.session.record_peer_seen(peer.clone());
                     print_event(
                         self.stdout.as_ref(),
-                        &format!("[System] Peer joined: {}", peer.name),
+                        &format!("[System] Peer joined: {}", self.session.display_name(&peer.device_id)),
                     );
-                    self.session.record_peer_seen(peer);
                 }
                 Ok(())
             }
             Message::PeerLeft(peer_id) => {
-                let peer_name = self
-                    .session
-                    .snapshot()
-                    .peer_list
-                    .iter()
-                    .find(|p| p.device_id == peer_id)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_else(|| peer_id.to_string());
+                let peer_name = self.session.display_name(&peer_id);
                 print_event(
                     self.stdout.as_ref(),
                     &format!("[System] Peer left: {}", peer_name),
@@ -385,17 +378,18 @@ impl SessionMessageRuntime {
                 print_event(self.stdout.as_ref(), &log);
                 Ok(())
             }
-            Message::Chat { sender, name, text } => {
+            Message::Chat { sender, name: _, text } => {
                 if envelope.sender != self.session.self_id() {
                     self.session
                         .record_peer_heartbeat(Self::peer_info_for(envelope.sender), src);
                 }
-                print_event(self.stdout.as_ref(), &format!("[{}]: {}", name, text));
+                let display_name = self.session.display_name(&sender);
+                print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
                 if self.session.is_leader() && envelope.sender == sender {
                     // Relay to everyone EXCEPT the original sender to avoid double-printing
                     let relay_message = Message::Chat {
                         sender,
-                        name: name.clone(),
+                        name: display_name,
                         text: text.clone(),
                     };
                     let envelope = Envelope {

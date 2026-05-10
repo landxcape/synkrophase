@@ -119,6 +119,36 @@ impl PeerRegistry {
             entry.last_heartbeat = Instant::now() - elapsed;
         }
     }
+
+    pub fn display_name(&self, id: &Uuid, self_id: Uuid, self_name: &str) -> String {
+        let peers = self.peers.read().unwrap();
+
+        let name = if *id == self_id {
+            self_name.to_string()
+        } else {
+            peers
+                .get(id)
+                .map(|p| p.info.name.clone())
+                .unwrap_or_else(|| "Unknown".to_string())
+        };
+
+        // Count occurrences of this name across self and all registered peers
+        let mut count = 0;
+        if self_name == name {
+            count += 1;
+        }
+        for peer in peers.values() {
+            if peer.info.name == name {
+                count += 1;
+            }
+        }
+
+        if count > 1 {
+            format!("{}#{}", name, &id.to_string()[..4])
+        } else {
+            name
+        }
+    }
 }
 
 #[cfg(test)]

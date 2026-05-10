@@ -63,6 +63,7 @@ async fn ingest_message_updates_session_and_controller_anchor() {
     let session = SessionState::from_join(
         "ROOM42".into(),
         Uuid::new_v4(),
+        "Follower".into(),
         Uuid::new_v4(),
         "127.0.0.1:8080".parse().unwrap(),
         vec![],

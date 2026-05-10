@@ -44,7 +44,7 @@ async fn join_request_gets_join_accepted_and_queue_proposal_broadcasts_update() 
     let leader_id = Uuid::new_v4();
     let follower_id = Uuid::new_v4();
 
-    let leader_session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id));
+    let leader_session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string()));
     let leader_runtime = SessionMessageRuntime::new(Arc::clone(&leader_session), None, "TestUser".to_string());
 
     let leader_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
@@ -149,6 +149,7 @@ async fn heartbeats_update_peer_registry_and_election_can_flip_leader() {
     let session_a = Arc::new(SessionState::from_join(
         "ROOM42".into(),
         id_a,
+        "TestUser".to_string(),
         id_b,
         "127.0.0.1:8080".parse().unwrap(),
         vec![synkrophase::protocol::messages::PeerInfo {
