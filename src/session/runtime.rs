@@ -122,23 +122,6 @@ impl SessionMessageRuntime {
         Ok(())
     }
 
-    async fn broadcast_message(
-        &self,
-        socket: &UdpSocket,
-        sender: Uuid,
-        message: Message,
-    ) -> Result<()> {
-        let envelope = Envelope {
-            sender,
-            payload: message,
-        };
-        let bytes = serialize(&envelope)?;
-        for addr in self.session.peer_socket_addrs() {
-            let _ = socket.send_to(&bytes, addr).await;
-        }
-        Ok(())
-    }
-
     async fn handle_incoming(
         &self,
         socket: &UdpSocket,
@@ -225,12 +208,20 @@ impl SessionMessageRuntime {
                     .await;
                 }
 
-                let _ = self.broadcast_message(
-                    socket,
-                    self.session.self_id(),
-                    Message::PeerJoined(peer_info.clone()),
-                )
-                .await;
+                // Notify other peers about the new arrival
+                let peer_joined_env = Envelope {
+                    sender: self.session.self_id(),
+                    payload: Message::PeerJoined(peer_info.clone()),
+                };
+                if let Ok(bytes) = serialize(&peer_joined_env) {
+                    for (peer_id, entry) in self.session.all_alive_peers() {
+                        // Don't send PeerJoined to the person who just joined (they got JoinAccepted)
+                        // and don't send to ourselves.
+                        if peer_id != envelope.sender && peer_id != self.session.self_id() {
+                            let _ = socket.send_to(&bytes, entry.addr).await;
+                        }
+                    }
+                }
                 Ok(())
             }
             Message::JoinAccepted {
