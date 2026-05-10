@@ -207,6 +207,7 @@ impl PlaybackBackend for RodioPlaybackBackend {
                 crate::error::SynkroError::Playback(format!("Device index {} not found", idx))
             })?;
             rodio::DeviceSinkBuilder::from_device(device)
+                .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))?
                 .build()
                 .map_err(|e| crate::error::SynkroError::Playback(e.to_string()))
         } else {
