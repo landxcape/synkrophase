@@ -134,6 +134,17 @@ struct RodioInner {
 
 impl RodioPlaybackBackend {
     pub fn new() -> Result<Self> {
+        // Debug: List available devices on startup
+        if let Ok(host) = cpal::default_host().devices() {
+            println!("[Audio] Detected output devices:");
+            for (i, device) in host.enumerate() {
+                let name = device.name().unwrap_or_else(|_| "Unknown".into());
+                println!("  {}: {}", i, name);
+            }
+        } else {
+            eprintln!("[Audio] WARNING: No audio host detected.");
+        }
+
         Ok(Self {
             inner: std::sync::Mutex::new(None),
         })
@@ -155,27 +166,48 @@ impl RodioPlaybackBackend {
 
 impl PlaybackBackend for RodioPlaybackBackend {
     fn load_and_play(&self, stream_url: &str) -> Result<()> {
+        println!("[Audio] Fetching stream: {}", stream_url);
         let response = reqwest::blocking::get(stream_url)
-            .map_err(|err| crate::error::SynkroError::Playback(err.to_string()))?;
+            .map_err(|err| {
+                let e = crate::error::SynkroError::Playback(format!("Network error: {}", err));
+                eprintln!("[Audio] Error: {}", e);
+                e
+            })?;
+        
         if !response.status().is_success() {
-            return Err(crate::error::SynkroError::Playback(format!(
-                "audio stream fetch failed with status {}",
+            let e = crate::error::SynkroError::Playback(format!(
+                "HTTP failure: {}",
                 response.status()
-            )));
+            ));
+            eprintln!("[Audio] Error: {}", e);
+            return Err(e);
         }
 
         let bytes = response
             .bytes()
             .map_err(|err| crate::error::SynkroError::Playback(err.to_string()))?;
+        
+        println!("[Audio] Decoding buffer ({} bytes)...", bytes.len());
         let cursor = std::io::Cursor::new(bytes.to_vec());
         let decoder = rodio::Decoder::try_from(cursor)
-            .map_err(|err| crate::error::SynkroError::Playback(err.to_string()))?;
+            .map_err(|err| {
+                let e = crate::error::SynkroError::Playback(format!("Decoder error: {}", err));
+                eprintln!("[Audio] Error: {}", e);
+                e
+            })?;
 
+        println!("[Audio] Opening default output device...");
         let sink_handle = rodio::DeviceSinkBuilder::open_default_sink()
-            .map_err(|err| crate::error::SynkroError::Playback(err.to_string()))?;
+            .map_err(|err| {
+                let e = crate::error::SynkroError::Playback(format!("Hardware error: {}", err));
+                eprintln!("[Audio] Error: {}", e);
+                e
+            })?;
+        
         let player = rodio::Player::connect_new(sink_handle.mixer());
         player.append(decoder);
         player.play();
+        println!("[Audio] Playback started.");
 
         *self.inner.lock().unwrap() = Some(RodioInner {
             _sink_handle: sink_handle,
