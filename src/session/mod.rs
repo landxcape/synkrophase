@@ -161,7 +161,8 @@ impl SessionState {
 
     pub fn prune_and_elect(&self, timeout: Duration) -> Vec<Uuid> {
         let expired = self.peers.prune_expired(timeout);
-        let next = elect_leader(&self.peers.peer_ids(), self.self_id);
+        let current = self.leader_id();
+        let next = elect_leader(&self.peers.peer_ids(), self.self_id, Some(current));
         *self.leader_id.write().unwrap() = next;
         expired
     }

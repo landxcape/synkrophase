@@ -1394,7 +1394,7 @@ async fn run_repl(
                 }
                 "exit" | "quit" => {
                     synkrophase::session::runtime::print_event(Some(&stdout), "Exiting...");
-                    std::process::exit(0);
+                    return Ok(());
                 }
                 _ => {
                     println!("Unknown command: /{}", parts[0]);
