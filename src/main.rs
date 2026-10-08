@@ -8,26 +8,22 @@ use clap::{Parser, Subcommand};
 use synkrophase::clock::sync::ClockSync;
 use synkrophase::config::{DeviceConfig, SyncConfig};
 use synkrophase::error::Result;
-use synkrophase::playback::engine::{PlaybackBackend, PlaybackEngine};
 use synkrophase::protocol::messages::{
     Envelope, Message, QueueCommand, QueueState, Track, serialize,
 };
 use synkrophase::session::discovery::Discovery;
 use synkrophase::session::runtime::{LeaderAnchorBroadcaster, SessionMessageRuntime};
 use synkrophase::session::{FollowerSyncRuntime, SessionState};
-use synkrophase::stream::resolver::MediaRouter;
-use synkrophase::stream::server::MediaServer;
-use synkrophase::sync::controller::{ClockSource, PlaybackControl, SyncController};
+use synkrophase::sync::controller::{NoopPlaybackControl, PlaybackControl, SyncController};
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 use uuid::Uuid;
 
 const DEFAULT_CLOCK_PORT: u16 = 5870;
 const DEFAULT_SESSION_PORT: u16 = 5871;
-const DEFAULT_MEDIA_PORT: u16 = 5872;
 
 #[derive(Parser, Debug)]
-#[command(name = "synkro", about = "Synchronized LAN media playback")]
+#[command(name = "synkro", about = "Synchronized LAN playback controller")]
 struct Cli {
     /// Optional nickname for this device
     #[arg(long, global = true)]
@@ -54,12 +50,6 @@ enum Commands {
         /// UDP port for session traffic.
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
-        /// TCP port for media server.
-        #[arg(long, default_value_t = DEFAULT_MEDIA_PORT)]
-        media_port: u16,
-        /// Optional hostname/IP to use for media server URLs.
-        #[arg(long)]
-        media_host: Option<std::net::IpAddr>,
     },
     /// Join an existing session and run follower sync loop.
     Join {
@@ -77,16 +67,11 @@ enum Commands {
         /// Local UDP port for session traffic.
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
-        /// Audio output device index (from the detected list).
-        #[arg(long)]
-        audio_device: Option<usize>,
     },
-    /// Add a YouTube URL to the queue for a room (leader serializes + resolves stream URL).
+    /// Send play signal across the room.
     Play {
         /// Session room code.
         room_code: String,
-        /// YouTube URL to enqueue.
-        url: String,
         /// Optional leader session address (ip:port). If omitted, mDNS discovery is used.
         #[arg(long)]
         leader_addr: Option<SocketAddr>,
@@ -134,39 +119,13 @@ enum Commands {
         #[arg(long)]
         leader_addr: Option<SocketAddr>,
     },
-}
-
-#[derive(Default)]
-struct NoopPlaybackBackend;
-
-impl PlaybackBackend for NoopPlaybackBackend {
-    fn load_and_play(&self, _stream_url: &str) -> Result<()> {
-        Ok(())
-    }
-
-    fn position_us(&self) -> i64 {
-        0
-    }
-
-    fn set_rate(&self, _rate: f32) -> Result<()> {
-        Ok(())
-    }
-
-    fn seek(&self, _position_us: i64) -> Result<()> {
-        Ok(())
-    }
-
-    fn pause(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn resume(&self) -> Result<()> {
-        Ok(())
-    }
-
-    fn stop(&self) -> Result<()> {
-        Ok(())
-    }
+    /// Send a chat message to a room.
+    Chat {
+        room_code: String,
+        message: String,
+        #[arg(long)]
+        leader_addr: Option<SocketAddr>,
+    },
 }
 
 #[tokio::main]
@@ -180,20 +139,9 @@ async fn main() -> Result<()> {
             room_code,
             clock_port,
             session_port,
-            media_port,
-            media_host,
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
-            run_host(
-                device,
-                sync_config,
-                room,
-                clock_port,
-                session_port,
-                media_port,
-                media_host,
-            )
-            .await
+            run_host(device, sync_config, room, clock_port, session_port).await
         }
         Commands::Join {
             room_code,
@@ -201,7 +149,6 @@ async fn main() -> Result<()> {
             leader_id,
             leader_clock_port,
             session_port,
-            audio_device,
         } => {
             run_join(
                 device,
@@ -211,15 +158,23 @@ async fn main() -> Result<()> {
                 leader_id,
                 leader_clock_port,
                 session_port,
-                audio_device,
             )
             .await
         }
         Commands::Play {
             room_code,
-            url,
             leader_addr,
-        } => run_play(device, room_code, url, leader_addr).await,
+        } => {
+            run_simple_command(
+                device.clone(),
+                room_code,
+                leader_addr,
+                Message::Play {
+                    actor: device.device_id,
+                },
+            )
+            .await
+        }
         Commands::Pause {
             room_code,
             leader_addr,
@@ -252,18 +207,12 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
-            run_simple_command(
-                device,
-                room_code,
-                leader_addr,
-                Message::QueueProposal(QueueCommand::Skip),
-            )
-            .await
+            run_simple_command(device, room_code, leader_addr, Message::Skip).await
         }
         Commands::Queue {
             room_code,
             leader_addr,
-        } => run_queue(device, room_code, leader_addr).await,
+        } => run_queue_display(device, room_code, leader_addr).await,
         Commands::Sync {
             room_code,
             leader_addr,
@@ -277,17 +226,34 @@ async fn main() -> Result<()> {
             device_id,
             leader_addr,
         } => {
-            let to = Uuid::parse_str(&device_id).map_err(|e| {
-                std::io::Error::new(
+            let target_uuid = Uuid::parse_str(&device_id).map_err(|e| {
+                synkrophase::error::SynkroError::Network(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("invalid device_id: {e}"),
-                )
+                    format!("Invalid target UUID: {e}"),
+                ))
             })?;
             run_simple_command(
                 device,
                 room_code,
                 leader_addr,
-                Message::TransferLeadership { to },
+                Message::TransferLeadership { to: target_uuid },
+            )
+            .await
+        }
+        Commands::Chat {
+            room_code,
+            message,
+            leader_addr,
+        } => {
+            run_simple_command(
+                device.clone(),
+                room_code,
+                leader_addr,
+                Message::Chat {
+                    sender: device.device_id,
+                    name: device.name.clone(),
+                    text: message,
+                },
             )
             .await
         }
@@ -300,14 +266,13 @@ async fn run_host(
     room_code: String,
     clock_port: u16,
     session_port: u16,
-    media_port: u16,
-    media_host: Option<std::net::IpAddr>,
 ) -> Result<()> {
     let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::UNSPECIFIED,
         clock_port,
     )))
     .await?;
+
     let session_socket = Arc::new({
         let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::UNSPECIFIED,
@@ -328,13 +293,16 @@ async fn run_host(
         device.device_id,
         device.name.clone(),
     ));
-    let playback = Arc::new(build_playback_engine(None));
-    let media_server = Arc::new(MediaServer::new(media_port, media_host));
-    let media_router = MediaRouter::new(media_server);
+    let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
-    let runtime =
-        SessionMessageRuntime::new(Arc::clone(&session), Some(stdout.clone()), device.name.clone()).with_playback(Arc::clone(&playback));
+    let runtime = SessionMessageRuntime::new(
+        Arc::clone(&session),
+        Some(stdout.clone()),
+        device.name.clone(),
+    )
+    .with_playback(Arc::clone(&playback));
+
     let broadcaster = LeaderAnchorBroadcaster::new(
         Arc::clone(&session),
         Arc::clone(&clock),
@@ -345,12 +313,13 @@ async fn run_host(
     let discovery = Discovery::new()?;
     discovery.register_session(&room_code, device.device_id, session_port)?;
 
-    let local_ip = media_host.unwrap_or_else(|| local_ip_address::local_ip().unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+    let local_ip = local_ip_address::local_ip()
+        .unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 
     synkrophase::session::runtime::print_event(
         Some(&stdout),
         &format!(
-            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n  - Media Port: {media_port}\n\nJoin with: synkro join {room_code} --leader-addr {local_ip}:{session_port}",
+            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n\nJoin with: synkro join {room_code} --leader-addr {local_ip}:{session_port}",
             device.device_id
         ),
     );
@@ -360,100 +329,35 @@ async fn run_host(
         async move { runtime.run_receive_loop(socket).await }
     });
     let clock_task = tokio::spawn(async move { clock.run_responder().await });
-    let anchor_task = tokio::spawn({
+    let broadcast_task = tokio::spawn({
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
         async move { broadcaster.run_broadcast_loop(socket, sender).await }
-    });
-
-    let heartbeat_task = tokio::spawn({
-        let session = Arc::clone(&session);
-        let socket = Arc::clone(&session_socket);
-        let sender = device.device_id;
-        let cfg = sync_config.clone();
-        let room = room_code.clone();
-        async move { run_heartbeat_loop(session, socket, sender, room, cfg).await }
-    });
-
-    let role_manager_task = tokio::spawn({
-        let session = Arc::clone(&session);
-        let socket = Arc::clone(&session_socket);
-        let sender = device.device_id;
-        let cfg = sync_config.clone();
-        async move { run_role_manager_loop(session, socket, sender, cfg).await }
-    });
-
-    let stream_task = tokio::spawn({
-        let session = Arc::clone(&session);
-        let socket = Arc::clone(&session_socket);
-        let sender = device.device_id;
-        let playback = Arc::clone(&playback);
-        let stdout = stdout.clone();
-        async move {
-            run_stream_distribution_loop(
-                session,
-                socket,
-                sender,
-                Some(media_router),
-                playback,
-                stdout,
-            )
-            .await
-        }
     });
 
     let repl_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
-        let leader_addr =
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), session_port));
-        let rl_stdout = stdout.clone();
         let name = device.name.clone();
-        async move { run_repl(session, socket, sender, leader_addr, rl, rl_stdout, name).await }
+        let stdout = stdout.clone();
+        async move { run_host_repl(rl, session, socket, sender, name, stdout).await }
     });
 
     tokio::select! {
         res = receive_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("session receive loop stopped: {err}"),
-                Err(err) => eprintln!("session receive task cancelled: {err}"),
+            if let Err(err) = res {
+                eprintln!("receive task failed: {err}");
             }
         }
         res = clock_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("clock responder stopped: {err}"),
-                Err(err) => eprintln!("clock responder task cancelled: {err}"),
+            if let Err(err) = res {
+                eprintln!("clock responder failed: {err}");
             }
         }
-        res = anchor_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("anchor broadcaster stopped: {err}"),
-                Err(err) => eprintln!("anchor broadcaster task cancelled: {err}"),
-            }
-        }
-        res = heartbeat_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("heartbeat loop stopped: {err}"),
-                Err(err) => eprintln!("heartbeat task cancelled: {err}"),
-            }
-        }
-        res = role_manager_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("role manager loop stopped: {err}"),
-                Err(err) => eprintln!("role manager task cancelled: {err}"),
-            }
-        }
-        res = stream_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("stream distribution loop stopped: {err}"),
-                Err(err) => eprintln!("stream distribution task cancelled: {err}"),
+        res = broadcast_task => {
+            if let Err(err) = res {
+                eprintln!("broadcast task failed: {err}");
             }
         }
         res = repl_task => {
@@ -480,7 +384,6 @@ async fn run_join(
     leader_id: Option<Uuid>,
     leader_clock_port: u16,
     session_port: u16,
-    _audio_device: Option<usize>,
 ) -> Result<()> {
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;
@@ -522,12 +425,11 @@ async fn run_join(
         }],
         QueueState::default(),
     ));
-    let playback = Arc::new(build_playback_engine(None));
-    let clock_source: Arc<dyn ClockSource> = clock.clone();
-    let playback_control: Arc<dyn PlaybackControl> = playback.clone();
+
+    let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());
     let controller = Arc::new(SyncController::new(
-        clock_source,
-        playback_control,
+        Arc::clone(&clock) as Arc<dyn synkrophase::sync::controller::ClockSource>,
+        Arc::clone(&playback),
         sync_config.clone(),
     ));
     let follower_sync = Arc::new(FollowerSyncRuntime::new(controller));
@@ -535,9 +437,13 @@ async fn run_join(
 
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
-    let runtime = SessionMessageRuntime::new(Arc::clone(&session), Some(stdout.clone()), device.name.clone())
-        .with_follower_sync(Arc::clone(&follower_sync))
-        .with_playback(Arc::clone(&playback));
+    let runtime = SessionMessageRuntime::new(
+        Arc::clone(&session),
+        Some(stdout.clone()),
+        device.name.clone(),
+    )
+    .with_follower_sync(Arc::clone(&follower_sync))
+    .with_playback(Arc::clone(&playback));
 
     synkrophase::session::runtime::print_event(
         Some(&stdout),
@@ -583,49 +489,31 @@ async fn run_join(
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
-        let rl_stdout = stdout.clone();
         let name = device.name.clone();
-        async move {
-            run_repl(
-                session,
-                socket,
-                sender,
-                resolved_leader_addr,
-                rl,
-                rl_stdout,
-                name,
-            )
-            .await
-        }
+        let leader_addr = resolved_leader_addr;
+        let stdout = stdout.clone();
+        async move { run_follower_repl(rl, session, socket, sender, name, leader_addr, stdout).await }
     });
 
     tokio::select! {
         res = receive_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("session receive loop stopped: {err}"),
-                Err(err) => eprintln!("session receive task cancelled: {err}"),
+            if let Err(err) = res {
+                eprintln!("receive task failed: {err}");
             }
         }
         res = clock_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("clock responder stopped: {err}"),
-                Err(err) => eprintln!("clock responder task cancelled: {err}"),
+            if let Err(err) = res {
+                eprintln!("clock responder failed: {err}");
             }
         }
         res = heartbeat_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("heartbeat loop stopped: {err}"),
-                Err(err) => eprintln!("heartbeat task cancelled: {err}"),
+            if let Err(err) = res {
+                eprintln!("heartbeat loop failed: {err}");
             }
         }
         res = role_manager_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("role manager loop stopped: {err}"),
-                Err(err) => eprintln!("role manager task cancelled: {err}"),
+            if let Err(err) = res {
+                eprintln!("role manager loop failed: {err}");
             }
         }
         res = repl_task => {
@@ -636,12 +524,207 @@ async fn run_join(
             }
         }
         _ = tokio::signal::ctrl_c() => {
-            println!("Shutting down follower.");
+            println!("Leaving room {room_code}.");
         }
     }
 
-    follower_sync.stop_sync_loop();
     Ok(())
+}
+
+async fn run_heartbeat_loop(
+    session: Arc<SessionState>,
+    socket: Arc<UdpSocket>,
+    sender: Uuid,
+    room_code: String,
+    config: SyncConfig,
+) -> Result<()> {
+    loop {
+        sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
+        let envelope = Envelope {
+            sender,
+            payload: Message::Heartbeat {
+                room_code: room_code.clone(),
+                info: session.self_info(),
+            },
+        };
+        let bytes = serialize(&envelope)?;
+
+        if session.is_leader() {
+            for addr in session.peer_socket_addrs() {
+                let _ = socket.send_to(&bytes, addr).await;
+            }
+        } else {
+            let leader_id = session.leader_id();
+            if let Some((_, entry)) = session
+                .all_alive_peers()
+                .into_iter()
+                .find(|(id, _)| *id == leader_id)
+            {
+                let _ = socket.send_to(&bytes, entry.addr).await;
+            }
+        }
+    }
+}
+
+async fn run_role_manager_loop(
+    session: Arc<SessionState>,
+    socket: Arc<UdpSocket>,
+    sender: Uuid,
+    config: SyncConfig,
+) -> Result<()> {
+    loop {
+        sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
+        if session.is_leader() {
+            let (expired, _) =
+                session.prune_and_appoint(Duration::from_millis(config.heartbeat_timeout_ms));
+            for dead_peer in expired {
+                let envelope = Envelope {
+                    sender,
+                    payload: Message::PeerLeft(dead_peer),
+                };
+                if let Ok(bytes) = serialize(&envelope) {
+                    for addr in session.peer_socket_addrs() {
+                        let _ = socket.send_to(&bytes, addr).await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_simple_command(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+    message: Message,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+
+    let envelope = Envelope {
+        sender: device.device_id,
+        payload: message,
+    };
+    let bytes = serialize(&envelope)?;
+    socket.send_to(&bytes, resolved_leader_addr).await?;
+    Ok(())
+}
+
+async fn run_queue_display(
+    _device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+
+    let ephemeral_id = Uuid::new_v4();
+    send_join_request(
+        &socket,
+        ephemeral_id,
+        resolved_leader_addr,
+        room_code.clone(),
+        "QueueViewer".into(),
+    )
+    .await?;
+
+    let mut buf = [0u8; 8 * 1024];
+    match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
+            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
+                if let Message::JoinAccepted { queue_state, .. } = envelope.payload {
+                    println!("Queue for room {room_code}:");
+                    if let Some(current) = queue_state.current {
+                        println!(
+                            "  [PLAYING] {} (ID: {}, requested by {})",
+                            current.title, current.id, current.requested_by
+                        );
+                    } else {
+                        println!("  [PLAYING] None");
+                    }
+                    if queue_state.upcoming.is_empty() {
+                        println!("  (Upcoming queue is empty)");
+                    } else {
+                        println!("\n  Upcoming:");
+                        for (i, track) in queue_state.upcoming.iter().enumerate() {
+                            println!(
+                                "  {}. {} (ID: {}, requested by {})",
+                                i + 1,
+                                track.title,
+                                track.id,
+                                track.requested_by
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        _ => println!("Timed out waiting for queue information from leader."),
+    }
+    Ok(())
+}
+
+async fn run_sync_status(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
+    let socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+
+    let ephemeral_id = Uuid::new_v4();
+    send_join_request(
+        &socket,
+        ephemeral_id,
+        resolved_leader_addr,
+        room_code.clone(),
+        device.name,
+    )
+    .await?;
+
+    let mut peer_offsets = std::collections::HashMap::new();
+    let mut buf = [0u8; 8 * 1024];
+    let start = std::time::Instant::now();
+    let duration = Duration::from_secs(2);
+
+    while start.elapsed() < duration {
+        let remaining = duration.saturating_sub(start.elapsed());
+        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
+        {
+            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
+                if let Message::JoinAccepted { peer_list, .. } = envelope.payload {
+                    for peer in peer_list {
+                        peer_offsets.insert(peer.device_id, peer.clock_offset_us);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if peer_offsets.is_empty() {
+        println!("No peer data collected.");
+    } else {
+        println!("\n{:<40} {:>12}", "Device ID", "Offset (us)");
+        println!("{}", "-".repeat(53));
+        let mut sorted: Vec<_> = peer_offsets.into_iter().collect();
+        sorted.sort_by_key(|a| a.0);
+        for (id, offset) in sorted {
+            println!("{:<40} {:>12}", id, offset);
+        }
+    }
+    Ok(())
+}
+
+async fn run_debug(
+    device: DeviceConfig,
+    room_code: String,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    run_sync_status(device, room_code, leader_addr).await
 }
 
 fn resolve_join_target(
@@ -649,49 +732,46 @@ fn resolve_join_target(
     leader_addr: Option<SocketAddr>,
     leader_id: Option<Uuid>,
 ) -> Result<(SocketAddr, Uuid)> {
-    if let Some(addr) = leader_addr {
-        return Ok((addr, leader_id.unwrap_or(Uuid::nil())));
+    if let (Some(addr), Some(id)) = (leader_addr, leader_id) {
+        return Ok((addr, id));
     }
 
     let discovery = Discovery::new()?;
-    let sessions = discovery.find_sessions()?;
-    sessions
-        .into_iter()
-        .find(|session| session.room_code == room_code)
-        .map(|session| (session.leader_addr, session.leader_id))
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("room code {room_code} not found on LAN"),
-            )
-            .into()
-        })
+    let discovered = discovery.find_sessions()?;
+    let found = discovered.into_iter().find(|info| info.room_code == room_code);
+
+    if let Some(info) = found {
+        let addr = leader_addr.unwrap_or(info.leader_addr);
+        let id = leader_id.unwrap_or(info.leader_id);
+        return Ok((addr, id));
+    }
+
+    if let Some(addr) = leader_addr {
+        return Ok((addr, leader_id.unwrap_or_else(Uuid::new_v4)));
+    }
+
+    Err(synkrophase::error::SynkroError::Network(
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Could not discover room {room_code}"),
+        ),
+    ))
 }
 
 async fn send_join_request(
     socket: &UdpSocket,
-    self_id: Uuid,
+    sender: Uuid,
     leader_addr: SocketAddr,
     room_code: String,
     name: String,
 ) -> Result<()> {
     let envelope = Envelope {
-        sender: self_id,
+        sender,
         payload: Message::JoinRequest { room_code, name },
     };
     let bytes = serialize(&envelope)?;
     socket.send_to(&bytes, leader_addr).await?;
     Ok(())
-}
-
-fn build_playback_engine(audio_device: Option<usize>) -> PlaybackEngine {
-    match PlaybackEngine::new_rodio(audio_device) {
-        Ok(engine) => engine,
-        Err(err) => {
-            eprintln!("rodio backend unavailable, using noop playback backend: {err}");
-            PlaybackEngine::new(Box::new(NoopPlaybackBackend))
-        }
-    }
 }
 
 fn load_device_config(name_opt: Option<String>, ephemeral: bool) -> Result<DeviceConfig> {
@@ -714,640 +794,48 @@ fn load_device_config(name_opt: Option<String>, ephemeral: bool) -> Result<Devic
             device_id: Uuid::new_v4(),
             name,
             data_dir,
-            ytdlp_path: None,
         });
     }
 
-    let id_path = data_dir.join("device_id");
-    let device_id = if id_path.exists() {
-        let raw = fs::read_to_string(&id_path)?;
-        Uuid::parse_str(raw.trim()).unwrap_or_else(|_| Uuid::new_v4())
+    let identity_file = data_dir.join("device_id");
+    let device_id = if identity_file.exists() {
+        let content = fs::read_to_string(&identity_file)?;
+        Uuid::parse_str(content.trim()).unwrap_or_else(|_| {
+            let id = Uuid::new_v4();
+            let _ = fs::write(&identity_file, id.to_string());
+            id
+        })
     } else {
-        let generated = Uuid::new_v4();
-        fs::write(&id_path, format!("{generated}\n"))?;
-        generated
+        let id = Uuid::new_v4();
+        let _ = fs::write(&identity_file, id.to_string());
+        id
     };
 
     Ok(DeviceConfig {
         device_id,
         name,
         data_dir,
-        ytdlp_path: None,
     })
 }
 
-fn generated_room_code(device_id: Uuid) -> String {
-    device_id
-        .simple()
-        .to_string()
-        .chars()
-        .take(6)
-        .collect::<String>()
-        .to_uppercase()
+fn generated_room_code(id: Uuid) -> String {
+    let compact = id.simple().to_string();
+    compact[..6].to_ascii_uppercase()
 }
 
-async fn run_play(
-    device: DeviceConfig,
-    room_code: String,
-    url: String,
-    leader_addr: Option<SocketAddr>,
-) -> Result<()> {
-    let (resolved_leader_addr, _resolved_leader_id) =
-        resolve_join_target(&room_code, leader_addr, None)?;
-
-    let socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-    socket.set_broadcast(true)?;
-
-    let ephemeral_id = Uuid::new_v4();
-
-    send_join_request(
-        &socket,
-        ephemeral_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
-    let _ = await_join_accepted(&socket, Duration::from_secs(2)).await;
-
-    let track = Track {
-        id: Uuid::new_v4().to_string(),
-        youtube_url: url,
-        title: "Pending".into(),
-        requested_by: ephemeral_id,
-    };
-    let envelope = Envelope {
-        sender: ephemeral_id,
-        payload: Message::QueueProposal(QueueCommand::Add(track)),
-    };
-    let bytes = serialize(&envelope)?;
-    socket.send_to(&bytes, resolved_leader_addr).await?;
-    Ok(())
-}
-
-async fn run_simple_command(
-    device: DeviceConfig,
-    room_code: String,
-    leader_addr: Option<SocketAddr>,
-    message: Message,
-) -> Result<()> {
-    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
-    let socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-    socket.set_broadcast(true)?;
-
-    let ephemeral_id = Uuid::new_v4();
-
-    send_join_request(
-        &socket,
-        ephemeral_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
-    let _ = await_join_accepted(&socket, Duration::from_secs(1)).await;
-
-    let envelope = Envelope {
-        sender: ephemeral_id,
-        payload: message,
-    };
-    let bytes = serialize(&envelope)?;
-    socket.send_to(&bytes, resolved_leader_addr).await?;
-    Ok(())
-}
-
-async fn run_queue(
-    device: DeviceConfig,
-    room_code: String,
-    leader_addr: Option<SocketAddr>,
-) -> Result<()> {
-    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
-    let socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-    socket.set_broadcast(true)?;
-
-    let ephemeral_id = Uuid::new_v4();
-
-    println!("Requesting queue state for room {}...", room_code);
-    send_join_request(
-        &socket,
-        ephemeral_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
-
-    let mut buf = [0u8; 8 * 1024];
-    match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            let envelope = synkrophase::protocol::messages::deserialize(&buf[..len])?;
-            if let Message::JoinAccepted { queue_state, .. } = envelope.payload {
-                println!("\nQueue for room {}:", room_code);
-                if let Some(current) = queue_state.current {
-                    println!(
-                        "  [PLAYING] {} (ID: {}, requested by {})",
-                        current.title, current.id, current.requested_by
-                    );
-                } else {
-                    println!("  [PLAYING] None");
-                }
-
-                if queue_state.upcoming.is_empty() {
-                    println!("  (Upcoming queue is empty)");
-                } else {
-                    println!("\n  Upcoming:");
-                    for (i, track) in queue_state.upcoming.iter().enumerate() {
-                        println!(
-                            "  {}. {} (ID: {}, requested by {})",
-                            i + 1,
-                            track.title,
-                            track.id,
-                            track.requested_by
-                        );
-                    }
-                }
-            } else {
-                println!("Received unexpected response from leader.");
-            }
-        }
-        _ => println!("Timed out waiting for queue information from leader."),
-    }
-    Ok(())
-}
-
-async fn run_sync_status(
-    device: DeviceConfig,
-    room_code: String,
-    leader_addr: Option<SocketAddr>,
-) -> Result<()> {
-    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
-    let socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-    socket.set_broadcast(true)?;
-
-    let ephemeral_id = Uuid::new_v4();
-
-    println!("Collecting sync status for room {}...", room_code);
-    send_join_request(
-        &socket,
-        ephemeral_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
-
-    let mut peer_offsets = std::collections::HashMap::new();
-    let mut buf = [0u8; 8 * 1024];
-    let start = std::time::Instant::now();
-    let duration = Duration::from_secs(2);
-
-    while start.elapsed() < duration {
-        let remaining = duration.saturating_sub(start.elapsed());
-        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
-        {
-            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
-                match envelope.payload {
-                    Message::JoinAccepted { peer_list, .. } => {
-                        for peer in peer_list {
-                            peer_offsets.insert(peer.device_id, peer.clock_offset_us);
-                        }
-                        break;
-                    }
-                    Message::Heartbeat { .. } => {
-                        // Heartbeat doesn't carry offset, but marks presence.
-                        // We already have device_id from envelope.sender.
-                    }
-                    Message::SyncAnchor(_) => {
-                        // Anchors are broadcast by leader.
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    if peer_offsets.is_empty() {
-        println!("No peer data collected.");
-    } else {
-        println!("\n{:<40} {:>12}", "Device ID", "Offset (us)");
-        println!("{}", "-".repeat(53));
-        let mut sorted: Vec<_> = peer_offsets.into_iter().collect();
-        sorted.sort_by_key(|a| a.0);
-        for (id, offset) in sorted {
-            println!("{:<40} {:>12}", id, offset);
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_debug(
-    device: DeviceConfig,
-    room_code: String,
-    leader_addr: Option<SocketAddr>,
-) -> Result<()> {
-    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
-    let socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-    socket.set_broadcast(true)?;
-
-    let ephemeral_id = Uuid::new_v4();
-
-    println!(
-        "Collecting debug metrics for room {} (3s burst)...",
-        room_code
-    );
-    send_join_request(
-        &socket,
-        ephemeral_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
-
-    let mut buf = [0u8; 8 * 1024];
-    let start = std::time::Instant::now();
-    let duration = Duration::from_secs(3);
-
-    println!("\n{:<10} {:<40} {:<20}", "Type", "Sender", "Data");
-    println!("{}", "-".repeat(70));
-
-    while start.elapsed() < duration {
-        let remaining = duration.saturating_sub(start.elapsed());
-        if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
-        {
-            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
-                match envelope.payload {
-                    Message::SyncAnchor(anchor) => {
-                        println!(
-                            "{:<10} {:<40} Pos: {}us, Rate: {:.4}, Playing: {}",
-                            "Anchor",
-                            envelope.sender,
-                            anchor.media_position_us,
-                            anchor.playback_rate,
-                            anchor.is_playing
-                        );
-                    }
-                    Message::Heartbeat { info, .. } => {
-                        println!(
-                            "{:<10} {:<40} Role: {:?}",
-                            "Heartbeat", envelope.sender, info.role
-                        );
-                    }
-                    Message::JoinAccepted { peer_list, .. } => {
-                        println!(
-                            "{:<10} {:<40} Peers: {}",
-                            "JoinAcc",
-                            envelope.sender,
-                            peer_list.len()
-                        );
-                    }
-                    Message::QueueUpdate(state) => {
-                        println!(
-                            "{:<10} {:<40} Queue Ver: {}, Current: {}",
-                            "QueueUpd",
-                            envelope.sender,
-                            state.version,
-                            state
-                                .current
-                                .map(|t| t.title)
-                                .unwrap_or_else(|| "None".into())
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn await_join_accepted(socket: &UdpSocket, timeout: Duration) -> Result<()> {
-    let mut buf = [0u8; 8 * 1024];
-    let recv = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await;
-    let Ok(Ok((len, _))) = recv else {
-        return Ok(());
-    };
-
-    let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) else {
-        return Ok(());
-    };
-    if matches!(envelope.payload, Message::JoinAccepted { .. }) {
-        return Ok(());
-    }
-    Ok(())
-}
-
-async fn run_stream_distribution_loop(
-    session: Arc<SessionState>,
-    socket: Arc<UdpSocket>,
-    sender: Uuid,
-    resolver: Option<MediaRouter>,
-    playback: Arc<PlaybackEngine>,
-    stdout: rustyline_async::SharedWriter,
-) -> Result<()> {
-    let Some(resolver) = resolver else {
-        loop {
-            sleep(Duration::from_secs(1)).await;
-        }
-    };
-
-    loop {
-        let queue = session.queue_snapshot();
-        let Some(current) = queue.current else {
-            sleep(Duration::from_millis(200)).await;
-            continue;
-        };
-
-        let current_stream = session.stream_url_for(&current.id);
-
-        let needs_resolve = if let Some(stream) = current_stream {
-            if stream.expires_at == 0 {
-                false
-            } else {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                // Re-resolve if it expires in less than 5 minutes (300 seconds)
-                stream.expires_at < now + 300
-            }
-        } else {
-            true // Not resolved yet
-        };
-
-        if !needs_resolve {
-            let status = playback.status();
-            let is_same_track = status.track_id.as_deref() == Some(&current.id);
-
-            if !is_same_track {
-                if let Some(stream) = session.stream_url_for(&current.id) {
-                    let url = stream.url.clone();
-                    let track_id = current.id.clone();
-                    let playback_clone = Arc::clone(&playback);
-                    let out = stdout.clone();
-
-                    let result = tokio::task::spawn_blocking(move || {
-                        playback_clone.load_and_play(&track_id, &url)
-                    })
-                    .await;
-
-                    if let Ok(Err(e)) = result {
-                        let msg = format!("[System] Playback error: {}", e);
-                        synkrophase::session::runtime::print_event(Some(&out), &msg);
-
-                        let envelope = Envelope {
-                            sender,
-                            payload: Message::SystemLog(msg),
-                        };
-                        if let Ok(bytes) = serialize(&envelope) {
-                            for addr in session.peer_socket_addrs() {
-                                let _ = socket.send_to(&bytes, addr).await;
-                            }
-                        }
-
-                        if let Ok(updated) = session.handle_queue_proposal(QueueCommand::Skip) {
-                            let queue_update = Envelope {
-                                sender,
-                                payload: Message::QueueUpdate(updated),
-                            };
-                            if let Ok(bytes) = serialize(&queue_update) {
-                                for addr in session.peer_socket_addrs() {
-                                    let _ = socket.send_to(&bytes, addr).await;
-                                }
-                            }
-                        }
-
-                        sleep(Duration::from_secs(1)).await;
-                        continue;
-                    }
-                }
-            }
-
-            sleep(Duration::from_millis(200)).await;
-            continue;
-        }
-
-        let stream = match session.resolve_current_track(&resolver).await {
-            Ok(stream) => stream,
-            Err(err) => {
-                let msg = format!("[System] Failed to resolve track: {}", err);
-                synkrophase::session::runtime::print_event(Some(&stdout), &msg);
-
-                let envelope = Envelope {
-                    sender,
-                    payload: Message::SystemLog(msg),
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    for addr in session.peer_socket_addrs() {
-                        let _ = socket.send_to(&bytes, addr).await;
-                    }
-                }
-
-                // Automatically skip the unresolvable track
-                if let Ok(updated) = session.handle_queue_proposal(QueueCommand::Skip) {
-                    let queue_update = Envelope {
-                        sender,
-                        payload: Message::QueueUpdate(updated),
-                    };
-                    if let Ok(bytes) = serialize(&queue_update) {
-                        for addr in session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
-                        }
-                    }
-                }
-
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        let envelope = Envelope {
-            sender,
-            payload: Message::StreamUrl(stream.clone()),
-        };
-        let bytes = serialize(&envelope)?;
-        for addr in session.peer_socket_addrs() {
-            let _ = socket.send_to(&bytes, addr).await;
-        }
-
-        let status = playback.status();
-        let is_same_track = status.track_id.as_deref() == Some(&current.id);
-
-        if !is_same_track {
-            let url = stream.url.clone();
-            let track_id = current.id.clone();
-            let playback_clone = Arc::clone(&playback);
-            let out = stdout.clone();
-
-            let result =
-                tokio::task::spawn_blocking(move || playback_clone.load_and_play(&track_id, &url))
-                    .await;
-
-            if let Ok(Err(e)) = result {
-                let msg = format!("[System] Playback error: {}", e);
-                synkrophase::session::runtime::print_event(Some(&out), &msg);
-
-                let envelope = Envelope {
-                    sender,
-                    payload: Message::SystemLog(msg),
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    for addr in session.peer_socket_addrs() {
-                        let _ = socket.send_to(&bytes, addr).await;
-                    }
-                }
-
-                if let Ok(updated) = session.handle_queue_proposal(QueueCommand::Skip) {
-                    let queue_update = Envelope {
-                        sender,
-                        payload: Message::QueueUpdate(updated),
-                    };
-                    if let Ok(bytes) = serialize(&queue_update) {
-                        for addr in session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
-                        }
-                    }
-                }
-
-                sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-        }
-
-        sleep(Duration::from_millis(200)).await;
-    }
-}
-
-async fn run_heartbeat_loop(
-    session: Arc<SessionState>,
-    socket: Arc<UdpSocket>,
-    sender: Uuid,
-    room_code: String,
-    config: SyncConfig,
-) -> Result<()> {
-    loop {
-        let envelope = Envelope {
-            sender,
-            payload: Message::Heartbeat {
-                room_code: room_code.clone(),
-                info: session.self_info(),
-            },
-        };
-        let bytes = serialize(&envelope)?;
-        for peer_addr in session.peer_socket_addrs() {
-            let _ = socket.send_to(&bytes, peer_addr).await;
-        }
-
-        sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
-    }
-}
-
-async fn run_role_manager_loop(
-    session: Arc<SessionState>,
-    socket: Arc<UdpSocket>,
-    sender: Uuid,
-    config: SyncConfig,
-) -> Result<()> {
-    let timeout = Duration::from_millis(config.heartbeat_timeout_ms);
-    let mut last_leader = session.leader_id();
-
-    loop {
-        // Resolve names for all peers before pruning
-        let peer_names: std::collections::HashMap<Uuid, String> = session
-            .peer_ids()
-            .into_iter()
-            .map(|id| (id, session.display_name(&id)))
-            .collect();
-
-        let (expired, heir) = session.prune_and_appoint(timeout);
-
-        // Notify about expired peers
-        for id in expired {
-            let name = peer_names.get(&id).cloned().unwrap_or_else(|| id.to_string());
-            let peer_left_env = Envelope {
-                sender,
-                payload: Message::PeerLeft(id),
-            };
-            let log_env = Envelope {
-                sender,
-                payload: Message::SystemLog(format!("[System] {} timed out.", name)),
-            };
-
-            if let Ok(bytes) = serialize(&peer_left_env) {
-                for peer_addr in session.peer_socket_addrs() {
-                    let _ = socket.send_to(&bytes, peer_addr).await;
-                }
-            }
-            if let Ok(bytes) = serialize(&log_env) {
-                for peer_addr in session.peer_socket_addrs() {
-                    let _ = socket.send_to(&bytes, peer_addr).await;
-                }
-            }
-        }
-
-        // Handle Succession
-        if !session.is_alive(&session.leader_id()) && heir == session.self_id() {
-            // We are the heir, and the leader is dead. Promote!
-            session.promote_to_leader();
-        }
-
-        let leader = session.leader_id();
-        if leader != last_leader {
-            let name = session.display_name(&leader);
-            last_leader = leader;
-
-            // Broadcast LeaderElected
-            let envelope = Envelope {
-                sender,
-                payload: Message::LeaderElected(leader),
-            };
-            if let Ok(bytes) = serialize(&envelope) {
-                for peer_addr in session.peer_socket_addrs() {
-                    let _ = socket.send_to(&bytes, peer_addr).await;
-                }
-            }
-
-            // Broadcast SystemLog
-            let log_env = Envelope {
-                sender,
-                payload: Message::SystemLog(format!("[System] {} is now the Leader.", name)),
-            };
-            if let Ok(bytes) = serialize(&log_env) {
-                for peer_addr in session.peer_socket_addrs() {
-                    let _ = socket.send_to(&bytes, peer_addr).await;
-                }
-            }
-        }
-
-        sleep(Duration::from_millis(500)).await;
-    }
-}
-
-async fn run_repl(
-    session: Arc<SessionState>,
-    socket: Arc<UdpSocket>,
-    sender: Uuid,
-    leader_addr: SocketAddr,
+async fn run_host_repl(
     mut rl: rustyline_async::Readline,
-    stdout: rustyline_async::SharedWriter,
+    session: Arc<SessionState>,
+    socket: Arc<UdpSocket>,
+    sender: Uuid,
     name: String,
+    stdout: rustyline_async::SharedWriter,
 ) -> Result<()> {
     loop {
-        let input = match rl.readline().await {
-            Ok(rustyline_async::ReadlineEvent::Line(line)) => {
-                rl.add_history_entry(line.clone());
-                line
-            }
-            Ok(rustyline_async::ReadlineEvent::Eof)
-            | Ok(rustyline_async::ReadlineEvent::Interrupted) => break,
-            Err(_) => break,
+        let line = rl.readline().await;
+        let input = match line {
+            Ok(rustyline_async::ReadlineEvent::Line(line)) => line,
+            _ => break,
         };
 
         let input = input.trim();
@@ -1363,23 +851,162 @@ async fn run_repl(
             match parts[0] {
                 "play" => {
                     if parts.len() < 2 {
-                        println!("Usage: /play <url>");
+                        synkrophase::session::runtime::print_event(
+                            Some(&stdout),
+                            "Usage: /play <title>",
+                        );
                         continue;
                     }
+                    let title = parts[1..].join(" ");
                     let track = Track {
                         id: Uuid::new_v4().to_string(),
-                        youtube_url: parts[1].to_string(),
-                        title: "Pending".into(),
+                        youtube_url: String::new(),
+                        title: title.clone(),
                         requested_by: sender,
                     };
-                    let envelope = Envelope {
-                        sender,
-                        payload: Message::QueueProposal(QueueCommand::Add(track)),
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        let _ = socket.send_to(&bytes, leader_addr).await;
+                    if let Ok(updated) =
+                        session.handle_queue_proposal(QueueCommand::Add(track))
+                    {
+                        let envelope = Envelope {
+                            sender,
+                            payload: Message::QueueUpdate(updated),
+                        };
+                        if let Ok(bytes) = serialize(&envelope) {
+                            for addr in session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                        }
+                        synkrophase::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[System] Enqueued track: {title}"),
+                        );
                     }
                 }
+                "pause" => {
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Pause { actor: sender },
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        for addr in session.peer_socket_addrs() {
+                            let _ = socket.send_to(&bytes, addr).await;
+                        }
+                    }
+                }
+                "resume" => {
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Resume { actor: sender },
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        for addr in session.peer_socket_addrs() {
+                            let _ = socket.send_to(&bytes, addr).await;
+                        }
+                    }
+                }
+                "skip" => {
+                    if let Ok(updated) =
+                        session.handle_queue_proposal(QueueCommand::Skip)
+                    {
+                        let envelope = Envelope {
+                            sender,
+                            payload: Message::QueueUpdate(updated),
+                        };
+                        if let Ok(bytes) = serialize(&envelope) {
+                            for addr in session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                        }
+                    }
+                }
+                "queue" => {
+                    let queue_state = session.queue_snapshot();
+                    let room_code = session.room_code();
+                    let mut out = format!("Queue for room {}:\n", room_code);
+                    if let Some(current) = queue_state.current {
+                        out.push_str(&format!(
+                            "  [PLAYING] {} (ID: {}, requested by {})\n",
+                            current.title, current.id, current.requested_by
+                        ));
+                    } else {
+                        out.push_str("  (Nothing playing)\n");
+                    }
+                    if queue_state.upcoming.is_empty() {
+                        out.push_str("  (Upcoming queue is empty)\n");
+                    } else {
+                        out.push_str("\n  Upcoming:\n");
+                        for (i, track) in queue_state.upcoming.iter().enumerate() {
+                            out.push_str(&format!(
+                                "  {}. {} (ID: {}, requested by {})\n",
+                                i + 1,
+                                track.title,
+                                track.id,
+                                track.requested_by
+                            ));
+                        }
+                    }
+                    synkrophase::session::runtime::print_event(Some(&stdout), out.trim_end());
+                }
+                "exit" | "quit" => {
+                    synkrophase::session::runtime::print_event(Some(&stdout), "Exiting...");
+                    return Ok(());
+                }
+                _ => {
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        "Available commands: /play <title>, /pause, /resume, /skip, /queue, /exit",
+                    );
+                }
+            }
+        } else {
+            let envelope = Envelope {
+                sender,
+                payload: Message::ChatBroadcast {
+                    display_name: name.clone(),
+                    text: input.to_string(),
+                },
+            };
+            if let Ok(bytes) = serialize(&envelope) {
+                for addr in session.peer_socket_addrs() {
+                    let _ = socket.send_to(&bytes, addr).await;
+                }
+            }
+            synkrophase::session::runtime::print_event(
+                Some(&stdout),
+                &format!("[{name}]: {input}"),
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_follower_repl(
+    mut rl: rustyline_async::Readline,
+    session: Arc<SessionState>,
+    socket: Arc<UdpSocket>,
+    sender: Uuid,
+    name: String,
+    leader_addr: SocketAddr,
+    stdout: rustyline_async::SharedWriter,
+) -> Result<()> {
+    loop {
+        let line = rl.readline().await;
+        let input = match line {
+            Ok(rustyline_async::ReadlineEvent::Line(line)) => line,
+            _ => break,
+        };
+
+        let input = input.trim();
+        if input.is_empty() {
+            continue;
+        }
+
+        if let Some(command_str) = input.strip_prefix('/') {
+            let parts: Vec<&str> = command_str.split_whitespace().collect();
+            if parts.is_empty() {
+                continue;
+            }
+            match parts[0] {
                 "pause" => {
                     let envelope = Envelope {
                         sender,
@@ -1419,10 +1046,10 @@ async fn run_repl(
                     } else {
                         out.push_str("  (Nothing playing)\n");
                     }
-                    out.push_str("\n  Upcoming:\n");
                     if queue_state.upcoming.is_empty() {
                         out.push_str("  (Upcoming queue is empty)\n");
                     } else {
+                        out.push_str("\n  Upcoming:\n");
                         for (i, track) in queue_state.upcoming.iter().enumerate() {
                             out.push_str(&format!(
                                 "  {}. {} (ID: {}, requested by {})\n",
@@ -1440,11 +1067,10 @@ async fn run_repl(
                     return Ok(());
                 }
                 _ => {
-                    println!("Unknown command: /{}", parts[0]);
-                    println!(
-                        "Available commands: /play <url>, /pause, /resume, /skip, /queue, /exit"
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        "Available commands: /pause, /resume, /skip, /queue, /exit",
                     );
-                    println!("Anything else is sent as a chat message.");
                 }
             }
         } else {
@@ -1486,7 +1112,7 @@ mod tests {
         }
 
         // Test Transfer
-        let cli = Cli::try_parse_from(["synkro", "transfer", "ROOM12", "device-uuid"]).unwrap();
+        let cli = Cli::try_parse_from(["synkro", "transfer", "ROOM12", "00000000-0000-0000-0000-000000000001"]).unwrap();
         match cli.command {
             Commands::Transfer {
                 room_code,
@@ -1494,7 +1120,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(room_code, "ROOM12");
-                assert_eq!(device_id, "device-uuid");
+                assert_eq!(device_id, "00000000-0000-0000-0000-000000000001");
             }
             _ => panic!("Expected Transfer command"),
         }

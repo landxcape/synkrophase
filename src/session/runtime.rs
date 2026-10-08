@@ -8,10 +8,9 @@ use uuid::Uuid;
 use crate::clock::sync::ClockSync;
 use crate::config::SyncConfig;
 use crate::error::{Result, SynkroError};
-use crate::playback::engine::PlaybackEngine;
 use crate::protocol::messages::{Envelope, Message, PeerInfo, deserialize, serialize};
 use crate::session::{FollowerSyncRuntime, SessionState};
-use crate::sync::controller::ClockSource;
+use crate::sync::controller::{ClockSource, PlaybackControl};
 
 use rustyline_async::SharedWriter;
 use crate::protocol::messages::Role;
@@ -19,7 +18,7 @@ use crate::protocol::messages::Role;
 pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
     follower_sync: Option<Arc<FollowerSyncRuntime>>,
-    playback: Option<Arc<PlaybackEngine>>,
+    playback: Option<Arc<dyn PlaybackControl>>,
     stdout: Option<SharedWriter>,
     name: String,
 }
@@ -50,7 +49,7 @@ impl SessionMessageRuntime {
         self
     }
 
-    pub fn with_playback(mut self, playback: Arc<PlaybackEngine>) -> Self {
+    pub fn with_playback(mut self, playback: Arc<dyn PlaybackControl>) -> Self {
         self.playback = Some(playback);
         self
     }
@@ -209,20 +208,6 @@ impl SessionMessageRuntime {
                 )
                 .await?;
 
-                if let Some(stream) = queue_state
-                    .current
-                    .as_ref()
-                    .and_then(|current| self.session.stream_url_for(&current.id))
-                {
-                    let _ = Self::send_message(
-                        socket,
-                        self.session.self_id(),
-                        src,
-                        Message::StreamUrl(stream),
-                    )
-                    .await;
-                }
-
                 // Notify other peers about the new arrival
                 let notification_msg = format!("{} joined the room.", name);
                 let notification_env = Envelope {
@@ -368,33 +353,6 @@ impl SessionMessageRuntime {
                     return Ok(());
                 }
                 let _ = self.session.accept_queue_update(update);
-                Ok(())
-            }
-            Message::StreamUrl(stream) => {
-                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
-                    return Ok(());
-                }
-                print_event(self.stdout.as_ref(), "[System] Starting playback...");
-                self.session.accept_stream_url(stream.clone());
-                if let Some(playback) = &self.playback {
-                    let status = playback.status();
-                    let is_same_track = status.track_id.as_deref() == Some(&stream.track_id);
-                    if !is_same_track || !status.is_playing {
-                        let playback = Arc::clone(playback);
-                        let url = stream.url.clone();
-                        let track_id = stream.track_id.clone();
-                        let stdout = self.stdout.clone();
-                        tokio::task::spawn_blocking(move || {
-                            if let Err(err) = playback.load_and_play(&track_id, &url) {
-                                if let Some(out) = stdout.as_ref() {
-                                    use std::io::Write;
-                                    let mut out = out.clone();
-                                    let _ = writeln!(out, "[System] Playback error: {}", err);
-                                }
-                            }
-                        });
-                    }
-                }
                 Ok(())
             }
             Message::Pause { actor } => {
@@ -644,7 +602,7 @@ impl SessionMessageRuntime {
 pub struct LeaderAnchorBroadcaster {
     session: Arc<SessionState>,
     clock: Arc<dyn ClockSource>,
-    playback: Arc<PlaybackEngine>,
+    playback: Arc<dyn PlaybackControl>,
     config: SyncConfig,
 }
 
@@ -652,7 +610,7 @@ impl LeaderAnchorBroadcaster {
     pub fn new(
         session: Arc<SessionState>,
         clock: Arc<ClockSync>,
-        playback: Arc<PlaybackEngine>,
+        playback: Arc<dyn PlaybackControl>,
         config: SyncConfig,
     ) -> Self {
         Self {

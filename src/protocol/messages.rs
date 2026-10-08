@@ -29,7 +29,7 @@ pub enum Message {
         peer_list: Vec<PeerInfo>,
         queue_state: QueueState,
         assigned_role: Role,
-        current_anchor: Option<SyncAnchor>, // NEW
+        current_anchor: Option<SyncAnchor>,
     },
     PeerJoined(PeerInfo),
     PeerLeft(Uuid),
@@ -49,7 +49,6 @@ pub enum Message {
     Skip,
     QueueProposal(QueueCommand),
     QueueUpdate(QueueState),
-    StreamUrl(StreamUrl),
     SyncAnchor(SyncAnchor),
     SystemLog(String),
     Chat {
@@ -105,13 +104,6 @@ pub enum QueueCommand {
     Add(Track),
     Skip,
     Remove { position: usize },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct StreamUrl {
-    pub track_id: String,
-    pub url: String,
-    pub expires_at: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -193,22 +185,6 @@ mod tests {
     }
 
     #[test]
-    fn test_stream_url_roundtrip() {
-        let env = Envelope {
-            sender: Uuid::new_v4(),
-            payload: Message::StreamUrl(StreamUrl {
-                track_id: "track-1".into(),
-                url: "https://cdn.example.com/audio".into(),
-                expires_at: 55,
-            }),
-        };
-
-        let bytes = serialize(&env).unwrap();
-        let decoded = deserialize(&bytes).unwrap();
-        assert_eq!(env, decoded);
-    }
-
-    #[test]
     fn test_sync_anchor_roundtrip() {
         let env = Envelope {
             sender: Uuid::new_v4(),
@@ -242,5 +218,19 @@ mod tests {
             let decoded = deserialize(&bytes).unwrap();
             assert_eq!(env, decoded);
         }
+    }
+
+    #[test]
+    fn test_chat_broadcast_roundtrip() {
+        let env = Envelope {
+            sender: Uuid::new_v4(),
+            payload: Message::ChatBroadcast {
+                display_name: "Alice".into(),
+                text: "Hello everyone!".into(),
+            },
+        };
+        let bytes = serialize(&env).unwrap();
+        let decoded = deserialize(&bytes).unwrap();
+        assert_eq!(env, decoded);
     }
 }

@@ -5,7 +5,6 @@ use tokio::time::{Duration, sleep};
 use crate::clock::sync::ClockSync;
 use crate::config::SyncConfig;
 use crate::error::Result;
-use crate::playback::engine::{PlaybackEngine, PlaybackStatus};
 use crate::protocol::messages::SyncAnchor;
 
 pub trait ClockSource: Send + Sync {
@@ -18,28 +17,63 @@ impl ClockSource for ClockSync {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaybackStatus {
+    pub track_id: Option<String>,
+    pub position_us: i64,
+    pub rate: f32,
+    pub is_playing: bool,
+}
+
+impl Default for PlaybackStatus {
+    fn default() -> Self {
+        Self {
+            track_id: None,
+            position_us: 0,
+            rate: 1.0,
+            is_playing: false,
+        }
+    }
+}
+
 pub trait PlaybackControl: Send + Sync {
     fn position(&self) -> i64;
     fn status(&self) -> PlaybackStatus;
     fn set_rate(&self, rate: f32) -> Result<()>;
     fn seek(&self, position_us: i64) -> Result<()>;
+    fn pause(&self) -> Result<()> {
+        Ok(())
+    }
+    fn resume(&self) -> Result<()> {
+        Ok(())
+    }
+    fn stop(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
-impl PlaybackControl for PlaybackEngine {
+#[derive(Default)]
+pub struct NoopPlaybackControl {
+    status: std::sync::Mutex<PlaybackStatus>,
+}
+
+impl PlaybackControl for NoopPlaybackControl {
     fn position(&self) -> i64 {
-        PlaybackEngine::position(self)
+        self.status.lock().unwrap().position_us
     }
 
     fn status(&self) -> PlaybackStatus {
-        PlaybackEngine::status(self)
+        self.status.lock().unwrap().clone()
     }
 
     fn set_rate(&self, rate: f32) -> Result<()> {
-        PlaybackEngine::set_rate(self, rate)
+        self.status.lock().unwrap().rate = rate;
+        Ok(())
     }
 
     fn seek(&self, position_us: i64) -> Result<()> {
-        PlaybackEngine::seek(self, position_us)
+        self.status.lock().unwrap().position_us = position_us;
+        Ok(())
     }
 }
 
@@ -161,7 +195,6 @@ mod tests {
             Self {
                 status: Mutex::new(PlaybackStatus {
                     track_id: None,
-                    stream_url: None,
                     position_us,
                     rate,
                     is_playing: true,

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -7,13 +6,11 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::error::{Result, SynkroError};
-use crate::playback::engine::PlaybackStatus;
 use crate::protocol::messages::{
-    Message, PeerInfo, QueueCommand, QueueState, Role, StreamUrl, SyncAnchor,
+    Message, PeerInfo, QueueCommand, QueueState, Role, SyncAnchor,
 };
 use crate::queue::state::QueueManager;
-use crate::stream::resolver::MediaRouter;
-use crate::sync::controller::SyncController;
+use crate::sync::controller::{PlaybackStatus, SyncController};
 
 use self::leader::appoint_successor;
 use self::peer::{PeerEntry, PeerRegistry};
@@ -31,7 +28,6 @@ pub struct SessionState {
     leader_id: RwLock<Uuid>,
     peers: PeerRegistry,
     queue: QueueManager,
-    stream_urls: RwLock<HashMap<String, StreamUrl>>,
     current_anchor: RwLock<Option<SyncAnchor>>,
 }
 
@@ -53,7 +49,6 @@ impl SessionState {
             leader_id: RwLock::new(self_id),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
-            stream_urls: RwLock::new(HashMap::new()),
             current_anchor: RwLock::new(None),
         }
     }
@@ -75,7 +70,6 @@ impl SessionState {
             leader_id: RwLock::new(leader_id),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
-            stream_urls: RwLock::new(HashMap::new()),
             current_anchor: RwLock::new(None),
         };
 
@@ -85,10 +79,7 @@ impl SessionState {
             } else {
                 SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
             };
-            session.peers.upsert(
-                peer,
-                addr,
-            );
+            session.peers.upsert(peer, addr);
         }
 
         session
@@ -244,41 +235,6 @@ impl SessionState {
         self.force_queue_state(queue);
     }
 
-    pub async fn resolve_current_track(&self, resolver: &MediaRouter) -> Result<StreamUrl> {
-        if !self.is_leader() {
-            return Err(SynkroError::NotLeader);
-        }
-
-        let track =
-            self.queue.snapshot().current.ok_or_else(|| {
-                SynkroError::StreamResolution("no current track to resolve".into())
-            })?;
-        let resolved = resolver.resolve(&track.youtube_url).await?;
-        let stream = StreamUrl {
-            track_id: track.id.clone(),
-            url: resolved.url,
-            expires_at: 0,
-        };
-
-        self.accept_stream_url(stream.clone());
-        Ok(stream)
-    }
-
-    pub fn accept_stream_url(&self, stream: StreamUrl) {
-        self.stream_urls
-            .write()
-            .unwrap()
-            .insert(stream.track_id.clone(), stream);
-    }
-
-    pub fn stream_url_for(&self, track_id: &str) -> Option<StreamUrl> {
-        self.stream_urls.read().unwrap().get(track_id).cloned()
-    }
-
-    pub fn stream_message_for(&self, track_id: &str) -> Option<Message> {
-        self.stream_url_for(track_id).map(Message::StreamUrl)
-    }
-
     pub fn accept_sync_anchor(&self, anchor: SyncAnchor) {
         *self.current_anchor.write().unwrap() = Some(anchor);
     }
@@ -307,10 +263,6 @@ impl SessionState {
     pub fn apply_message(&self, message: Message) -> Result<()> {
         match message {
             Message::QueueUpdate(update) => self.accept_queue_update(update),
-            Message::StreamUrl(stream) => {
-                self.accept_stream_url(stream);
-                Ok(())
-            }
             Message::SyncAnchor(anchor) => {
                 self.accept_sync_anchor(anchor);
                 Ok(())

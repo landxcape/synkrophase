@@ -14,11 +14,8 @@ pub enum SynkroError {
     #[error("stale queue version: local={local}, received={received}")]
     StaleQueue { local: u64, received: u64 },
 
-    #[error("stream resolution failed: {0}")]
-    StreamResolution(String),
-
-    #[error("playback error: {0}")]
-    Playback(String),
+    #[error("media control error: {0}")]
+    MediaControl(String),
 
     #[error("serialization error: {0}")]
     Serialization(String),

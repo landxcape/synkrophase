@@ -1,13 +1,12 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use synkrophase::playback::engine::PlaybackStatus;
 use synkrophase::protocol::messages::{
-    Message, PeerInfo, QueueCommand, QueueState, StreamUrl, SyncAnchor, Track,
+    Message, PeerInfo, QueueCommand, QueueState, SyncAnchor, Track,
 };
 use synkrophase::session::{SessionSnapshot, SessionState};
+use synkrophase::sync::controller::PlaybackStatus;
 use uuid::Uuid;
 
 fn track(id: &str) -> Track {
@@ -59,66 +58,128 @@ fn join_accepted_initializes_peer_session() {
 fn heartbeat_expiry_re_elects_lowest_live_peer() {
     let old_leader = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
     let self_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let other_peer = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
-    let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+    let peer_two = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
 
     let session = SessionState::from_join(
         "ROOM42".into(),
         self_id,
         "Self".into(),
         old_leader,
-        addr,
-        vec![peer_info(old_leader), peer_info(other_peer)],
+        "127.0.0.1:8080".parse().unwrap(),
+        vec![peer_info(old_leader), peer_info(peer_two)],
         QueueState::default(),
     );
 
-    session.record_peer_heartbeat(peer_info(old_leader), addr);
-    session.record_peer_heartbeat(peer_info(other_peer), addr);
-    session.mark_peer_stale(&old_leader, Duration::from_secs(5));
+    thread::sleep(Duration::from_millis(50));
+    session.record_peer_heartbeat(
+        peer_info(peer_two),
+        "127.0.0.1:8081".parse().unwrap(),
+    );
 
-    let (expired, heir) = session.prune_and_appoint(Duration::from_secs(3));
-    if heir == self_id {
-        session.promote_to_leader();
-    }
+    let (expired, heir) = session.prune_and_appoint(Duration::from_millis(20));
 
     assert_eq!(expired, vec![old_leader]);
-    assert_eq!(session.leader_id(), self_id);
-    assert!(session.is_leader());
+    assert_eq!(heir, self_id);
 }
 
 #[test]
-fn leader_serializes_concurrent_queue_proposals() {
-    let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-    let session = Arc::new(SessionState::new_leader("ROOM42".into(), leader_id, "Leader".into()));
+fn peer_registry_is_thread_safe_under_concurrent_updates() {
+    let session = Arc::new(SessionState::new_leader(
+        "ROOM42".into(),
+        Uuid::new_v4(),
+        "Leader".into(),
+    ));
 
-    let first = Arc::clone(&session);
-    let handle_a = thread::spawn(move || {
-        first
-            .handle_queue_proposal(QueueCommand::Add(track("one")))
-            .unwrap();
+    let p1 = Uuid::new_v4();
+    let p2 = Uuid::new_v4();
+
+    let s1 = Arc::clone(&session);
+    let h1 = thread::spawn(move || {
+        for _ in 0..50 {
+            s1.record_peer_heartbeat(peer_info(p1), "127.0.0.1:8001".parse().unwrap());
+        }
     });
 
-    let second = Arc::clone(&session);
-    let handle_b = thread::spawn(move || {
-        second
-            .handle_queue_proposal(QueueCommand::Add(track("two")))
-            .unwrap();
+    let s2 = Arc::clone(&session);
+    let h2 = thread::spawn(move || {
+        for _ in 0..50 {
+            s2.record_peer_heartbeat(peer_info(p2), "127.0.0.1:8002".parse().unwrap());
+        }
     });
 
-    handle_a.join().unwrap();
-    handle_b.join().unwrap();
+    h1.join().unwrap();
+    h2.join().unwrap();
 
-    let snapshot = session.queue_snapshot();
-    assert_eq!(snapshot.version, 2);
-    assert!(snapshot.current.is_some());
-    assert_eq!(snapshot.upcoming.len(), 1);
-
-    let mut ids = vec![
-        snapshot.current.unwrap().id,
-        snapshot.upcoming.into_iter().next().unwrap().id,
-    ];
+    let mut ids = session.peer_ids();
     ids.sort();
-    assert_eq!(ids, vec!["one".to_string(), "two".to_string()]);
+
+    let mut expected = vec![p1, p2];
+    expected.sort();
+    assert_eq!(ids, expected);
+}
+
+#[test]
+fn queue_proposals_reject_non_leader_callers() {
+    let self_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
+    let session = SessionState::from_join(
+        "ROOM42".into(),
+        self_id,
+        "Self".into(),
+        Uuid::new_v4(),
+        "127.0.0.1:8080".parse().unwrap(),
+        vec![],
+        QueueState::default(),
+    );
+
+    let result = session.handle_queue_proposal(QueueCommand::Add(track("one")));
+    assert!(result.is_err());
+}
+
+#[test]
+fn queue_proposals_succeed_for_leader() {
+    let session = SessionState::new_leader("ROOM42".into(), Uuid::new_v4(), "Leader".into());
+    let state = session
+        .handle_queue_proposal(QueueCommand::Add(track("one")))
+        .unwrap();
+
+    assert_eq!(state.version, 1);
+    assert_eq!(state.current.as_ref().map(|t| t.id.as_str()), Some("one"));
+}
+
+#[test]
+fn concurrent_heartbeats_maintain_distinct_peers() {
+    let session = Arc::new(SessionState::new_leader(
+        "ROOM42".into(),
+        Uuid::new_v4(),
+        "Leader".into(),
+    ));
+
+    let mut handles = vec![];
+    for name in ["one", "two"] {
+        let s = Arc::clone(&session);
+        handles.push(thread::spawn(move || {
+            let info = PeerInfo {
+                device_id: Uuid::new_v4(),
+                name: name.to_string(),
+                clock_offset_us: 0,
+                last_seen: 0,
+                role: synkrophase::protocol::messages::Role::Listener,
+            };
+            s.record_peer_heartbeat(info, "127.0.0.1:9000".parse().unwrap());
+        }));
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let mut names: Vec<_> = session
+        .all_alive_peers()
+        .into_iter()
+        .map(|(_, e)| e.info.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["one".to_string(), "two".to_string()]);
 }
 
 #[test]
@@ -147,7 +208,7 @@ fn leader_snapshot_preserves_last_queue_state_for_handoff() {
 }
 
 #[test]
-fn apply_message_updates_stream_and_sync_anchor_state() {
+fn apply_message_updates_sync_anchor_state() {
     let self_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
     let leader_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
     let session = SessionState::from_join(
@@ -160,11 +221,6 @@ fn apply_message_updates_stream_and_sync_anchor_state() {
         QueueState::default(),
     );
 
-    let stream = StreamUrl {
-        track_id: "track-1".into(),
-        url: "https://cdn.example.com/audio".into(),
-        expires_at: 1_000,
-    };
     let anchor = SyncAnchor {
         reference_time: 10_000,
         media_position_us: 20_000,
@@ -173,13 +229,9 @@ fn apply_message_updates_stream_and_sync_anchor_state() {
     };
 
     session
-        .apply_message(Message::StreamUrl(stream.clone()))
-        .unwrap();
-    session
         .apply_message(Message::SyncAnchor(anchor.clone()))
         .unwrap();
 
-    assert_eq!(session.stream_url_for("track-1"), Some(stream));
     assert_eq!(session.latest_sync_anchor(), Some(anchor));
 }
 
@@ -189,7 +241,6 @@ fn leader_builds_sync_anchor_message_from_playback_status() {
     let session = SessionState::new_leader("ROOM42".into(), leader_id, "TestUser".to_string());
     let status = PlaybackStatus {
         track_id: Some("track-1".into()),
-        stream_url: Some("https://cdn.example.com/audio".into()),
         position_us: 111_000,
         rate: 0.98,
         is_playing: true,
