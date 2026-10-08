@@ -88,9 +88,30 @@ pub enum Commands {
         #[arg(long)]
         leader_addr: Option<SocketAddr>,
     },
-    /// Skip current track across the room.
+    /// Skip to next track across the room.
+    Next {
+        room_code: String,
+        #[arg(long)]
+        leader_addr: Option<SocketAddr>,
+    },
+    /// Skip to previous track across the room.
+    Prev {
+        room_code: String,
+        #[arg(long)]
+        leader_addr: Option<SocketAddr>,
+    },
+    /// Skip current track across the room (alias for next).
     Skip {
         room_code: String,
+        #[arg(long)]
+        leader_addr: Option<SocketAddr>,
+    },
+    /// Sync room volume across all connected peers.
+    Volume {
+        room_code: String,
+        /// Optional volume level (0-100). If omitted, host volume is mirrored.
+        #[arg(long)]
+        level: Option<u8>,
         #[arg(long)]
         leader_addr: Option<SocketAddr>,
     },

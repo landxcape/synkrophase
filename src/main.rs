@@ -5,7 +5,7 @@ use synkrophase::cli::{
 };
 use synkrophase::config::SyncConfig;
 use synkrophase::error::Result;
-use synkrophase::protocol::messages::{Message, PlaybackAction, PlaybackIntent, QueueCommand};
+use synkrophase::protocol::messages::{Message, PlaybackAction, PlaybackIntent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -137,15 +137,52 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Commands::Skip {
+        Commands::Next {
+            room_code,
+            leader_addr,
+        }
+        | Commands::Skip {
             room_code,
             leader_addr,
         } => {
+            let intent = PlaybackIntent {
+                action: PlaybackAction::NextTrack,
+                target_ref_time: 0,
+                position_us: 0,
+                track_title: None,
+            };
+            run_simple_command(device, room_code, leader_addr, Message::Intent(intent)).await
+        }
+        Commands::Prev {
+            room_code,
+            leader_addr,
+        } => {
+            let intent = PlaybackIntent {
+                action: PlaybackAction::PreviousTrack,
+                target_ref_time: 0,
+                position_us: 0,
+                track_title: None,
+            };
+            run_simple_command(device, room_code, leader_addr, Message::Intent(intent)).await
+        }
+        Commands::Volume {
+            room_code,
+            level,
+            leader_addr,
+        } => {
+            let vol = match level {
+                Some(v) => v.min(100),
+                None => {
+                    let controller = create_media_controller();
+                    controller.get_volume().await.unwrap_or(70)
+                }
+            };
+            let actor = device.device_id;
             run_simple_command(
                 device,
                 room_code,
                 leader_addr,
-                Message::QueueProposal(QueueCommand::Skip),
+                Message::SetVolume { volume: vol, actor },
             )
             .await
         }
