@@ -92,7 +92,10 @@ impl SessionMessageRuntime {
     fn log_system(&self, msg: impl Into<String>) {
         let msg = msg.into();
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(AppEvent::Log(msg, "System".into()));
+            let _ = tx.send(AppEvent::Log {
+                source: "System".into(),
+                text: msg,
+            });
         } else {
             print_event(self.stdout.as_ref(), &msg);
         }
@@ -102,7 +105,10 @@ impl SessionMessageRuntime {
         let source = source.into();
         let msg = msg.into();
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(AppEvent::Log(msg, source));
+            let _ = tx.send(AppEvent::Log {
+                source: source.clone(),
+                text: msg.clone(),
+            });
         } else {
             print_event(self.stdout.as_ref(), &format!("[{}]: {}", source, msg));
         }
@@ -319,7 +325,9 @@ impl SessionMessageRuntime {
                 let peer_name = self.session.display_name(&peer_id);
                 self.log_system(format!("{} left the room.", peer_name));
 
-                // If we are leader, forward PeerLeft to all other peers so they prune their registries too
+                let was_leader = peer_id == self.session.leader_id();
+
+                // If we were leader, forward PeerLeft to all other peers so they prune their registries too
                 if self.session.is_leader() {
                     let env = Envelope {
                         sender: self.session.self_id(),
@@ -335,6 +343,36 @@ impl SessionMessageRuntime {
                 }
 
                 self.session.remove_peer(&peer_id);
+
+                // If the departing peer was the leader, immediately appoint and elect a successor
+                if was_leader && !self.session.is_leader() {
+                    let live_infos: Vec<_> = self
+                        .session
+                        .all_alive_peers()
+                        .into_iter()
+                        .map(|(_, e)| e.info)
+                        .collect();
+                    let heir = crate::session::leader::appoint_successor(&live_infos, &self.session.self_info());
+
+                    if heir == self.session.self_id() {
+                        self.session.promote_to_leader();
+                        self.log_system("Host has left. You have been elected as the new Leader!");
+                        let envelope = Envelope {
+                            sender: self.session.self_id(),
+                            payload: Message::LeaderElected(heir),
+                        };
+                        if let Ok(bytes) = serialize(&envelope) {
+                            for addr in self.session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                        }
+                    } else {
+                        self.session.set_leader_id(heir);
+                        let name = self.session.display_name(&heir);
+                        self.log_system(format!("Host has left. {} is elected as the new Leader.", name));
+                    }
+                }
+
                 Ok(())
             }
             Message::Heartbeat {
@@ -593,20 +631,26 @@ impl SessionMessageRuntime {
                 if self.session.is_leader() {
                     // Leader formats and broadcasts to all peers
                     let broadcast = Message::ChatBroadcast {
+                        sender,
                         display_name: display_name.clone(),
                         text: text.clone(),
                     };
                     self.send_to_peers(socket, broadcast).await?;
-                    // Leader also logs locally
-                    self.log_chat(&display_name, &text);
+                    // Leader also logs locally if not self
+                    if sender != self.session.self_id() {
+                        self.log_chat(&display_name, &text);
+                    }
                 }
                 Ok(())
             }
-            Message::ChatBroadcast { display_name, text } => {
+            Message::ChatBroadcast { sender, display_name, text } => {
                 if envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
-                self.log_chat(&display_name, &text);
+                // Skip if this broadcast was originally sent by us (we already logged it locally)
+                if sender != self.session.self_id() {
+                    self.log_chat(&display_name, &text);
+                }
                 Ok(())
             }
             Message::Notification { text } => {

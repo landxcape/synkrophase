@@ -89,7 +89,12 @@ pub async fn run_tui(
 
     while !app.should_quit {
         // Update peer list and role dynamically from session registry
-        app.peers = app.session.all_alive_peers().into_iter().map(|(_, e)| e.info).collect();
+        let mut members: Vec<_> = app.session.all_alive_peers().into_iter().map(|(_, e)| e.info).collect();
+        members.push(app.session.self_info());
+        // Deduplicate in case self was somehow recorded in peers
+        members.sort_by_key(|p| p.device_id);
+        members.dedup_by_key(|p| p.device_id);
+        app.peers = members;
         app.role = app.session.role();
         app.is_leader = app.session.is_leader();
 
@@ -109,8 +114,8 @@ pub async fn run_tui(
                     )
                     .await?;
                 }
-                AppEvent::Log(source, msg) => {
-                    app.add_log(source, msg);
+                AppEvent::Log { source, text } => {
+                    app.add_log(source, text);
                 }
                 AppEvent::PlaybackUpdate(state) => {
                     app.playback = state;

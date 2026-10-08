@@ -268,6 +268,7 @@ pub async fn run_host_repl(
                 let envelope = Envelope {
                     sender,
                     payload: Message::ChatBroadcast {
+                        sender,
                         display_name: name.clone(),
                         text: text.clone(),
                     },

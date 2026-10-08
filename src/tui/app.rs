@@ -39,7 +39,7 @@ impl Default for DriftInfo {
 pub enum AppEvent {
     Tick,
     Key(crossterm::event::KeyEvent),
-    Log(String, String), // source, message
+    Log { source: String, text: String },
     DriftUpdate(i64, u8, String),
     PlaybackUpdate(PlaybackState),
     PeerListUpdate(Vec<PeerInfo>),

@@ -42,6 +42,7 @@ impl LeaderAnchorBroadcaster {
     }
 
     pub async fn build_anchor_envelope(&self, sender: Uuid) -> Result<Envelope> {
+        let t_start = self.clock.reference_now();
         let status = if let Some(controller) = &self.controller {
             if let Ok(state) = controller.get_playback_state().await {
                 crate::sync::controller::PlaybackStatus {
@@ -56,10 +57,13 @@ impl LeaderAnchorBroadcaster {
         } else {
             self.playback.status()
         };
+        let t_end = self.clock.reference_now();
+        // Midpoint of the player query gives the most accurate timestamp for the retrieved position
+        let sample_time = t_start + (t_end.saturating_sub(t_start)) / 2;
 
         let message = self
             .session
-            .build_sync_anchor_message(self.clock.reference_now(), &status)?;
+            .build_sync_anchor_message(sample_time, &status)?;
         Ok(Envelope {
             sender,
             payload: message,

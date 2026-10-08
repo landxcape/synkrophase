@@ -180,14 +180,14 @@ pub async fn run_host(
         });
 
         // Initial welcome log in TUI
-        let _ = event_tx.send(crate::tui::AppEvent::Log(
-            format!("Room: {room_code} | Session: {session_port} | Clock: {clock_port}"),
-            "System".into(),
-        ));
-        let _ = event_tx.send(crate::tui::AppEvent::Log(
-            format!("Join: synkro join {room_code} --leader-addr {local_ip}:{session_port}"),
-            "System".into(),
-        ));
+        let _ = event_tx.send(crate::tui::AppEvent::Log {
+            source: "System".into(),
+            text: format!("Room: {room_code} | Session: {session_port} | Clock: {clock_port}"),
+        });
+        let _ = event_tx.send(crate::tui::AppEvent::Log {
+            source: "System".into(),
+            text: format!("Join: synkro join {room_code} --leader-addr {local_ip}:{session_port}"),
+        });
 
         let tui_res = crate::tui::run_tui(
             room_code,
@@ -477,10 +477,10 @@ pub async fn run_join(
             async move { runtime.run_receive_loop(socket).await }
         });
 
-        let _ = event_tx.send(crate::tui::AppEvent::Log(
-            format!("Joining room {room_code} via {resolved_leader_addr}"),
-            "System".into(),
-        ));
+        let _ = event_tx.send(crate::tui::AppEvent::Log {
+            source: "System".into(),
+            text: format!("Joining room {room_code} via {resolved_leader_addr}"),
+        });
 
         let tui_res = crate::tui::run_tui(
             room_code,
@@ -683,8 +683,8 @@ pub async fn run_role_manager_loop(
             let leader_id = session.leader_id();
             let expired = session.prune_and_appoint(timeout).0;
 
-            if expired.contains(&leader_id) {
-                // Leader timed out! Determine new leader deterministically
+            if expired.contains(&leader_id) || !session.is_alive(&leader_id) {
+                // Leader timed out or departed! Determine new leader deterministically
                 let live_infos: Vec<_> = session.all_alive_peers().into_iter().map(|(_, e)| e.info).collect();
                 let heir = crate::session::leader::appoint_successor(&live_infos, &session.self_info());
 

@@ -239,6 +239,7 @@ async fn send_chat_message(
         let envelope = Envelope {
             sender: app.self_id,
             payload: Message::ChatBroadcast {
+                sender: app.self_id,
                 display_name: app.device_name.clone(),
                 text: text.clone(),
             },

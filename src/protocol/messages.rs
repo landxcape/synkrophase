@@ -57,6 +57,7 @@ pub enum Message {
         text: String,
     },
     ChatBroadcast {
+        sender: Uuid,
         display_name: String,
         text: String,
     },
@@ -238,9 +239,11 @@ mod tests {
 
     #[test]
     fn test_chat_broadcast_roundtrip() {
+        let sender = Uuid::new_v4();
         let env = Envelope {
-            sender: Uuid::new_v4(),
+            sender,
             payload: Message::ChatBroadcast {
+                sender,
                 display_name: "Alice".into(),
                 text: "Hello everyone!".into(),
             },

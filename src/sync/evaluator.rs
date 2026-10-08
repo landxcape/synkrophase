@@ -20,6 +20,7 @@ pub struct DriftEvaluator {
     controller: Arc<dyn MediaController>,
     threshold_us: u64,
     notify_event: Arc<Notify>,
+    last_seek: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl DriftEvaluator {
@@ -33,6 +34,7 @@ impl DriftEvaluator {
             controller,
             threshold_us,
             notify_event: Arc::new(Notify::new()),
+            last_seek: std::sync::Mutex::new(None),
         }
     }
 
@@ -49,11 +51,15 @@ impl DriftEvaluator {
             return Ok(DriftAction::InSync { drift_us: 0 });
         }
 
-        let now = self.clock.reference_now();
-        let elapsed_us = (now.saturating_sub(anchor.reference_time) as f64 * anchor.playback_rate as f64) as i64;
+        let t_start = self.clock.reference_now();
+        let local_state = self.controller.get_playback_state().await?;
+        let t_end = self.clock.reference_now();
+        // Midpoint of local query represents the true moment position was queried
+        let query_midpoint = t_start + (t_end.saturating_sub(t_start)) / 2;
+
+        let elapsed_us = (query_midpoint.saturating_sub(anchor.reference_time) as f64 * anchor.playback_rate as f64) as i64;
         let expected_position_us = anchor.media_position_us + elapsed_us;
 
-        let local_state = self.controller.get_playback_state().await?;
         let drift_us = local_state.position_us - expected_position_us;
         let drift_abs = drift_us.unsigned_abs();
 
@@ -74,8 +80,23 @@ impl DriftEvaluator {
             }
         }
 
-        // Stage 2: Snap to target via micro-seek
-        self.controller.seek_to(expected_position_us).await?;
+        // Stage 2: Micro-seek with cooldown to prevent seek thrashing & buffer jitter
+        let now = std::time::Instant::now();
+        let should_seek = {
+            let mut last = self.last_seek.lock().unwrap();
+            match *last {
+                Some(prev) if now.duration_since(prev) < Duration::from_millis(2500) => false,
+                _ => {
+                    *last = Some(now);
+                    true
+                }
+            }
+        };
+
+        if should_seek {
+            self.controller.seek_to(expected_position_us).await?;
+        }
+
         Ok(DriftAction::MicroSeek {
             target_position_us: expected_position_us,
             drift_us,
