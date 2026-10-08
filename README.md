@@ -69,6 +69,17 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 
 ## Installation
 
+### Homebrew (macOS & Linux)
+
+Install the pre-built binary via the official tap:
+
+```bash
+brew tap landxcape/tap
+brew install landxcape/tap/synkrophase
+```
+
+### Build from Source
+
 Ensure you have a recent Rust toolchain installed (2024 edition supported, Rust 1.85+):
 
 ```bash
