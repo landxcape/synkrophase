@@ -3,9 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, List, ListItem, Paragraph, Row, Table,
-    },
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Row, Table},
 };
 
 use super::app::{InputMode, TuiApp};
@@ -31,21 +29,34 @@ fn render_header(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
     let role_span = if app.is_leader {
         Span::styled(
             " [LEADER] ",
-            Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(
             " [FOLLOWER] ",
-            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )
     };
 
     let header_line = Line::from(vec![
-        Span::styled(" Synkrophase ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Synkrophase ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("• Room: "),
         Span::styled(
             &app.room_code,
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" • Role: "),
         role_span,
@@ -58,7 +69,9 @@ fn render_header(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    let paragraph = Paragraph::new(header_line).block(block).alignment(Alignment::Left);
+    let paragraph = Paragraph::new(header_line)
+        .block(block)
+        .alignment(Alignment::Left);
     frame.render_widget(paragraph, area);
 }
 
@@ -71,7 +84,11 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
 
     let block = Block::default()
         .title(" Now Playing ")
-        .title_style(Style::default().fg(border_color).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
@@ -122,14 +139,30 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         .unwrap_or_default();
 
     let meta_line = Line::from(vec![
-        Span::styled(format!(" {icon}"), Style::default().fg(border_color).add_modifier(Modifier::BOLD)),
-        Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" {icon}"),
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         if !artist_album.is_empty() {
-            Span::styled(format!("   {artist_album}"), Style::default().fg(Color::DarkGray))
+            Span::styled(
+                format!("   {artist_album}"),
+                Style::default().fg(Color::DarkGray),
+            )
         } else {
             Span::raw("")
         },
-        Span::styled(format!("  [{state_text}]"), Style::default().fg(border_color)),
+        Span::styled(
+            format!("  [{state_text}]"),
+            Style::default().fg(border_color),
+        ),
     ]);
     frame.render_widget(Paragraph::new(meta_line), sub_layout[0]);
 
@@ -143,9 +176,17 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         .map(|d| (d as f64) / 1_000_000.0)
         .unwrap_or(0.0);
 
-    let cur_str = format!("{:02}:{:02}", (pos_sec / 60.0) as i64, (pos_sec % 60.0) as i64);
+    let cur_str = format!(
+        "{:02}:{:02}",
+        (pos_sec / 60.0) as i64,
+        (pos_sec % 60.0) as i64
+    );
     let total_str = if dur_sec > 0.0 {
-        format!("{:02}:{:02}", (dur_sec / 60.0) as i64, (dur_sec % 60.0) as i64)
+        format!(
+            "{:02}:{:02}",
+            (dur_sec / 60.0) as i64,
+            (dur_sec % 60.0) as i64
+        )
     } else {
         "--:--".to_string()
     };
@@ -176,7 +217,8 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
     } else {
         "●".to_string()
     };
-    let unfilled_part: String = "─".repeat(unfilled_chars.saturating_sub(if filled_chars == 0 { 1 } else { 0 }));
+    let unfilled_part: String =
+        "─".repeat(unfilled_chars.saturating_sub(if filled_chars == 0 { 1 } else { 0 }));
 
     let slider_color = if app.playback.is_playing {
         Color::Cyan
@@ -188,7 +230,12 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         Span::raw(" "),
         Span::styled(cur_str, Style::default().fg(Color::White)),
         Span::styled(" [", Style::default().fg(Color::DarkGray)),
-        Span::styled(filled_part, Style::default().fg(slider_color).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            filled_part,
+            Style::default()
+                .fg(slider_color)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(unfilled_part, Style::default().fg(Color::Rgb(60, 60, 60))),
         Span::styled("] ", Style::default().fg(Color::DarkGray)),
         Span::styled(total_str, Style::default().fg(Color::DarkGray)),
@@ -232,7 +279,14 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
             };
 
             Row::new(vec![
-                Span::styled(name_display, if is_self { Style::default().fg(Color::Cyan) } else { Style::default() }),
+                Span::styled(
+                    name_display,
+                    if is_self {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    },
+                ),
                 Span::raw(role_str),
                 Span::styled(offset_str, Style::default().fg(Color::Yellow)),
             ])
@@ -241,16 +295,27 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
 
     let peer_table = Table::new(
         rows,
-        [Constraint::Percentage(50), Constraint::Percentage(25), Constraint::Percentage(25)],
+        [
+            Constraint::Percentage(50),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ],
     )
     .header(
-        Row::new(vec!["Peer", "Role", "Offset"])
-            .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Row::new(vec!["Peer", "Role", "Offset"]).style(
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
     )
     .block(
         Block::default()
             .title(" Room Members ")
-            .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::DarkGray)),
@@ -266,9 +331,17 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
     };
     let drift_line = Line::from(vec![
         Span::raw("Sync: "),
-        Span::styled(&app.drift.status, Style::default().fg(drift_color).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            &app.drift.status,
+            Style::default()
+                .fg(drift_color)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" | Offset: "),
-        Span::styled(format!("{:+0.2}ms", (app.drift.offset_us as f64) / 1000.0), Style::default().fg(Color::White)),
+        Span::styled(
+            format!("{:+0.2}ms", (app.drift.offset_us as f64) / 1000.0),
+            Style::default().fg(Color::White),
+        ),
     ]);
     let drift_block = Block::default()
         .title(" Clock Synchronization Health ")
@@ -276,7 +349,10 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(Paragraph::new(drift_line).block(drift_block), left_layout[1]);
+    frame.render_widget(
+        Paragraph::new(drift_line).block(drift_block),
+        left_layout[1],
+    );
 
     // Right Panel: Activity Log & Chat
     let log_items: Vec<ListItem> = app
@@ -289,22 +365,31 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
                 _ => Color::Cyan,
             };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("[{}] ", entry.timestamp), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("[{}] ", entry.source), Style::default().fg(src_color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("[{}] ", entry.timestamp),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    format!("[{}] ", entry.source),
+                    Style::default().fg(src_color).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(&entry.text),
             ]))
         })
         .collect();
 
-    let logs_list = List::new(log_items)
-        .block(
-            Block::default()
-                .title(" Activity & Room Chat ")
-                .title_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
+    let logs_list = List::new(log_items).block(
+        Block::default()
+            .title(" Activity & Room Chat ")
+            .title_style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
 
     frame.render_widget(logs_list, middle_layout[1]);
 }
@@ -313,13 +398,31 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
     match app.input_mode {
         InputMode::Normal => {
             let help_line = Line::from(vec![
-                Span::styled("[Space] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Space] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("Play/Pause  • "),
-                Span::styled("[←/→] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[←/→] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("Seek ±5s  • "),
-                Span::styled("[/] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[/] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("Chat/Cmd  • "),
-                Span::styled("[q] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[q] ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("Quit"),
             ]);
 
@@ -327,11 +430,21 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::DarkGray));
-            frame.render_widget(Paragraph::new(help_line).block(block).alignment(Alignment::Center), area);
+            frame.render_widget(
+                Paragraph::new(help_line)
+                    .block(block)
+                    .alignment(Alignment::Center),
+                area,
+            );
         }
         InputMode::Editing => {
             let input_line = Line::from(vec![
-                Span::styled("Input: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Input: ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(&app.input_buffer, Style::default().fg(Color::White)),
                 Span::styled("█", Style::default().fg(Color::Yellow)),
             ]);

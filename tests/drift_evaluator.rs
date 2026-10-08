@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use synkrophase::controller::mock::MockMediaController;
 use synkrophase::controller::MediaController;
+use synkrophase::controller::mock::MockMediaController;
 use synkrophase::protocol::messages::SyncAnchor;
 use synkrophase::sync::controller::ClockSource;
 use synkrophase::sync::evaluator::{DriftAction, DriftEvaluator};
@@ -58,7 +58,10 @@ async fn test_drift_evaluator_micro_seeks_beyond_threshold() {
 
     let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
     match action {
-        DriftAction::MicroSeek { target_position_us, drift_us } => {
+        DriftAction::MicroSeek {
+            target_position_us,
+            drift_us,
+        } => {
             assert_eq!(drift_us, 300_000);
             assert_eq!(target_position_us, 10_000_000);
         }

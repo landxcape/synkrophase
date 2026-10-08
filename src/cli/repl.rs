@@ -1,9 +1,10 @@
+use rustyline_async::SharedWriter;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use rustyline_async::SharedWriter;
 use tokio::net::UdpSocket;
 use uuid::Uuid;
 
+use super::args::DEFAULT_LEAD_TIME_US;
 use crate::clock::sync::ClockSync;
 use crate::controller::MediaController;
 use crate::error::Result;
@@ -12,7 +13,6 @@ use crate::protocol::messages::{
 };
 use crate::session::SessionState;
 use crate::sync::scheduler::IntentScheduler;
-use super::args::DEFAULT_LEAD_TIME_US;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplCommand {
@@ -45,7 +45,16 @@ impl ReplCommand {
 
         let is_known = matches!(
             parts[0],
-            "play" | "pause" | "resume" | "seek" | "status" | "queue" | "skip" | "help" | "exit" | "quit"
+            "play"
+                | "pause"
+                | "resume"
+                | "seek"
+                | "status"
+                | "queue"
+                | "skip"
+                | "help"
+                | "exit"
+                | "quit"
         );
 
         if is_slash || is_known {
@@ -54,7 +63,9 @@ impl ReplCommand {
                 "pause" => Self::Pause,
                 "resume" => Self::Resume,
                 "seek" => {
-                    if parts.len() > 1 && let Ok(sec) = parts[1].parse::<f64>() {
+                    if parts.len() > 1
+                        && let Ok(sec) = parts[1].parse::<f64>()
+                    {
                         Self::Seek(sec)
                     } else {
                         Self::Help
@@ -102,11 +113,18 @@ pub fn print_queue(session: &SessionState, stdout: Option<&SharedWriter>) {
     crate::session::runtime::print_event(stdout, out.trim_end());
 }
 
-pub async fn print_status(controller: &Arc<dyn MediaController>, stdout: Option<&SharedWriter>) -> Result<()> {
+pub async fn print_status(
+    controller: &Arc<dyn MediaController>,
+    stdout: Option<&SharedWriter>,
+) -> Result<()> {
     let state = controller.get_playback_state().await?;
     let mut out = format!(
         "Player Status: {}\nPosition: {:.2}s\n",
-        if state.is_playing { "Playing" } else { "Paused" },
+        if state.is_playing {
+            "Playing"
+        } else {
+            "Paused"
+        },
         (state.position_us as f64) / 1_000_000.0
     );
     if let Some(m) = state.metadata {
@@ -278,10 +296,7 @@ pub async fn run_host_repl(
                         let _ = socket.send_to(&bytes, addr).await;
                     }
                 }
-                crate::session::runtime::print_event(
-                    Some(&stdout),
-                    &format!("[{name}]: {text}"),
-                );
+                crate::session::runtime::print_event(Some(&stdout), &format!("[{name}]: {text}"));
             }
         }
     }

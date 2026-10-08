@@ -1,5 +1,5 @@
-use std::net::SocketAddr;
 use clap::{Parser, Subcommand};
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 pub const DEFAULT_CLOCK_PORT: u16 = 5870;
@@ -7,7 +7,11 @@ pub const DEFAULT_SESSION_PORT: u16 = 5871;
 pub const DEFAULT_LEAD_TIME_US: u64 = 100_000; // 100ms dynamic lead time
 
 #[derive(Parser, Debug)]
-#[command(name = "synkro", version, about = "Synchronized LAN playback controller")]
+#[command(
+    name = "synkro",
+    version,
+    about = "Synchronized LAN playback controller"
+)]
 pub struct Cli {
     /// Optional nickname for this device
     #[arg(long, global = true)]

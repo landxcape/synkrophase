@@ -6,6 +6,7 @@ use tokio::net::UdpSocket;
 use tokio::time::sleep;
 use uuid::Uuid;
 
+use super::repl::{run_follower_repl, run_host_repl};
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
 use crate::controller::MediaController;
@@ -15,13 +16,12 @@ use crate::controller::macos::MacOsMediaController;
 use crate::controller::mock::MockMediaController;
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{Envelope, Message, QueueState, serialize};
+use crate::session::SessionState;
 use crate::session::discovery::Discovery;
 use crate::session::runtime::{LeaderAnchorBroadcaster, SessionMessageRuntime};
-use crate::session::SessionState;
 use crate::sync::controller::{NoopPlaybackControl, PlaybackControl};
 use crate::sync::evaluator::DriftEvaluator;
 use crate::sync::scheduler::IntentScheduler;
-use super::repl::{run_follower_repl, run_host_repl};
 
 pub fn create_media_controller() -> Arc<dyn MediaController> {
     #[cfg(target_os = "macos")]
@@ -45,7 +45,9 @@ pub fn resolve_join_target(
 
     let discovery = Discovery::new()?;
     let discovered = discovery.find_sessions()?;
-    let found = discovered.into_iter().find(|info| info.room_code == room_code);
+    let found = discovered
+        .into_iter()
+        .find(|info| info.room_code == room_code);
 
     if let Some(info) = found {
         let addr = leader_addr.unwrap_or(info.leader_addr);
@@ -87,9 +89,11 @@ pub async fn run_host(
     session_port: u16,
     headless: bool,
 ) -> Result<()> {
-    let clock_socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, clock_port)))
-            .await?;
+    let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::UNSPECIFIED,
+        clock_port,
+    )))
+    .await?;
     let session_socket = Arc::new(
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::UNSPECIFIED,
@@ -121,8 +125,8 @@ pub async fn run_host(
     let discovery = Discovery::new()?;
     discovery.register_session(&room_code, device.device_id, session_port)?;
 
-    let local_ip = local_ip_address::local_ip()
-        .unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    let local_ip =
+        local_ip_address::local_ip().unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 
     let clock_task = {
         let clock = Arc::clone(&clock);
@@ -163,16 +167,12 @@ pub async fn run_host(
     if !headless {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let runtime = SessionMessageRuntime::new(
-            Arc::clone(&session),
-            None,
-            device.name.clone(),
-        )
-        .with_event_tx(event_tx.clone())
-        .with_playback(Arc::clone(&playback))
-        .with_scheduler(Arc::clone(&scheduler))
-        .with_controller(Arc::clone(&controller))
-        .with_clock(Arc::clone(&clock));
+        let runtime = SessionMessageRuntime::new(Arc::clone(&session), None, device.name.clone())
+            .with_event_tx(event_tx.clone())
+            .with_playback(Arc::clone(&playback))
+            .with_scheduler(Arc::clone(&scheduler))
+            .with_controller(Arc::clone(&controller))
+            .with_clock(Arc::clone(&clock));
 
         let receive_task = tokio::spawn({
             let socket = Arc::clone(&session_socket);
@@ -419,7 +419,17 @@ pub async fn run_join(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         let room = room_code.clone();
-        async move { run_heartbeat_loop(session, socket, sender, room, Some(resolved_leader_addr), cfg).await }
+        async move {
+            run_heartbeat_loop(
+                session,
+                socket,
+                sender,
+                room,
+                Some(resolved_leader_addr),
+                cfg,
+            )
+            .await
+        }
     });
 
     let role_manager_task = tokio::spawn({
@@ -441,36 +451,33 @@ pub async fn run_join(
             async move {
                 loop {
                     sleep(Duration::from_millis(500)).await;
-                    if let Some(anchor) = session.latest_sync_anchor() {
-                        if let Ok(action) = evaluator.evaluate_and_reconcile(&anchor).await {
-                            let (offset_us, zone, status) = match action {
-                                crate::sync::evaluator::DriftAction::InSync { drift_us } => {
-                                    (drift_us, 1, "Locked (<50ms)".to_string())
-                                }
-                                crate::sync::evaluator::DriftAction::FineTuneRate { rate, drift_us } => {
-                                    (drift_us, 2, format!("Nudging (rate: {:.2})", rate))
-                                }
-                                crate::sync::evaluator::DriftAction::MicroSeek { drift_us, .. } => {
-                                    (drift_us, 3, "Resyncing (Micro-seek)".to_string())
-                                }
-                            };
-                            let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
-                        }
+                    if let Some(anchor) = session.latest_sync_anchor()
+                        && let Ok(action) = evaluator.evaluate_and_reconcile(&anchor).await
+                    {
+                        let (offset_us, zone, status) = match action {
+                            crate::sync::evaluator::DriftAction::InSync { drift_us } => {
+                                (drift_us, 1, "Locked (<50ms)".to_string())
+                            }
+                            crate::sync::evaluator::DriftAction::FineTuneRate {
+                                rate,
+                                drift_us,
+                            } => (drift_us, 2, format!("Nudging (rate: {:.2})", rate)),
+                            crate::sync::evaluator::DriftAction::MicroSeek { drift_us, .. } => {
+                                (drift_us, 3, "Resyncing (Micro-seek)".to_string())
+                            }
+                        };
+                        let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
                     }
                 }
             }
         });
 
-        let runtime = SessionMessageRuntime::new(
-            Arc::clone(&session),
-            None,
-            device.name.clone(),
-        )
-        .with_event_tx(event_tx.clone())
-        .with_controller(Arc::clone(&controller))
-        .with_clock(Arc::clone(&clock))
-        .with_scheduler(Arc::clone(&scheduler))
-        .with_drift_evaluator(Arc::clone(&drift_evaluator));
+        let runtime = SessionMessageRuntime::new(Arc::clone(&session), None, device.name.clone())
+            .with_event_tx(event_tx.clone())
+            .with_controller(Arc::clone(&controller))
+            .with_clock(Arc::clone(&clock))
+            .with_scheduler(Arc::clone(&scheduler))
+            .with_drift_evaluator(Arc::clone(&drift_evaluator));
 
         let receive_task = tokio::spawn({
             let socket = Arc::clone(&session_socket);
@@ -685,8 +692,13 @@ pub async fn run_role_manager_loop(
 
             if expired.contains(&leader_id) || !session.is_alive(&leader_id) {
                 // Leader timed out or departed! Determine new leader deterministically
-                let live_infos: Vec<_> = session.all_alive_peers().into_iter().map(|(_, e)| e.info).collect();
-                let heir = crate::session::leader::appoint_successor(&live_infos, &session.self_info());
+                let live_infos: Vec<_> = session
+                    .all_alive_peers()
+                    .into_iter()
+                    .map(|(_, e)| e.info)
+                    .collect();
+                let heir =
+                    crate::session::leader::appoint_successor(&live_infos, &session.self_info());
 
                 if heir == session.self_id() {
                     // We won the election!

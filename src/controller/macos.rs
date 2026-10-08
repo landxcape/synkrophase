@@ -12,10 +12,7 @@ impl MacOsMediaController {
     }
 
     fn run_osascript(script: &str) -> std::result::Result<String, std::io::Error> {
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .output()?;
+        let output = Command::new("osascript").arg("-e").arg(script).output()?;
 
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -87,8 +84,16 @@ impl MacOsMediaController {
         let is_playing = parts[0].eq_ignore_ascii_case("playing");
         let position_sec: f64 = parts[1].parse().unwrap_or(0.0);
         let title = parts[2].to_string();
-        let artist = if parts[3].is_empty() { None } else { Some(parts[3].to_string()) };
-        let album = if parts[4].is_empty() { None } else { Some(parts[4].to_string()) };
+        let artist = if parts[3].is_empty() {
+            None
+        } else {
+            Some(parts[3].to_string())
+        };
+        let album = if parts[4].is_empty() {
+            None
+        } else {
+            Some(parts[4].to_string())
+        };
         let duration_sec: f64 = parts[5].parse().unwrap_or(0.0);
 
         Some(PlaybackState {
@@ -99,7 +104,11 @@ impl MacOsMediaController {
                 title,
                 artist,
                 album,
-                duration_us: if duration_sec > 0.0 { Some((duration_sec * 1_000_000.0) as u64) } else { None },
+                duration_us: if duration_sec > 0.0 {
+                    Some((duration_sec * 1_000_000.0) as u64)
+                } else {
+                    None
+                },
             }),
         })
     }
@@ -151,10 +160,16 @@ impl MediaController for MacOsMediaController {
         let seconds = (position_us as f64) / 1_000_000.0;
         tokio::task::spawn_blocking(move || {
             if Self::is_process_running("Spotify") {
-                let script = format!("tell application \"Spotify\" to set player position to {}", seconds);
+                let script = format!(
+                    "tell application \"Spotify\" to set player position to {}",
+                    seconds
+                );
                 let _ = Self::run_osascript(&script);
             } else if Self::is_process_running("Music") {
-                let script = format!("tell application \"Music\" to set player position to {}", seconds);
+                let script = format!(
+                    "tell application \"Music\" to set player position to {}",
+                    seconds
+                );
                 let _ = Self::run_osascript(&script);
             }
             Ok(())

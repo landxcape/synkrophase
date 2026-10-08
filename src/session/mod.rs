@@ -6,9 +6,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::error::{Result, SynkroError};
-use crate::protocol::messages::{
-    Message, PeerInfo, QueueCommand, QueueState, Role, SyncAnchor,
-};
+use crate::protocol::messages::{Message, PeerInfo, QueueCommand, QueueState, Role, SyncAnchor};
 use crate::queue::state::QueueManager;
 use crate::sync::controller::{PlaybackStatus, SyncController};
 

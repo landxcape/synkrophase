@@ -10,9 +10,17 @@ use crate::sync::controller::ClockSource;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DriftAction {
-    InSync { drift_us: i64 },
-    FineTuneRate { rate: f32, drift_us: i64 },
-    MicroSeek { target_position_us: i64, drift_us: i64 },
+    InSync {
+        drift_us: i64,
+    },
+    FineTuneRate {
+        rate: f32,
+        drift_us: i64,
+    },
+    MicroSeek {
+        target_position_us: i64,
+        drift_us: i64,
+    },
 }
 
 pub struct DriftEvaluator {
@@ -57,7 +65,8 @@ impl DriftEvaluator {
         // Midpoint of local query represents the true moment position was queried
         let query_midpoint = t_start + (t_end.saturating_sub(t_start)) / 2;
 
-        let elapsed_us = (query_midpoint.saturating_sub(anchor.reference_time) as f64 * anchor.playback_rate as f64) as i64;
+        let elapsed_us = (query_midpoint.saturating_sub(anchor.reference_time) as f64
+            * anchor.playback_rate as f64) as i64;
         let expected_position_us = anchor.media_position_us + elapsed_us;
 
         let drift_us = local_state.position_us - expected_position_us;
@@ -75,7 +84,10 @@ impl DriftEvaluator {
                 // If player actually changed rate, return FineTuneRate
                 let state_after = self.controller.get_playback_state().await?;
                 if (state_after.rate - target_rate).abs() < f32::EPSILON {
-                    return Ok(DriftAction::FineTuneRate { rate: target_rate, drift_us });
+                    return Ok(DriftAction::FineTuneRate {
+                        rate: target_rate,
+                        drift_us,
+                    });
                 }
             }
         }

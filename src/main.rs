@@ -18,7 +18,10 @@ async fn main() -> Result<()> {
             let controller = create_media_controller();
             let state = controller.get_playback_state().await?;
             println!("\n=== Local Media Player Status ===");
-            println!("  Playing:  {}", if state.is_playing { "Yes" } else { "No" });
+            println!(
+                "  Playing:  {}",
+                if state.is_playing { "Yes" } else { "No" }
+            );
             let pos_sec = (state.position_us as f64) / 1_000_000.0;
             println!("  Position: {:.2}s", pos_sec);
             if let Some(meta) = state.metadata {
@@ -46,7 +49,15 @@ async fn main() -> Result<()> {
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
             let is_headless = headless || cli.headless;
-            run_host(device, sync_config, room, clock_port, session_port, is_headless).await
+            run_host(
+                device,
+                sync_config,
+                room,
+                clock_port,
+                session_port,
+                is_headless,
+            )
+            .await
         }
         Commands::Join {
             room_code,
@@ -165,9 +176,7 @@ async fn main() -> Result<()> {
                 device,
                 room_code,
                 leader_addr,
-                Message::TransferLeadership {
-                    to: target_uuid,
-                },
+                Message::TransferLeadership { to: target_uuid },
             )
             .await
         }

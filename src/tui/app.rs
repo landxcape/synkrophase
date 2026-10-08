@@ -125,7 +125,9 @@ impl TuiApp {
 
 pub fn current_time_str() -> String {
     let now = std::time::SystemTime::now();
-    let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let duration = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = duration.as_secs() % 86400;
     let hours = (secs / 3600) % 24; // UTC
     let mins = (secs % 3600) / 60;

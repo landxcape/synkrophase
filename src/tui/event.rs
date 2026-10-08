@@ -4,13 +4,13 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::net::UdpSocket;
 
+use super::app::{InputMode, TuiApp};
 use crate::clock::sync::ClockSync;
 use crate::error::Result;
 use crate::protocol::messages::{
     Envelope, Message, PlaybackAction, PlaybackIntent, QueueCommand, serialize,
 };
 use crate::sync::scheduler::IntentScheduler;
-use super::app::{InputMode, TuiApp};
 
 pub async fn handle_key_event(
     app: &mut TuiApp,
@@ -178,22 +178,43 @@ async fn handle_slash_command(
 
     match parts[0] {
         "play" | "resume" => {
-            send_playback_action(app, PlaybackAction::Play, socket, leader_addr, clock, scheduler).await?;
+            send_playback_action(
+                app,
+                PlaybackAction::Play,
+                socket,
+                leader_addr,
+                clock,
+                scheduler,
+            )
+            .await?;
         }
         "pause" => {
-            send_playback_action(app, PlaybackAction::Pause, socket, leader_addr, clock, scheduler).await?;
+            send_playback_action(
+                app,
+                PlaybackAction::Pause,
+                socket,
+                leader_addr,
+                clock,
+                scheduler,
+            )
+            .await?;
         }
         "seek" => {
-            if parts.len() > 1 && let Ok(sec) = parts[1].parse::<f64>() {
+            if parts.len() > 1
+                && let Ok(sec) = parts[1].parse::<f64>()
+            {
                 let pos_us = (sec * 1_000_000.0) as i64;
                 send_playback_action(
                     app,
-                    PlaybackAction::Seek { target_position_us: pos_us },
+                    PlaybackAction::Seek {
+                        target_position_us: pos_us,
+                    },
                     socket,
                     leader_addr,
                     clock,
                     scheduler,
-                ).await?;
+                )
+                .await?;
             }
         }
         "skip" => {

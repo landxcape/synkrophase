@@ -12,10 +12,10 @@ use crate::sync::controller::PlaybackControl;
 use crate::sync::evaluator::DriftEvaluator;
 use crate::sync::scheduler::IntentScheduler;
 
-use rustyline_async::SharedWriter;
-use tokio::sync::mpsc;
 use crate::protocol::messages::Role;
 use crate::tui::AppEvent;
+use rustyline_async::SharedWriter;
+use tokio::sync::mpsc;
 
 pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
@@ -79,7 +79,10 @@ impl SessionMessageRuntime {
         self
     }
 
-    pub fn with_controller(mut self, controller: Arc<dyn crate::controller::MediaController>) -> Self {
+    pub fn with_controller(
+        mut self,
+        controller: Arc<dyn crate::controller::MediaController>,
+    ) -> Self {
         self.controller = Some(controller);
         self
     }
@@ -352,7 +355,10 @@ impl SessionMessageRuntime {
                         .into_iter()
                         .map(|(_, e)| e.info)
                         .collect();
-                    let heir = crate::session::leader::appoint_successor(&live_infos, &self.session.self_info());
+                    let heir = crate::session::leader::appoint_successor(
+                        &live_infos,
+                        &self.session.self_info(),
+                    );
 
                     if heir == self.session.self_id() {
                         self.session.promote_to_leader();
@@ -369,16 +375,16 @@ impl SessionMessageRuntime {
                     } else {
                         self.session.set_leader_id(heir);
                         let name = self.session.display_name(&heir);
-                        self.log_system(format!("Host has left. {} is elected as the new Leader.", name));
+                        self.log_system(format!(
+                            "Host has left. {} is elected as the new Leader.",
+                            name
+                        ));
                     }
                 }
 
                 Ok(())
             }
-            Message::Heartbeat {
-                room_code,
-                info,
-            } => {
+            Message::Heartbeat { room_code, info } => {
                 if room_code != self.session.room_code() {
                     return Ok(());
                 }
@@ -411,7 +417,8 @@ impl SessionMessageRuntime {
                         self.session.self_id(),
                         src,
                         Message::Notification {
-                            text: "Permission Denied: Only Moderators can control the queue.".into(),
+                            text: "Permission Denied: Only Moderators can control the queue."
+                                .into(),
                         },
                     )
                     .await;
@@ -419,7 +426,10 @@ impl SessionMessageRuntime {
                 }
 
                 if envelope.sender != self.session.self_id() {
-                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let role = self
+                        .session
+                        .get_peer_role(&envelope.sender)
+                        .unwrap_or(Role::Listener);
                     let mut info = Self::peer_info_for(envelope.sender);
                     info.role = role;
                     self.session.record_peer_heartbeat(info, src);
@@ -432,11 +442,7 @@ impl SessionMessageRuntime {
                     crate::protocol::messages::QueueCommand::Skip => "skipped the current track",
                     crate::protocol::messages::QueueCommand::Remove { .. } => "removed a track",
                 };
-                let log_msg = format!(
-                    "{} {}",
-                    self.session.display_name(&envelope.sender),
-                    action
-                );
+                let log_msg = format!("{} {}", self.session.display_name(&envelope.sender), action);
                 if self.session.role() >= Role::Moderator {
                     self.log_system(&log_msg);
                 }
@@ -483,7 +489,10 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.is_leader() && envelope.sender != self.session.self_id() {
-                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let role = self
+                        .session
+                        .get_peer_role(&envelope.sender)
+                        .unwrap_or(Role::Listener);
                     let mut info = Self::peer_info_for(envelope.sender);
                     info.role = role;
                     self.session.record_peer_heartbeat(info, src);
@@ -528,7 +537,10 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.is_leader() && envelope.sender != self.session.self_id() {
-                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let role = self
+                        .session
+                        .get_peer_role(&envelope.sender)
+                        .unwrap_or(Role::Listener);
                     let mut info = Self::peer_info_for(envelope.sender);
                     info.role = role;
                     self.session.record_peer_heartbeat(info, src);
@@ -574,7 +586,10 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.is_leader() && envelope.sender != self.session.self_id() {
-                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let role = self
+                        .session
+                        .get_peer_role(&envelope.sender)
+                        .unwrap_or(Role::Listener);
                     let mut info = Self::peer_info_for(envelope.sender);
                     info.role = role;
                     self.session.record_peer_heartbeat(info, src);
@@ -620,14 +635,17 @@ impl SessionMessageRuntime {
             }
             Message::Chat { sender, text, .. } => {
                 if envelope.sender != self.session.self_id() {
-                    let role = self.session.get_peer_role(&envelope.sender).unwrap_or(Role::Listener);
+                    let role = self
+                        .session
+                        .get_peer_role(&envelope.sender)
+                        .unwrap_or(Role::Listener);
                     let mut info = Self::peer_info_for(envelope.sender);
                     info.role = role;
                     self.session.record_peer_heartbeat(info, src);
                 }
-                
+
                 let display_name = self.session.display_name(&sender);
-                
+
                 if self.session.is_leader() {
                     // Leader formats and broadcasts to all peers
                     let broadcast = Message::ChatBroadcast {
@@ -643,7 +661,11 @@ impl SessionMessageRuntime {
                 }
                 Ok(())
             }
-            Message::ChatBroadcast { sender, display_name, text } => {
+            Message::ChatBroadcast {
+                sender,
+                display_name,
+                text,
+            } => {
                 if envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
@@ -677,7 +699,11 @@ impl SessionMessageRuntime {
                         if intent.track_title.is_none() {
                             intent.track_title = state.metadata.map(|m| m.title);
                         }
-                        if matches!(intent.action, crate::protocol::messages::PlaybackAction::Play) && intent.position_us == 0 {
+                        if matches!(
+                            intent.action,
+                            crate::protocol::messages::PlaybackAction::Play
+                        ) && intent.position_us == 0
+                        {
                             intent.position_us = state.position_us;
                         }
                     }
@@ -747,4 +773,3 @@ impl SessionMessageRuntime {
 }
 
 pub use crate::session::broadcaster::LeaderAnchorBroadcaster;
-

@@ -36,7 +36,10 @@ impl LeaderAnchorBroadcaster {
         }
     }
 
-    pub fn with_controller(mut self, controller: Arc<dyn crate::controller::MediaController>) -> Self {
+    pub fn with_controller(
+        mut self,
+        controller: Arc<dyn crate::controller::MediaController>,
+    ) -> Self {
         self.controller = Some(controller);
         self
     }

@@ -71,10 +71,7 @@ fn heartbeat_expiry_re_elects_lowest_live_peer() {
     );
 
     thread::sleep(Duration::from_millis(50));
-    session.record_peer_heartbeat(
-        peer_info(peer_two),
-        "127.0.0.1:8081".parse().unwrap(),
-    );
+    session.record_peer_heartbeat(peer_info(peer_two), "127.0.0.1:8081".parse().unwrap());
 
     let (expired, heir) = session.prune_and_appoint(Duration::from_millis(20));
 

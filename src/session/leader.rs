@@ -1,5 +1,5 @@
-use uuid::Uuid;
 use crate::protocol::messages::PeerInfo;
+use uuid::Uuid;
 
 /// Deterministically appoints a successor from the set of live peers and the local peer.
 /// Priority is given to the highest Role (descending), then to the numerically lowest UUID (ascending).
@@ -9,7 +9,8 @@ pub fn appoint_successor(live_peers: &[PeerInfo], self_info: &PeerInfo) -> Uuid 
 
     // Sort by Role (descending), then by device_id (ascending)
     candidates.sort_by(|a, b| {
-        b.role.cmp(&a.role)
+        b.role
+            .cmp(&a.role)
             .then_with(|| a.device_id.cmp(&b.device_id))
     });
 
@@ -19,7 +20,7 @@ pub fn appoint_successor(live_peers: &[PeerInfo], self_info: &PeerInfo) -> Uuid 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::messages::{Role, PeerInfo};
+    use crate::protocol::messages::{PeerInfo, Role};
 
     #[test]
     fn test_succession_role_priority() {
