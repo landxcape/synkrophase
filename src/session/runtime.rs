@@ -23,6 +23,8 @@ pub struct SessionMessageRuntime {
     playback: Option<Arc<dyn PlaybackControl>>,
     scheduler: Option<Arc<IntentScheduler>>,
     drift_evaluator: Option<Arc<DriftEvaluator>>,
+    controller: Option<Arc<dyn crate::controller::MediaController>>,
+    clock: Option<Arc<ClockSync>>,
     stdout: Option<SharedWriter>,
     name: String,
 }
@@ -45,6 +47,8 @@ impl SessionMessageRuntime {
             playback: None,
             scheduler: None,
             drift_evaluator: None,
+            controller: None,
+            clock: None,
             stdout,
             name,
         }
@@ -67,6 +71,16 @@ impl SessionMessageRuntime {
 
     pub fn with_drift_evaluator(mut self, evaluator: Arc<DriftEvaluator>) -> Self {
         self.drift_evaluator = Some(evaluator);
+        self
+    }
+
+    pub fn with_controller(mut self, controller: Arc<dyn crate::controller::MediaController>) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    pub fn with_clock(mut self, clock: Arc<ClockSync>) -> Self {
+        self.clock = Some(clock);
         self
     }
 
@@ -574,7 +588,40 @@ impl SessionMessageRuntime {
                 print_event(self.stdout.as_ref(), &text);
                 Ok(())
             }
-            Message::Intent(intent) => {
+            Message::Intent(mut intent) => {
+                if self.session.is_leader() && envelope.sender != self.session.self_id() {
+                    // Follower requested an intent! Leader schedules it for T+100ms on the synced clock
+                    let now = if let Some(clock) = &self.clock {
+                        clock.reference_now()
+                    } else {
+                        intent.target_ref_time
+                    };
+                    intent.target_ref_time = now + 100_000;
+
+                    // If track_title or position is unset, sample the leader's active track
+                    if let Some(controller) = &self.controller
+                        && let Ok(state) = controller.get_playback_state().await
+                    {
+                        if intent.track_title.is_none() {
+                            intent.track_title = state.metadata.map(|m| m.title);
+                        }
+                        if matches!(intent.action, crate::protocol::messages::PlaybackAction::Play) && intent.position_us == 0 {
+                            intent.position_us = state.position_us;
+                        }
+                    }
+
+                    // Broadcast scheduled intent to all room peers
+                    let broadcast_env = Envelope {
+                        sender: self.session.self_id(),
+                        payload: Message::Intent(intent.clone()),
+                    };
+                    if let Ok(bytes) = serialize(&broadcast_env) {
+                        for addr in self.session.peer_socket_addrs() {
+                            let _ = socket.send_to(&bytes, addr).await;
+                        }
+                    }
+                }
+
                 if let Some(scheduler) = &self.scheduler {
                     let _ = scheduler.execute_intent(&intent).await;
                 }
@@ -631,6 +678,7 @@ pub struct LeaderAnchorBroadcaster {
     session: Arc<SessionState>,
     clock: Arc<dyn ClockSource>,
     playback: Arc<dyn PlaybackControl>,
+    controller: Option<Arc<dyn crate::controller::MediaController>>,
     config: SyncConfig,
 }
 
@@ -645,14 +693,35 @@ impl LeaderAnchorBroadcaster {
             session,
             clock,
             playback,
+            controller: None,
             config,
         }
     }
 
-    pub fn build_anchor_envelope(&self, sender: Uuid) -> Result<Envelope> {
+    pub fn with_controller(mut self, controller: Arc<dyn crate::controller::MediaController>) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    pub async fn build_anchor_envelope(&self, sender: Uuid) -> Result<Envelope> {
+        let status = if let Some(controller) = &self.controller {
+            if let Ok(state) = controller.get_playback_state().await {
+                crate::sync::controller::PlaybackStatus {
+                    track_id: state.metadata.map(|m| m.title),
+                    position_us: state.position_us,
+                    rate: state.rate,
+                    is_playing: state.is_playing,
+                }
+            } else {
+                self.playback.status()
+            }
+        } else {
+            self.playback.status()
+        };
+
         let message = self
             .session
-            .build_sync_anchor_message(self.clock.reference_now(), &self.playback.status())?;
+            .build_sync_anchor_message(self.clock.reference_now(), &status)?;
         Ok(Envelope {
             sender,
             payload: message,
@@ -664,7 +733,7 @@ impl LeaderAnchorBroadcaster {
             return Err(SynkroError::NotLeader);
         }
 
-        let envelope = self.build_anchor_envelope(sender)?;
+        let envelope = self.build_anchor_envelope(sender).await?;
         let bytes = serialize(&envelope)?;
         let mut sent = 0usize;
         for addr in self.session.peer_socket_addrs() {

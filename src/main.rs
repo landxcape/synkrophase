@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 const DEFAULT_CLOCK_PORT: u16 = 5870;
 const DEFAULT_SESSION_PORT: u16 = 5871;
-const DEFAULT_LEAD_TIME_US: u64 = 150_000; // 150ms dynamic lead time
+const DEFAULT_LEAD_TIME_US: u64 = 100_000; // 100ms dynamic lead time
 
 fn create_media_controller() -> Arc<dyn MediaController> {
     #[cfg(target_os = "macos")]
@@ -365,14 +365,17 @@ async fn run_host(
         device.name.clone(),
     )
     .with_playback(Arc::clone(&playback))
-    .with_scheduler(Arc::clone(&scheduler));
+    .with_scheduler(Arc::clone(&scheduler))
+    .with_controller(Arc::clone(&controller))
+    .with_clock(Arc::clone(&clock));
 
     let broadcaster = LeaderAnchorBroadcaster::new(
         Arc::clone(&session),
         Arc::clone(&clock),
         Arc::clone(&playback),
         sync_config.clone(),
-    );
+    )
+    .with_controller(Arc::clone(&controller));
 
     let discovery = Discovery::new()?;
     discovery.register_session(&room_code, device.device_id, session_port)?;
@@ -555,7 +558,10 @@ async fn run_join(
         let socket = Arc::clone(&session_socket);
         async move { runtime.run_receive_loop(socket).await }
     });
-    let clock_task = tokio::spawn(async move { clock.run_responder().await });
+    let clock_task = {
+        let clock = Arc::clone(&clock);
+        tokio::spawn(async move { clock.run_responder().await })
+    };
 
     // Sparse background drift check (every 4s)
     let drift_task = tokio::spawn({
@@ -594,8 +600,25 @@ async fn run_join(
         let sender = device.device_id;
         let name = device.name.clone();
         let leader_addr = resolved_leader_addr;
+        let controller = Arc::clone(&controller);
+        let clock = Arc::clone(&clock);
+        let scheduler = Arc::clone(&scheduler);
         let stdout = stdout.clone();
-        async move { run_follower_repl(rl, session, socket, sender, name, leader_addr, stdout).await }
+        async move {
+            run_follower_repl(
+                rl,
+                session,
+                socket,
+                sender,
+                name,
+                leader_addr,
+                controller,
+                clock,
+                scheduler,
+                stdout,
+            )
+            .await
+        }
     });
 
     tokio::select! {
@@ -955,8 +978,17 @@ async fn run_host_repl(
             continue;
         }
 
-        if let Some(command_str) = input.strip_prefix('/') {
-            let parts: Vec<&str> = command_str.split_whitespace().collect();
+        let is_slash = input.starts_with('/');
+        let cmd_text = input.strip_prefix('/').unwrap_or(input);
+        let parts: Vec<&str> = cmd_text.split_whitespace().collect();
+
+        let is_known_cmd = !parts.is_empty()
+            && matches!(
+                parts[0],
+                "play" | "pause" | "seek" | "status" | "skip" | "queue" | "exit" | "quit" | "help"
+            );
+
+        if is_slash || is_known_cmd {
             if parts.is_empty() {
                 continue;
             }
@@ -991,7 +1023,7 @@ async fn run_host_repl(
                     synkrophase::session::runtime::print_event(
                         Some(&stdout),
                         &format!(
-                            "[System] Play intent scheduled for {:?} at T+150ms",
+                            "[System] Play intent scheduled for {:?} at T+100ms",
                             title.unwrap_or_else(|| "active track".into())
                         ),
                     );
@@ -1022,14 +1054,14 @@ async fn run_host_repl(
 
                     synkrophase::session::runtime::print_event(
                         Some(&stdout),
-                        "[System] Pause intent scheduled at T+150ms",
+                        "[System] Pause intent scheduled at T+100ms",
                     );
                 }
                 "seek" => {
                     if parts.len() < 2 {
                         synkrophase::session::runtime::print_event(
                             Some(&stdout),
-                            "Usage: /seek <seconds>",
+                            "Usage: /seek <seconds> or seek <seconds>",
                         );
                         continue;
                     }
@@ -1061,7 +1093,7 @@ async fn run_host_repl(
 
                         synkrophase::session::runtime::print_event(
                             Some(&stdout),
-                            &format!("[System] Seek to {:.2}s scheduled at T+150ms", sec),
+                            &format!("[System] Seek to {:.2}s scheduled at T+100ms", sec),
                         );
                     }
                 }
@@ -1156,6 +1188,7 @@ async fn run_host_repl(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_follower_repl(
     mut rl: rustyline_async::Readline,
     session: Arc<SessionState>,
@@ -1163,6 +1196,9 @@ async fn run_follower_repl(
     sender: Uuid,
     name: String,
     leader_addr: SocketAddr,
+    controller: Arc<dyn MediaController>,
+    _clock: Arc<ClockSync>,
+    _scheduler: Arc<IntentScheduler>,
     stdout: rustyline_async::SharedWriter,
 ) -> Result<()> {
     loop {
@@ -1177,29 +1213,107 @@ async fn run_follower_repl(
             continue;
         }
 
-        if let Some(command_str) = input.strip_prefix('/') {
-            let parts: Vec<&str> = command_str.split_whitespace().collect();
+        let is_slash = input.starts_with('/');
+        let cmd_text = input.strip_prefix('/').unwrap_or(input);
+        let parts: Vec<&str> = cmd_text.split_whitespace().collect();
+
+        let is_known_cmd = !parts.is_empty()
+            && matches!(
+                parts[0],
+                "play" | "pause" | "resume" | "seek" | "status" | "skip" | "queue" | "exit" | "quit" | "help"
+            );
+
+        if is_slash || is_known_cmd {
             if parts.is_empty() {
                 continue;
             }
             match parts[0] {
-                "pause" => {
+                "play" | "resume" => {
+                    let state = controller.get_playback_state().await.unwrap_or_default();
+                    let title = state.metadata.map(|m| m.title);
+                    let intent = PlaybackIntent {
+                        action: PlaybackAction::Play,
+                        target_ref_time: 0,
+                        position_us: state.position_us,
+                        track_title: title,
+                    };
                     let envelope = Envelope {
                         sender,
-                        payload: Message::Pause { actor: sender },
+                        payload: Message::Intent(intent),
                     };
                     if let Ok(bytes) = serialize(&envelope) {
                         let _ = socket.send_to(&bytes, leader_addr).await;
+                    }
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        "[Follower] Play request forwarded to room leader",
+                    );
+                }
+                "pause" => {
+                    let state = controller.get_playback_state().await.unwrap_or_default();
+                    let intent = PlaybackIntent {
+                        action: PlaybackAction::Pause,
+                        target_ref_time: 0,
+                        position_us: state.position_us,
+                        track_title: None,
+                    };
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Intent(intent),
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        let _ = socket.send_to(&bytes, leader_addr).await;
+                    }
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        "[Follower] Pause request forwarded to room leader",
+                    );
+                }
+                "seek" => {
+                    if parts.len() < 2 {
+                        synkrophase::session::runtime::print_event(
+                            Some(&stdout),
+                            "Usage: /seek <seconds> or seek <seconds>",
+                        );
+                        continue;
+                    }
+                    if let Ok(sec) = parts[1].parse::<f64>() {
+                        let pos_us = (sec * 1_000_000.0) as i64;
+                        let intent = PlaybackIntent {
+                            action: PlaybackAction::Seek {
+                                target_position_us: pos_us,
+                            },
+                            target_ref_time: 0,
+                            position_us: pos_us,
+                            track_title: None,
+                        };
+                        let envelope = Envelope {
+                            sender,
+                            payload: Message::Intent(intent),
+                        };
+                        if let Ok(bytes) = serialize(&envelope) {
+                            let _ = socket.send_to(&bytes, leader_addr).await;
+                        }
+                        synkrophase::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[Follower] Seek to {:.2}s forwarded to room leader", sec),
+                        );
                     }
                 }
-                "resume" => {
-                    let envelope = Envelope {
-                        sender,
-                        payload: Message::Resume { actor: sender },
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        let _ = socket.send_to(&bytes, leader_addr).await;
+                "status" => {
+                    let state = controller.get_playback_state().await?;
+                    let mut out = format!(
+                        "Player Status: {}\nPosition: {:.2}s\n",
+                        if state.is_playing { "Playing" } else { "Paused" },
+                        (state.position_us as f64) / 1_000_000.0
+                    );
+                    if let Some(m) = state.metadata {
+                        out.push_str(&format!("Track: {}\n", m.title));
+                        if let Some(a) = m.artist {
+                            out.push_str(&format!("Artist: {}\n", a));
+                        }
                     }
+                    synkrophase::session::runtime::print_event(Some(&stdout), out.trim_end());
                 }
                 "skip" => {
                     let envelope = Envelope {
@@ -1209,6 +1323,10 @@ async fn run_follower_repl(
                     if let Ok(bytes) = serialize(&envelope) {
                         let _ = socket.send_to(&bytes, leader_addr).await;
                     }
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        "[Follower] Skip request forwarded to room leader",
+                    );
                 }
                 "queue" => {
                     let queue_state = session.queue_snapshot();
@@ -1245,7 +1363,7 @@ async fn run_follower_repl(
                 _ => {
                     synkrophase::session::runtime::print_event(
                         Some(&stdout),
-                        "Available commands: /pause, /resume, /skip, /queue, /exit",
+                        "Available commands: play, pause, seek <sec>, status, skip, queue, exit",
                     );
                 }
             }

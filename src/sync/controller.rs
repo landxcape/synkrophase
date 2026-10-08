@@ -77,6 +77,78 @@ impl PlaybackControl for NoopPlaybackControl {
     }
 }
 
+pub struct MediaControllerPlaybackAdapter {
+    controller: Arc<dyn crate::controller::MediaController>,
+    last_status: std::sync::Mutex<PlaybackStatus>,
+}
+
+impl MediaControllerPlaybackAdapter {
+    pub fn new(controller: Arc<dyn crate::controller::MediaController>) -> Self {
+        Self {
+            controller,
+            last_status: std::sync::Mutex::new(PlaybackStatus::default()),
+        }
+    }
+
+    pub async fn poll_state(&self) -> Result<PlaybackStatus> {
+        let state = self.controller.get_playback_state().await?;
+        let status = PlaybackStatus {
+            track_id: state.metadata.map(|m| m.title),
+            position_us: state.position_us,
+            rate: state.rate,
+            is_playing: state.is_playing,
+        };
+        *self.last_status.lock().unwrap() = status.clone();
+        Ok(status)
+    }
+}
+
+impl PlaybackControl for MediaControllerPlaybackAdapter {
+    fn position(&self) -> i64 {
+        self.last_status.lock().unwrap().position_us
+    }
+
+    fn status(&self) -> PlaybackStatus {
+        self.last_status.lock().unwrap().clone()
+    }
+
+    fn set_rate(&self, rate: f32) -> Result<()> {
+        let controller = Arc::clone(&self.controller);
+        tokio::spawn(async move {
+            let _ = controller.set_rate(rate).await;
+        });
+        self.last_status.lock().unwrap().rate = rate;
+        Ok(())
+    }
+
+    fn seek(&self, position_us: i64) -> Result<()> {
+        let controller = Arc::clone(&self.controller);
+        tokio::spawn(async move {
+            let _ = controller.seek_to(position_us).await;
+        });
+        self.last_status.lock().unwrap().position_us = position_us;
+        Ok(())
+    }
+
+    fn pause(&self) -> Result<()> {
+        let controller = Arc::clone(&self.controller);
+        tokio::spawn(async move {
+            let _ = controller.pause().await;
+        });
+        self.last_status.lock().unwrap().is_playing = false;
+        Ok(())
+    }
+
+    fn resume(&self) -> Result<()> {
+        let controller = Arc::clone(&self.controller);
+        tokio::spawn(async move {
+            let _ = controller.play().await;
+        });
+        self.last_status.lock().unwrap().is_playing = true;
+        Ok(())
+    }
+}
+
 pub struct SyncController {
     clock: Arc<dyn ClockSource>,
     playback: Arc<dyn PlaybackControl>,

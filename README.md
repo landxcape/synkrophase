@@ -119,13 +119,14 @@ Start a new room. Synkrophase advertises via mDNS on your local network:
 synkro host MYROOM
 ```
 
-Interactive commands available inside the host REPL:
+Interactive commands available inside the host REPL (commands work with or without a `/` prefix):
 - `play` — Broadcasts a scheduled play intent with dynamic lead time across all followers.
 - `pause` — Broadcasts a synchronized pause intent.
 - `seek <seconds>` — Broadcasts a synchronized seek intent to `<seconds>` (e.g. `seek 60.5`).
 - `status` — Prints the live playback status of your local player.
 - `queue` — Displays the collaborative room queue.
-- `peers` — Lists connected LAN peers and measured clock offsets.
+- `skip` — Skips to the next track in the queue.
+- `exit` — Leaves the room.
 
 ### 3. Join an Existing Room (Follower)
 Discover and join an active room hosted on the local network:
@@ -140,6 +141,15 @@ synkro join MYROOM --leader-addr 192.168.1.100:41234
 
 Followers listen for leader intents, calculate precise target trigger times on the synchronized reference clock, and command their local media player simultaneously.
 
+Followers can also actively send commands to control the room:
+- `play` / `resume` — Requests the room leader to schedule and broadcast a playback play intent.
+- `pause` — Requests the room leader to schedule and broadcast a pause intent.
+- `seek <seconds>` — Requests the room leader to seek to the specified position across the room.
+- `status` — Checks local player playback status and position.
+- `queue` — Inspects the shared queue.
+- `skip` — Proposes skipping to the next track.
+- Plain text messages are sent as group chat to all room members.
+
 ### 4. Check Group Sync Offset
 Inspect measured clock drift and synchrony across all room members:
 
@@ -152,7 +162,7 @@ synkro sync MYROOM
 ## Configuration
 
 Synkrophase defaults to sensible local LAN settings, but behavior can be customized via CLI flags or configuration files:
-- **Lead Time**: Time allocated for packets to reach followers before scheduled firing (default: `150ms`).
+- **Lead Time**: Time allocated for packets to reach followers before scheduled firing (default: `100ms`).
 - **Drift Threshold**: Permitted alignment tolerance before triggering micro-seeks (default: `50ms`).
 - **Heartbeat Cadence**: Interval for peer health checks and background drift monitoring (default: `3s`–`5s`).
 
