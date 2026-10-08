@@ -42,7 +42,7 @@ fn create_media_controller() -> Arc<dyn MediaController> {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "synkro", about = "Synchronized LAN playback controller")]
+#[command(name = "synkro", version, about = "Synchronized LAN playback controller")]
 struct Cli {
     /// Optional nickname for this device
     #[arg(long, global = true)]
