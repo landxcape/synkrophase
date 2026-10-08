@@ -183,4 +183,53 @@ impl MediaController for MacOsMediaController {
         // Returning Ok(()) allows the caller to use micro-seek fallback if drift is detected.
         Ok(())
     }
+
+    async fn next_track(&self) -> Result<()> {
+        tokio::task::spawn_blocking(|| {
+            if Self::is_process_running("Spotify") {
+                let _ = Self::run_osascript("tell application \"Spotify\" to next track");
+            } else if Self::is_process_running("Music") {
+                let _ = Self::run_osascript("tell application \"Music\" to next track");
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
+
+    async fn previous_track(&self) -> Result<()> {
+        tokio::task::spawn_blocking(|| {
+            if Self::is_process_running("Spotify") {
+                let _ = Self::run_osascript("tell application \"Spotify\" to previous track");
+            } else if Self::is_process_running("Music") {
+                let _ = Self::run_osascript("tell application \"Music\" to previous track");
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
+
+    async fn get_volume(&self) -> Result<u8> {
+        tokio::task::spawn_blocking(|| {
+            let out = Self::run_osascript("output volume of (get volume settings)")
+                .map_err(|e| SynkroError::MediaControl(e.to_string()))?;
+            out.trim()
+                .parse::<u8>()
+                .map_err(|e| SynkroError::MediaControl(e.to_string()))
+        })
+        .await
+        .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
+
+    async fn set_volume(&self, volume: u8) -> Result<()> {
+        let vol = volume.min(100);
+        tokio::task::spawn_blocking(move || {
+            let script = format!("set volume output volume {}", vol);
+            let _ = Self::run_osascript(&script);
+            Ok(())
+        })
+        .await
+        .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
 }

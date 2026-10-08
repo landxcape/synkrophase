@@ -59,6 +59,7 @@ pub struct TuiApp {
 
     pub input_mode: InputMode,
     pub input_buffer: String,
+    pub show_help: bool,
     pub should_quit: bool,
 
     pub session: Arc<SessionState>,
@@ -93,6 +94,7 @@ impl TuiApp {
             }],
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
+            show_help: false,
             should_quit: false,
             session,
             controller,

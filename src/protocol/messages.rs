@@ -47,6 +47,16 @@ pub enum Message {
         actor: Uuid,
     },
     Skip,
+    NextTrack {
+        actor: Uuid,
+    },
+    PreviousTrack {
+        actor: Uuid,
+    },
+    SetVolume {
+        volume: u8,
+        actor: Uuid,
+    },
     QueueProposal(QueueCommand),
     QueueUpdate(QueueState),
     SyncAnchor(SyncAnchor),
@@ -121,6 +131,8 @@ pub enum PlaybackAction {
     Play,
     Pause,
     Seek { target_position_us: i64 },
+    NextTrack,
+    PreviousTrack,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

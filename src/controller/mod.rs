@@ -48,4 +48,16 @@ pub trait MediaController: Send + Sync {
 
     /// Adjust playback rate (e.g. 1.01 or 0.99 for smooth drift correction).
     async fn set_rate(&self, rate: f32) -> Result<()>;
+
+    /// Advance to the next track.
+    async fn next_track(&self) -> Result<()>;
+
+    /// Go back to the previous track.
+    async fn previous_track(&self) -> Result<()>;
+
+    /// Get current audio output volume (0-100%).
+    async fn get_volume(&self) -> Result<u8>;
+
+    /// Set audio output volume (0-100%).
+    async fn set_volume(&self, volume: u8) -> Result<()>;
 }

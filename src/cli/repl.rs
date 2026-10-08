@@ -8,9 +8,7 @@ use super::args::DEFAULT_LEAD_TIME_US;
 use crate::clock::sync::ClockSync;
 use crate::controller::MediaController;
 use crate::error::Result;
-use crate::protocol::messages::{
-    Envelope, Message, PlaybackAction, PlaybackIntent, QueueCommand, serialize,
-};
+use crate::protocol::messages::{Envelope, Message, PlaybackAction, PlaybackIntent, serialize};
 use crate::session::SessionState;
 use crate::sync::scheduler::IntentScheduler;
 
@@ -20,6 +18,9 @@ pub enum ReplCommand {
     Pause,
     Resume,
     Seek(f64),
+    Next,
+    Prev,
+    Volume(Option<u8>),
     Status,
     Queue,
     Skip,
@@ -49,6 +50,11 @@ impl ReplCommand {
                 | "pause"
                 | "resume"
                 | "seek"
+                | "next"
+                | "prev"
+                | "previous"
+                | "volume"
+                | "vol"
                 | "status"
                 | "queue"
                 | "skip"
@@ -70,6 +76,16 @@ impl ReplCommand {
                     } else {
                         Self::Help
                     }
+                }
+                "next" => Self::Next,
+                "prev" | "previous" => Self::Prev,
+                "volume" | "vol" => {
+                    let vol = if parts.len() > 1 {
+                        parts[1].parse::<u8>().ok()
+                    } else {
+                        None
+                    };
+                    Self::Volume(vol)
                 }
                 "status" => Self::Status,
                 "queue" => Self::Queue,
@@ -250,29 +266,91 @@ pub async fn run_host_repl(
                     &format!("[System] Seek to {:.2}s scheduled at T+100ms", sec),
                 );
             }
+            ReplCommand::Next | ReplCommand::Skip => {
+                let now = clock.reference_now();
+                let target_ref_time = now + DEFAULT_LEAD_TIME_US;
+
+                let intent = PlaybackIntent {
+                    action: PlaybackAction::NextTrack,
+                    target_ref_time,
+                    position_us: 0,
+                    track_title: None,
+                };
+
+                let envelope = Envelope {
+                    sender,
+                    payload: Message::Intent(intent.clone()),
+                };
+                if let Ok(bytes) = serialize(&envelope) {
+                    for addr in session.peer_socket_addrs() {
+                        let _ = socket.send_to(&bytes, addr).await;
+                    }
+                }
+                let _ = scheduler.execute_intent(&intent).await;
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    "[System] Next track scheduled at T+100ms",
+                );
+            }
+            ReplCommand::Prev => {
+                let now = clock.reference_now();
+                let target_ref_time = now + DEFAULT_LEAD_TIME_US;
+
+                let intent = PlaybackIntent {
+                    action: PlaybackAction::PreviousTrack,
+                    target_ref_time,
+                    position_us: 0,
+                    track_title: None,
+                };
+
+                let envelope = Envelope {
+                    sender,
+                    payload: Message::Intent(intent.clone()),
+                };
+                if let Ok(bytes) = serialize(&envelope) {
+                    for addr in session.peer_socket_addrs() {
+                        let _ = socket.send_to(&bytes, addr).await;
+                    }
+                }
+                let _ = scheduler.execute_intent(&intent).await;
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    "[System] Previous track scheduled at T+100ms",
+                );
+            }
+            ReplCommand::Volume(target_vol) => {
+                let vol = match target_vol {
+                    Some(v) => v.min(100),
+                    None => controller.get_volume().await.unwrap_or(70),
+                };
+                let _ = controller.set_volume(vol).await;
+                let envelope = Envelope {
+                    sender,
+                    payload: Message::SetVolume {
+                        volume: vol,
+                        actor: sender,
+                    },
+                };
+                if let Ok(bytes) = serialize(&envelope) {
+                    for addr in session.peer_socket_addrs() {
+                        let _ = socket.send_to(&bytes, addr).await;
+                    }
+                }
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    &format!("[System] Room volume synced to {}%", vol),
+                );
+            }
             ReplCommand::Status => {
                 let _ = print_status(&controller, Some(&stdout)).await;
             }
             ReplCommand::Queue => {
                 print_queue(&session, Some(&stdout));
             }
-            ReplCommand::Skip => {
-                if let Ok(updated) = session.handle_queue_proposal(QueueCommand::Skip) {
-                    let envelope = Envelope {
-                        sender,
-                        payload: Message::QueueUpdate(updated),
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        for addr in session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
-                        }
-                    }
-                }
-            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, status, queue, skip, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], status, exit",
                 );
             }
             ReplCommand::Exit => {
@@ -387,29 +465,74 @@ pub async fn run_follower_repl(
                     &format!("[Follower] Seek to {:.2}s forwarded to room leader", sec),
                 );
             }
-            ReplCommand::Status => {
-                let _ = print_status(&controller, Some(&stdout)).await;
-            }
-            ReplCommand::Queue => {
-                print_queue(&session, Some(&stdout));
-            }
-            ReplCommand::Skip => {
+            ReplCommand::Next | ReplCommand::Skip => {
+                let intent = PlaybackIntent {
+                    action: PlaybackAction::NextTrack,
+                    target_ref_time: 0,
+                    position_us: 0,
+                    track_title: None,
+                };
                 let envelope = Envelope {
                     sender,
-                    payload: Message::QueueProposal(QueueCommand::Skip),
+                    payload: Message::Intent(intent),
                 };
                 if let Ok(bytes) = serialize(&envelope) {
                     let _ = socket.send_to(&bytes, leader_addr).await;
                 }
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "[Follower] Skip request forwarded to room leader",
+                    "[Follower] Next track request forwarded to room leader",
                 );
+            }
+            ReplCommand::Prev => {
+                let intent = PlaybackIntent {
+                    action: PlaybackAction::PreviousTrack,
+                    target_ref_time: 0,
+                    position_us: 0,
+                    track_title: None,
+                };
+                let envelope = Envelope {
+                    sender,
+                    payload: Message::Intent(intent),
+                };
+                if let Ok(bytes) = serialize(&envelope) {
+                    let _ = socket.send_to(&bytes, leader_addr).await;
+                }
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    "[Follower] Previous track request forwarded to room leader",
+                );
+            }
+            ReplCommand::Volume(target_vol) => {
+                let vol = match target_vol {
+                    Some(v) => v.min(100),
+                    None => controller.get_volume().await.unwrap_or(70),
+                };
+                let envelope = Envelope {
+                    sender,
+                    payload: Message::SetVolume {
+                        volume: vol,
+                        actor: sender,
+                    },
+                };
+                if let Ok(bytes) = serialize(&envelope) {
+                    let _ = socket.send_to(&bytes, leader_addr).await;
+                }
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    &format!("[Follower] Volume sync ({}%) requested to room leader", vol),
+                );
+            }
+            ReplCommand::Status => {
+                let _ = print_status(&controller, Some(&stdout)).await;
+            }
+            ReplCommand::Queue => {
+                print_queue(&session, Some(&stdout));
             }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, status, queue, skip, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], status, exit",
                 );
             }
             ReplCommand::Exit => {

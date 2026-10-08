@@ -23,6 +23,10 @@ pub fn render(frame: &mut Frame, app: &TuiApp) {
     render_playback(frame, app, main_layout[1]);
     render_middle_panel(frame, app, main_layout[2]);
     render_command_bar(frame, app, main_layout[3]);
+
+    if app.show_help {
+        render_help_modal(frame, frame.area());
+    }
 }
 
 fn render_header(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -399,6 +403,13 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
         InputMode::Normal => {
             let help_line = Line::from(vec![
                 Span::styled(
+                    "[?] ",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Help  • "),
+                Span::styled(
                     "[Space] ",
                     Style::default()
                         .fg(Color::Yellow)
@@ -413,9 +424,23 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
                 ),
                 Span::raw("Seek ±5s  • "),
                 Span::styled(
-                    "[/] ",
+                    "[n/p] ",
                     Style::default()
                         .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Next/Prev  • "),
+                Span::styled(
+                    "[v] ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("VolSync  • "),
+                Span::styled(
+                    "[/] ",
+                    Style::default()
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("Chat/Cmd  • "),
@@ -458,4 +483,118 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
             frame.render_widget(Paragraph::new(input_line).block(block), area);
         }
     }
+}
+
+fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(15),
+            Constraint::Percentage(70),
+            Constraint::Percentage(15),
+        ])
+        .split(area);
+
+    let center_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(20),
+            Constraint::Percentage(60),
+            Constraint::Percentage(20),
+        ])
+        .split(popup_layout[1]);
+
+    let modal_area = center_layout[1];
+
+    frame.render_widget(ratatui::widgets::Clear, modal_area);
+
+    let help_text = vec![
+        Line::from(vec![Span::styled(
+            "Hotkeys (Normal Mode):",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled("  [Space]     ", Style::default().fg(Color::Cyan)),
+            Span::raw("Toggle Play / Pause"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [← / →]     ", Style::default().fg(Color::Cyan)),
+            Span::raw("Micro-seek backward / forward ±5s"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [n]         ", Style::default().fg(Color::Cyan)),
+            Span::raw("Next track (Spotify / Apple Music)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [p]         ", Style::default().fg(Color::Cyan)),
+            Span::raw("Previous track (Spotify / Apple Music)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [v]         ", Style::default().fg(Color::Cyan)),
+            Span::raw("One-shot volume sync (broadcast host volume to room)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [/] or [i]  ", Style::default().fg(Color::Cyan)),
+            Span::raw("Open Chat & Slash Command input prompt"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [?] or [h]  ", Style::default().fg(Color::Cyan)),
+            Span::raw("Toggle this Help Dialog"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [q]         ", Style::default().fg(Color::Red)),
+            Span::raw("Leave room and quit"),
+        ]),
+        Line::raw(""),
+        Line::from(vec![Span::styled(
+            "Slash Commands (Input Mode):",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled("  /play, /pause ", Style::default().fg(Color::Green)),
+            Span::raw("Control playback across all peers"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /next, /prev  ", Style::default().fg(Color::Green)),
+            Span::raw("Skip to next or previous track"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /seek <sec>   ", Style::default().fg(Color::Green)),
+            Span::raw("Jump to absolute timeline position (e.g. /seek 90)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /vol [0-100]  ", Style::default().fg(Color::Green)),
+            Span::raw("Sync room volume (e.g. /vol 80 or /vol to mirror self)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /help         ", Style::default().fg(Color::Green)),
+            Span::raw("Toggle this help popup"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /quit, /exit  ", Style::default().fg(Color::Green)),
+            Span::raw("Gracefully disconnect"),
+        ]),
+        Line::raw(""),
+        Line::from(vec![Span::styled(
+            "Press [?] or [Esc] to close this help window.",
+            Style::default().fg(Color::DarkGray),
+        )]),
+    ];
+
+    let block = Block::default()
+        .title(" Synkrophase Quick Reference ")
+        .title_style(
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    frame.render_widget(Paragraph::new(help_text).block(block), modal_area);
 }

@@ -7,9 +7,7 @@ use tokio::net::UdpSocket;
 use super::app::{InputMode, TuiApp};
 use crate::clock::sync::ClockSync;
 use crate::error::Result;
-use crate::protocol::messages::{
-    Envelope, Message, PlaybackAction, PlaybackIntent, QueueCommand, serialize,
-};
+use crate::protocol::messages::{Envelope, Message, PlaybackAction, PlaybackIntent, serialize};
 use crate::sync::scheduler::IntentScheduler;
 
 pub async fn handle_key_event(
@@ -63,6 +61,34 @@ pub async fn handle_key_event(
                     scheduler,
                 )
                 .await?;
+            }
+            KeyCode::Char('n') => {
+                send_playback_action(
+                    app,
+                    PlaybackAction::NextTrack,
+                    socket,
+                    leader_addr,
+                    clock,
+                    scheduler,
+                )
+                .await?;
+            }
+            KeyCode::Char('p') => {
+                send_playback_action(
+                    app,
+                    PlaybackAction::PreviousTrack,
+                    socket,
+                    leader_addr,
+                    clock,
+                    scheduler,
+                )
+                .await?;
+            }
+            KeyCode::Char('v') => {
+                sync_room_volume(app, None, socket, leader_addr).await?;
+            }
+            KeyCode::Char('?') | KeyCode::Char('h') => {
+                app.show_help = !app.show_help;
             }
             KeyCode::Char('/') | KeyCode::Char('i') => {
                 app.input_mode = InputMode::Editing;
@@ -217,34 +243,80 @@ async fn handle_slash_command(
                 .await?;
             }
         }
-        "skip" => {
-            if app.is_leader {
-                if let Ok(updated) = app.session.handle_queue_proposal(QueueCommand::Skip) {
-                    let envelope = Envelope {
-                        sender: app.self_id,
-                        payload: Message::QueueUpdate(updated),
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        for addr in app.session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
-                        }
-                    }
-                }
-            } else if let Some(addr) = leader_addr {
-                let envelope = Envelope {
-                    sender: app.self_id,
-                    payload: Message::QueueProposal(QueueCommand::Skip),
-                };
-                if let Ok(bytes) = serialize(&envelope) {
-                    let _ = socket.send_to(&bytes, addr).await;
-                }
-            }
+        "next" | "skip" => {
+            send_playback_action(
+                app,
+                PlaybackAction::NextTrack,
+                socket,
+                leader_addr,
+                clock,
+                scheduler,
+            )
+            .await?;
+        }
+        "prev" | "previous" => {
+            send_playback_action(
+                app,
+                PlaybackAction::PreviousTrack,
+                socket,
+                leader_addr,
+                clock,
+                scheduler,
+            )
+            .await?;
+        }
+        "volume" | "vol" => {
+            let target_vol = if parts.len() > 1 {
+                parts[1].parse::<u8>().ok()
+            } else {
+                None
+            };
+            sync_room_volume(app, target_vol, socket, leader_addr).await?;
+        }
+        "help" | "?" => {
+            app.show_help = !app.show_help;
         }
         "quit" | "exit" => {
             app.should_quit = true;
         }
         _ => {
-            app.add_log("System".to_string(), format!("Unknown command: /{cmd}"));
+            app.add_log(
+                "System".to_string(),
+                format!("Unknown command: /{cmd} (Type /help for command list)"),
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn sync_room_volume(
+    app: &mut TuiApp,
+    target_vol: Option<u8>,
+    socket: &Arc<UdpSocket>,
+    leader_addr: Option<SocketAddr>,
+) -> Result<()> {
+    let vol = match target_vol {
+        Some(v) => v.min(100),
+        None => app.controller.get_volume().await.unwrap_or(70),
+    };
+
+    let _ = app.controller.set_volume(vol).await;
+    app.add_log("System".to_string(), format!("Volume synced to {}%", vol));
+
+    let envelope = Envelope {
+        sender: app.self_id,
+        payload: Message::SetVolume {
+            volume: vol,
+            actor: app.self_id,
+        },
+    };
+    if let Ok(bytes) = serialize(&envelope) {
+        if app.is_leader {
+            for addr in app.session.peer_socket_addrs() {
+                let _ = socket.send_to(&bytes, addr).await;
+            }
+        } else if let Some(addr) = leader_addr {
+            let _ = socket.send_to(&bytes, addr).await;
         }
     }
     Ok(())

@@ -628,8 +628,111 @@ impl SessionMessageRuntime {
                     return Ok(());
                 }
 
-                if let Some(playback) = &self.playback {
-                    playback.stop()?;
+                if let Some(controller) = &self.controller {
+                    controller.next_track().await?;
+                }
+                Ok(())
+            }
+            Message::NextTrack { actor } => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can skip tracks.".into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
+                }
+
+                if let Some(controller) = &self.controller {
+                    let _ = controller.next_track().await;
+                }
+
+                if self.session.role() >= Role::Moderator {
+                    self.log_system(format!(
+                        "Next track requested by {}",
+                        self.session.display_name(&actor)
+                    ));
+                }
+
+                if self.session.is_leader() {
+                    self.send_to_peers(socket, Message::NextTrack { actor })
+                        .await?;
+                }
+                Ok(())
+            }
+            Message::PreviousTrack { actor } => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can change tracks."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
+                }
+
+                if let Some(controller) = &self.controller {
+                    let _ = controller.previous_track().await;
+                }
+
+                if self.session.role() >= Role::Moderator {
+                    self.log_system(format!(
+                        "Previous track requested by {}",
+                        self.session.display_name(&actor)
+                    ));
+                }
+
+                if self.session.is_leader() {
+                    self.send_to_peers(socket, Message::PreviousTrack { actor })
+                        .await?;
+                }
+                Ok(())
+            }
+            Message::SetVolume { volume, actor } => {
+                let role = sender_role.unwrap_or(Role::Listener);
+                if role < Role::Moderator {
+                    if self.session.is_leader() {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can adjust room volume."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                    }
+                    return Ok(());
+                }
+
+                if let Some(controller) = &self.controller {
+                    let _ = controller.set_volume(volume).await;
+                }
+
+                self.log_system(format!(
+                    "Volume synced to {}% by {}",
+                    volume,
+                    self.session.display_name(&actor)
+                ));
+
+                if self.session.is_leader() {
+                    self.send_to_peers(socket, Message::SetVolume { volume, actor })
+                        .await?;
                 }
                 Ok(())
             }

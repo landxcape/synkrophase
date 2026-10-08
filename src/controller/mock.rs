@@ -56,4 +56,24 @@ impl MediaController for MockMediaController {
         state.rate = rate;
         Ok(())
     }
+
+    async fn next_track(&self) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.position_us = 0;
+        Ok(())
+    }
+
+    async fn previous_track(&self) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.position_us = 0;
+        Ok(())
+    }
+
+    async fn get_volume(&self) -> Result<u8> {
+        Ok(50)
+    }
+
+    async fn set_volume(&self, _volume: u8) -> Result<()> {
+        Ok(())
+    }
 }

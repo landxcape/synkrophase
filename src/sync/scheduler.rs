@@ -57,6 +57,12 @@ impl IntentScheduler {
                 PlaybackAction::Seek { target_position_us } => {
                     self.controller.seek_to(target_position_us).await?;
                 }
+                PlaybackAction::NextTrack => {
+                    self.controller.next_track().await?;
+                }
+                PlaybackAction::PreviousTrack => {
+                    self.controller.previous_track().await?;
+                }
             }
         } else {
             // Overdue arrival / mid-track join: compute exact value skip
@@ -74,6 +80,12 @@ impl IntentScheduler {
                 PlaybackAction::Seek { target_position_us } => {
                     let compensated_position_us = target_position_us + overshoot_us;
                     self.controller.seek_to(compensated_position_us).await?;
+                }
+                PlaybackAction::NextTrack => {
+                    self.controller.next_track().await?;
+                }
+                PlaybackAction::PreviousTrack => {
+                    self.controller.previous_track().await?;
                 }
             }
         }
