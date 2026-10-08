@@ -8,17 +8,17 @@ name = "synkro"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1.43", features = ["full"] }
-clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.53", features = ["full"] }
+clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 postcard = { version = "1.1", features = ["alloc"] }
-uuid = { version = "1.12", features = ["v4", "serde"] }
+uuid = { version = "1.27", features = ["v4", "serde"] }
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-lazy_static = "1.5.0"
-mdns-sd = "0.19.1"
+lazy_static = "1.5.1"
+mdns-sd = "0.21"
 rustyline-async = "0.4.9"
-local-ip-address = "0.6.12"
+local-ip-address = "0.6.13"
 home = "0.5.12"
 async-trait = "0.1"
