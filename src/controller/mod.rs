@@ -2,6 +2,9 @@ use crate::error::Result;
 
 pub mod mock;
 
+#[cfg(target_os = "macos")]
+pub mod macos;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackMetadata {
     pub title: String,
