@@ -433,6 +433,34 @@ pub async fn run_join(
     if !headless {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        // Feed drift updates to TUI
+        let drift_tui_task = tokio::spawn({
+            let evaluator = Arc::clone(&drift_evaluator);
+            let session = Arc::clone(&session);
+            let tx = event_tx.clone();
+            async move {
+                loop {
+                    sleep(Duration::from_millis(500)).await;
+                    if let Some(anchor) = session.latest_sync_anchor() {
+                        if let Ok(action) = evaluator.evaluate_and_reconcile(&anchor).await {
+                            let (offset_us, zone, status) = match action {
+                                crate::sync::evaluator::DriftAction::InSync { drift_us } => {
+                                    (drift_us, 1, "Locked (<50ms)".to_string())
+                                }
+                                crate::sync::evaluator::DriftAction::FineTuneRate { rate, drift_us } => {
+                                    (drift_us, 2, format!("Nudging (rate: {:.2})", rate))
+                                }
+                                crate::sync::evaluator::DriftAction::MicroSeek { drift_us, .. } => {
+                                    (drift_us, 3, "Resyncing (Micro-seek)".to_string())
+                                }
+                            };
+                            let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
+                        }
+                    }
+                }
+            }
+        });
+
         let runtime = SessionMessageRuntime::new(
             Arc::clone(&session),
             None,
@@ -482,6 +510,7 @@ pub async fn run_join(
         }
 
         receive_task.abort();
+        drift_tui_task.abort();
         clock_task.abort();
         drift_task.abort();
         heartbeat_task.abort();

@@ -35,8 +35,6 @@ pub fn print_event(stdout: Option<&SharedWriter>, msg: &str) {
         use std::io::Write;
         let mut out = out.clone();
         let _ = writeln!(out, "{}", msg);
-    } else {
-        println!("{}", msg);
     }
 }
 
@@ -89,6 +87,25 @@ impl SessionMessageRuntime {
     pub fn with_clock(mut self, clock: Arc<ClockSync>) -> Self {
         self.clock = Some(clock);
         self
+    }
+
+    fn log_system(&self, msg: impl Into<String>) {
+        let msg = msg.into();
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(AppEvent::Log(msg, "System".into()));
+        } else {
+            print_event(self.stdout.as_ref(), &msg);
+        }
+    }
+
+    fn log_chat(&self, source: impl Into<String>, msg: impl Into<String>) {
+        let source = source.into();
+        let msg = msg.into();
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(AppEvent::Log(msg, source));
+        } else {
+            print_event(self.stdout.as_ref(), &format!("[{}]: {}", source, msg));
+        }
     }
 
     fn self_peer_info(&self) -> PeerInfo {
@@ -181,15 +198,12 @@ impl SessionMessageRuntime {
         match envelope.payload {
             Message::JoinRequest { room_code, name } => {
                 if room_code != self.session.room_code() {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[Warning] Rejected join from {} due to room code mismatch ({} != {})",
-                            name,
-                            room_code,
-                            self.session.room_code()
-                        ),
-                    );
+                    self.log_system(format!(
+                        "[Warning] Rejected join from {} due to room code mismatch ({} != {})",
+                        name,
+                        room_code,
+                        self.session.room_code()
+                    ));
                     return Ok(());
                 }
 
@@ -215,14 +229,11 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[System] Peer joined: {} (Role: {:?})",
-                            self.session.display_name(&envelope.sender),
-                            assigned_role
-                        ),
-                    );
+                    self.log_system(format!(
+                        "Peer joined: {} (Role: {:?})",
+                        self.session.display_name(&envelope.sender),
+                        assigned_role
+                    ));
                 }
 
                 let current_anchor = self.session.current_anchor.read().unwrap().clone();
@@ -281,10 +292,7 @@ impl SessionMessageRuntime {
                 assigned_role,
                 current_anchor,
             } => {
-                print_event(self.stdout.as_ref(), "[System] Joined room successfully.");
-                if let Some(tx) = &self.event_tx {
-                    let _ = tx.send(AppEvent::Log("Joined room successfully.".into(), "System".into()));
-                }
+                self.log_system("Joined room successfully.");
                 self.session.accept_join_accepted(
                     envelope.sender,
                     src,
@@ -303,21 +311,13 @@ impl SessionMessageRuntime {
             Message::PeerJoined(info) => {
                 if info.device_id != self.session.self_id() {
                     self.session.record_peer_seen(info.clone());
-                    if let Some(tx) = &self.event_tx {
-                        let _ = tx.send(AppEvent::Log(format!("{} joined the room.", info.name), "System".into()));
-                    }
+                    self.log_system(format!("{} joined the room.", info.name));
                 }
                 Ok(())
             }
             Message::PeerLeft(peer_id) => {
                 let peer_name = self.session.display_name(&peer_id);
-                print_event(
-                    self.stdout.as_ref(),
-                    &format!("[System] Peer left: {}", peer_name),
-                );
-                if let Some(tx) = &self.event_tx {
-                    let _ = tx.send(AppEvent::Log(format!("{} left the room.", peer_name), "System".into()));
-                }
+                self.log_system(format!("{} left the room.", peer_name));
 
                 // If we are leader, forward PeerLeft to all other peers so they prune their registries too
                 if self.session.is_leader() {
@@ -354,16 +354,10 @@ impl SessionMessageRuntime {
                 self.session.set_leader_id(leader_id);
                 if leader_id == self.session.self_id() {
                     self.session.promote_to_leader();
-                    print_event(self.stdout.as_ref(), "[System] You have been elected as the Leader!");
-                    if let Some(tx) = &self.event_tx {
-                        let _ = tx.send(AppEvent::Log("You have been elected as the Leader!".into(), "System".into()));
-                    }
+                    self.log_system("You have been elected as the Leader!");
                 } else {
                     let name = self.session.display_name(&leader_id);
-                    print_event(self.stdout.as_ref(), &format!("[System] {} is now the Leader.", name));
-                    if let Some(tx) = &self.event_tx {
-                        let _ = tx.send(AppEvent::Log(format!("{} is now the Leader.", name), "System".into()));
-                    }
+                    self.log_system(format!("{} is now the Leader.", name));
                 }
                 Ok(())
             }
@@ -401,24 +395,21 @@ impl SessionMessageRuntime {
                     crate::protocol::messages::QueueCommand::Remove { .. } => "removed a track",
                 };
                 let log_msg = format!(
-                    "[System] {} {}",
+                    "{} {}",
                     self.session.display_name(&envelope.sender),
                     action
                 );
                 if self.session.role() >= Role::Moderator {
-                    print_event(self.stdout.as_ref(), &log_msg);
+                    self.log_system(&log_msg);
                 }
-                self.send_to_peers(socket, Message::SystemLog(log_msg))
+                self.send_to_peers(socket, Message::SystemLog(format!("[System] {}", log_msg)))
                     .await?;
 
                 if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[System] Queue updated ({} upcoming)",
-                            updated.upcoming.len()
-                        ),
-                    );
+                    self.log_system(format!(
+                        "Queue updated ({} upcoming)",
+                        updated.upcoming.len()
+                    ));
                 }
                 self.send_to_peers(socket, Message::QueueUpdate(updated))
                     .await?;
@@ -465,13 +456,10 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[System] Playback paused by {}",
-                            self.session.display_name(&actor)
-                        ),
-                    );
+                    self.log_system(format!(
+                        "Playback paused by {}",
+                        self.session.display_name(&actor)
+                    ));
                 }
 
                 if self.session.is_leader() {
@@ -513,13 +501,10 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[System] Playback resumed by {}",
-                            self.session.display_name(&actor)
-                        ),
-                    );
+                    self.log_system(format!(
+                        "Playback resumed by {}",
+                        self.session.display_name(&actor)
+                    ));
                 }
 
                 if self.session.is_leader() {
@@ -562,13 +547,10 @@ impl SessionMessageRuntime {
                 }
 
                 if self.session.role() >= Role::Moderator {
-                    print_event(
-                        self.stdout.as_ref(),
-                        &format!(
-                            "[System] Playback started by {}",
-                            self.session.display_name(&actor)
-                        ),
-                    );
+                    self.log_system(format!(
+                        "Playback started by {}",
+                        self.session.display_name(&actor)
+                    ));
                 }
 
                 if self.session.is_leader() {
@@ -615,8 +597,8 @@ impl SessionMessageRuntime {
                         text: text.clone(),
                     };
                     self.send_to_peers(socket, broadcast).await?;
-                    // Leader also prints locally
-                    print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
+                    // Leader also logs locally
+                    self.log_chat(&display_name, &text);
                 }
                 Ok(())
             }
@@ -624,14 +606,14 @@ impl SessionMessageRuntime {
                 if envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
-                print_event(self.stdout.as_ref(), &format!("[{}]: {}", display_name, text));
+                self.log_chat(&display_name, &text);
                 Ok(())
             }
             Message::Notification { text } => {
                 if envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
-                print_event(self.stdout.as_ref(), &text);
+                self.log_system(&text);
                 Ok(())
             }
             Message::Intent(mut intent) => {

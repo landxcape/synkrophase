@@ -152,8 +152,21 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
 
     // Calculate slider width available
     let total_width = sub_layout[1].width as usize;
-    // Overhead: " " (1) + cur_str (5) + " [" (2) + "] " (2) + total_str (5) + "  " (2) = ~17
-    let bar_width = total_width.saturating_sub(18).max(10);
+
+    let (sync_badge_str, sync_color) = if app.is_leader {
+        ("   (Leader)".to_string(), Color::Green)
+    } else {
+        let color = match app.drift.zone {
+            1 => Color::Green,
+            2 => Color::Yellow,
+            _ => Color::Red,
+        };
+        (format!("   ({:+}µs sync)", app.drift.offset_us), color)
+    };
+
+    // Overhead: " " (1) + cur_str (5) + " [" (2) + "] " (2) + total_str (5) + sync_badge_str (~16) = ~31
+    let overhead = 18 + sync_badge_str.len();
+    let bar_width = total_width.saturating_sub(overhead).max(10);
     let ratio = app.progress_ratio().clamp(0.0, 1.0);
     let filled_chars = ((ratio * bar_width as f64).round() as usize).min(bar_width);
     let unfilled_chars = bar_width.saturating_sub(filled_chars);
@@ -179,6 +192,7 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         Span::styled(unfilled_part, Style::default().fg(Color::Rgb(60, 60, 60))),
         Span::styled("] ", Style::default().fg(Color::DarkGray)),
         Span::styled(total_str, Style::default().fg(Color::DarkGray)),
+        Span::styled(sync_badge_str, Style::default().fg(sync_color)),
     ]);
     frame.render_widget(Paragraph::new(timeline_line), sub_layout[1]);
 }
