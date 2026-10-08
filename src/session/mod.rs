@@ -15,6 +15,7 @@ use crate::sync::controller::{PlaybackStatus, SyncController};
 use self::leader::appoint_successor;
 use self::peer::{PeerEntry, PeerRegistry};
 
+pub mod broadcaster;
 pub mod discovery;
 pub mod leader;
 pub mod peer;
