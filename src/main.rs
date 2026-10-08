@@ -7,20 +7,39 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use synkrophase::clock::sync::ClockSync;
 use synkrophase::config::{DeviceConfig, SyncConfig};
+use synkrophase::controller::MediaController;
+#[cfg(target_os = "macos")]
+use synkrophase::controller::macos::MacOsMediaController;
+#[cfg(not(target_os = "macos"))]
+use synkrophase::controller::mock::MockMediaController;
 use synkrophase::error::Result;
 use synkrophase::protocol::messages::{
-    Envelope, Message, QueueCommand, QueueState, Track, serialize,
+    Envelope, Message, PlaybackAction, PlaybackIntent, QueueCommand, QueueState, serialize,
 };
 use synkrophase::session::discovery::Discovery;
 use synkrophase::session::runtime::{LeaderAnchorBroadcaster, SessionMessageRuntime};
 use synkrophase::session::{FollowerSyncRuntime, SessionState};
 use synkrophase::sync::controller::{NoopPlaybackControl, PlaybackControl, SyncController};
+use synkrophase::sync::evaluator::DriftEvaluator;
+use synkrophase::sync::scheduler::IntentScheduler;
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 use uuid::Uuid;
 
 const DEFAULT_CLOCK_PORT: u16 = 5870;
 const DEFAULT_SESSION_PORT: u16 = 5871;
+const DEFAULT_LEAD_TIME_US: u64 = 150_000; // 150ms dynamic lead time
+
+fn create_media_controller() -> Arc<dyn MediaController> {
+    #[cfg(target_os = "macos")]
+    {
+        Arc::new(MacOsMediaController::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Arc::new(MockMediaController::new())
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "synkro", about = "Synchronized LAN playback controller")]
@@ -39,6 +58,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Inspect local media player status and active track info.
+    Status,
     /// Start a session and broadcast sync anchors as the leader.
     Host {
         /// Optional room code. If omitted, a code is generated.
@@ -68,7 +89,7 @@ enum Commands {
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
     },
-    /// Send play signal across the room.
+    /// Send play intent across the room.
     Play {
         /// Session room code.
         room_code: String,
@@ -135,6 +156,30 @@ async fn main() -> Result<()> {
     let sync_config = SyncConfig::default();
 
     match cli.command {
+        Commands::Status => {
+            let controller = create_media_controller();
+            let state = controller.get_playback_state().await?;
+            println!("\n=== Local Media Player Status ===");
+            println!("  Playing:  {}", if state.is_playing { "Yes" } else { "No" });
+            let pos_sec = (state.position_us as f64) / 1_000_000.0;
+            println!("  Position: {:.2}s", pos_sec);
+            if let Some(meta) = state.metadata {
+                println!("  Title:    {}", meta.title);
+                if let Some(artist) = meta.artist {
+                    println!("  Artist:   {}", artist);
+                }
+                if let Some(album) = meta.album {
+                    println!("  Album:    {}", album);
+                }
+                if let Some(dur_us) = meta.duration_us {
+                    println!("  Duration: {:.2}s", (dur_us as f64) / 1_000_000.0);
+                }
+            } else {
+                println!("  Metadata: (None - no active player found)");
+            }
+            println!();
+            Ok(())
+        }
         Commands::Host {
             room_code,
             clock_port,
@@ -165,13 +210,20 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            let controller = create_media_controller();
+            let state = controller.get_playback_state().await?;
+            let title = state.metadata.map(|m| m.title);
+            let intent = PlaybackIntent {
+                action: PlaybackAction::Play,
+                target_ref_time: 0,
+                position_us: state.position_us,
+                track_title: title,
+            };
             run_simple_command(
                 device.clone(),
                 room_code,
                 leader_addr,
-                Message::Play {
-                    actor: device.device_id,
-                },
+                Message::Intent(intent),
             )
             .await
         }
@@ -179,13 +231,17 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            let intent = PlaybackIntent {
+                action: PlaybackAction::Pause,
+                target_ref_time: 0,
+                position_us: 0,
+                track_title: None,
+            };
             run_simple_command(
                 device.clone(),
                 room_code,
                 leader_addr,
-                Message::Pause {
-                    actor: device.device_id,
-                },
+                Message::Intent(intent),
             )
             .await
         }
@@ -293,6 +349,13 @@ async fn run_host(
         device.device_id,
         device.name.clone(),
     ));
+
+    let controller = create_media_controller();
+    let scheduler = Arc::new(IntentScheduler::new(
+        Arc::clone(&clock) as Arc<dyn synkrophase::sync::controller::ClockSource>,
+        Arc::clone(&controller),
+    ));
+
     let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
@@ -301,7 +364,8 @@ async fn run_host(
         Some(stdout.clone()),
         device.name.clone(),
     )
-    .with_playback(Arc::clone(&playback));
+    .with_playback(Arc::clone(&playback))
+    .with_scheduler(Arc::clone(&scheduler));
 
     let broadcaster = LeaderAnchorBroadcaster::new(
         Arc::clone(&session),
@@ -328,7 +392,10 @@ async fn run_host(
         let socket = Arc::clone(&session_socket);
         async move { runtime.run_receive_loop(socket).await }
     });
-    let clock_task = tokio::spawn(async move { clock.run_responder().await });
+    let clock_task = {
+        let clock = Arc::clone(&clock);
+        tokio::spawn(async move { clock.run_responder().await })
+    };
     let broadcast_task = tokio::spawn({
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
@@ -340,8 +407,16 @@ async fn run_host(
         let socket = Arc::clone(&session_socket);
         let sender = device.device_id;
         let name = device.name.clone();
+        let clock = Arc::clone(&clock);
+        let controller = Arc::clone(&controller);
+        let scheduler = Arc::clone(&scheduler);
         let stdout = stdout.clone();
-        async move { run_host_repl(rl, session, socket, sender, name, stdout).await }
+        async move {
+            run_host_repl(
+                rl, session, socket, sender, name, clock, controller, scheduler, stdout,
+            )
+            .await
+        }
     });
 
     tokio::select! {
@@ -426,13 +501,25 @@ async fn run_join(
         QueueState::default(),
     ));
 
+    let controller = create_media_controller();
+    let scheduler = Arc::new(IntentScheduler::new(
+        Arc::clone(&clock) as Arc<dyn synkrophase::sync::controller::ClockSource>,
+        Arc::clone(&controller),
+    ));
+
+    let drift_evaluator = Arc::new(DriftEvaluator::new(
+        Arc::clone(&clock) as Arc<dyn synkrophase::sync::controller::ClockSource>,
+        Arc::clone(&controller),
+        50_000,
+    ));
+
     let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());
-    let controller = Arc::new(SyncController::new(
+    let follower_sync_controller = Arc::new(SyncController::new(
         Arc::clone(&clock) as Arc<dyn synkrophase::sync::controller::ClockSource>,
         Arc::clone(&playback),
         sync_config.clone(),
     ));
-    let follower_sync = Arc::new(FollowerSyncRuntime::new(controller));
+    let follower_sync = Arc::new(FollowerSyncRuntime::new(follower_sync_controller));
     follower_sync.start_sync_loop();
 
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
@@ -443,7 +530,9 @@ async fn run_join(
         device.name.clone(),
     )
     .with_follower_sync(Arc::clone(&follower_sync))
-    .with_playback(Arc::clone(&playback));
+    .with_playback(Arc::clone(&playback))
+    .with_scheduler(Arc::clone(&scheduler))
+    .with_drift_evaluator(Arc::clone(&drift_evaluator));
 
     synkrophase::session::runtime::print_event(
         Some(&stdout),
@@ -467,6 +556,20 @@ async fn run_join(
         async move { runtime.run_receive_loop(socket).await }
     });
     let clock_task = tokio::spawn(async move { clock.run_responder().await });
+
+    // Sparse background drift check (every 4s)
+    let drift_task = tokio::spawn({
+        let evaluator = Arc::clone(&drift_evaluator);
+        let session = Arc::clone(&session);
+        async move {
+            loop {
+                sleep(Duration::from_secs(4)).await;
+                if let Some(anchor) = session.latest_sync_anchor() {
+                    let _ = evaluator.evaluate_and_reconcile(&anchor).await;
+                }
+            }
+        }
+    });
 
     let heartbeat_task = tokio::spawn({
         let session = Arc::clone(&session);
@@ -505,6 +608,9 @@ async fn run_join(
             if let Err(err) = res {
                 eprintln!("clock responder failed: {err}");
             }
+        }
+        Err(err) = drift_task => {
+            eprintln!("drift task failed: {err}");
         }
         res = heartbeat_task => {
             if let Err(err) = res {
@@ -829,6 +935,9 @@ async fn run_host_repl(
     socket: Arc<UdpSocket>,
     sender: Uuid,
     name: String,
+    clock: Arc<ClockSync>,
+    controller: Arc<dyn MediaController>,
+    scheduler: Arc<IntentScheduler>,
     stdout: rustyline_async::SharedWriter,
 ) -> Result<()> {
     loop {
@@ -850,59 +959,123 @@ async fn run_host_repl(
             }
             match parts[0] {
                 "play" => {
+                    let state = controller.get_playback_state().await?;
+                    let now = clock.reference_now();
+                    let target_ref_time = now + DEFAULT_LEAD_TIME_US;
+                    let title = state.metadata.map(|m| m.title);
+
+                    let intent = PlaybackIntent {
+                        action: PlaybackAction::Play,
+                        target_ref_time,
+                        position_us: state.position_us,
+                        track_title: title.clone(),
+                    };
+
+                    // Broadcast intent immediately across UDP fast lane
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Intent(intent.clone()),
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        for addr in session.peer_socket_addrs() {
+                            let _ = socket.send_to(&bytes, addr).await;
+                        }
+                    }
+
+                    // Execute scheduled intent locally
+                    let _ = scheduler.execute_intent(&intent).await;
+
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        &format!(
+                            "[System] Play intent scheduled for {:?} at T+150ms",
+                            title.unwrap_or_else(|| "active track".into())
+                        ),
+                    );
+                }
+                "pause" => {
+                    let state = controller.get_playback_state().await?;
+                    let now = clock.reference_now();
+                    let target_ref_time = now + DEFAULT_LEAD_TIME_US;
+
+                    let intent = PlaybackIntent {
+                        action: PlaybackAction::Pause,
+                        target_ref_time,
+                        position_us: state.position_us,
+                        track_title: None,
+                    };
+
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::Intent(intent.clone()),
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        for addr in session.peer_socket_addrs() {
+                            let _ = socket.send_to(&bytes, addr).await;
+                        }
+                    }
+
+                    let _ = scheduler.execute_intent(&intent).await;
+
+                    synkrophase::session::runtime::print_event(
+                        Some(&stdout),
+                        "[System] Pause intent scheduled at T+150ms",
+                    );
+                }
+                "seek" => {
                     if parts.len() < 2 {
                         synkrophase::session::runtime::print_event(
                             Some(&stdout),
-                            "Usage: /play <title>",
+                            "Usage: /seek <seconds>",
                         );
                         continue;
                     }
-                    let title = parts[1..].join(" ");
-                    let track = Track {
-                        id: Uuid::new_v4().to_string(),
-                        youtube_url: String::new(),
-                        title: title.clone(),
-                        requested_by: sender,
-                    };
-                    if let Ok(updated) =
-                        session.handle_queue_proposal(QueueCommand::Add(track))
-                    {
+                    if let Ok(sec) = parts[1].parse::<f64>() {
+                        let pos_us = (sec * 1_000_000.0) as i64;
+                        let now = clock.reference_now();
+                        let target_ref_time = now + DEFAULT_LEAD_TIME_US;
+
+                        let intent = PlaybackIntent {
+                            action: PlaybackAction::Seek {
+                                target_position_us: pos_us,
+                            },
+                            target_ref_time,
+                            position_us: pos_us,
+                            track_title: None,
+                        };
+
                         let envelope = Envelope {
                             sender,
-                            payload: Message::QueueUpdate(updated),
+                            payload: Message::Intent(intent.clone()),
                         };
                         if let Ok(bytes) = serialize(&envelope) {
                             for addr in session.peer_socket_addrs() {
                                 let _ = socket.send_to(&bytes, addr).await;
                             }
                         }
+
+                        let _ = scheduler.execute_intent(&intent).await;
+
                         synkrophase::session::runtime::print_event(
                             Some(&stdout),
-                            &format!("[System] Enqueued track: {title}"),
+                            &format!("[System] Seek to {:.2}s scheduled at T+150ms", sec),
                         );
                     }
                 }
-                "pause" => {
-                    let envelope = Envelope {
-                        sender,
-                        payload: Message::Pause { actor: sender },
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        for addr in session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
+                "status" => {
+                    let state = controller.get_playback_state().await?;
+                    let mut out = format!(
+                        "Player Status: {}\nPosition: {:.2}s\n",
+                        if state.is_playing { "Playing" } else { "Paused" },
+                        (state.position_us as f64) / 1_000_000.0
+                    );
+                    if let Some(m) = state.metadata {
+                        out.push_str(&format!("Track: {}\n", m.title));
+                        if let Some(a) = m.artist {
+                            out.push_str(&format!("Artist: {}\n", a));
                         }
                     }
-                }
-                "resume" => {
-                    let envelope = Envelope {
-                        sender,
-                        payload: Message::Resume { actor: sender },
-                    };
-                    if let Ok(bytes) = serialize(&envelope) {
-                        for addr in session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
-                        }
-                    }
+                    synkrophase::session::runtime::print_event(Some(&stdout), out.trim_end());
                 }
                 "skip" => {
                     if let Ok(updated) =
@@ -954,7 +1127,7 @@ async fn run_host_repl(
                 _ => {
                     synkrophase::session::runtime::print_event(
                         Some(&stdout),
-                        "Available commands: /play <title>, /pause, /resume, /skip, /queue, /exit",
+                        "Available commands: /play, /pause, /seek <sec>, /status, /skip, /queue, /exit",
                     );
                 }
             }
@@ -1097,6 +1270,10 @@ mod tests {
 
     #[test]
     fn test_cli_parsing() {
+        // Test Status
+        let cli = Cli::try_parse_from(["synkro", "status"]).unwrap();
+        assert!(matches!(cli.command, Commands::Status));
+
         // Test Host
         let cli = Cli::try_parse_from(["synkro", "host", "--room-code", "ABCDEF"]).unwrap();
         match cli.command {

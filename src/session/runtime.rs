@@ -11,6 +11,8 @@ use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{Envelope, Message, PeerInfo, deserialize, serialize};
 use crate::session::{FollowerSyncRuntime, SessionState};
 use crate::sync::controller::{ClockSource, PlaybackControl};
+use crate::sync::evaluator::DriftEvaluator;
+use crate::sync::scheduler::IntentScheduler;
 
 use rustyline_async::SharedWriter;
 use crate::protocol::messages::Role;
@@ -19,6 +21,8 @@ pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
     follower_sync: Option<Arc<FollowerSyncRuntime>>,
     playback: Option<Arc<dyn PlaybackControl>>,
+    scheduler: Option<Arc<IntentScheduler>>,
+    drift_evaluator: Option<Arc<DriftEvaluator>>,
     stdout: Option<SharedWriter>,
     name: String,
 }
@@ -39,6 +43,8 @@ impl SessionMessageRuntime {
             session,
             follower_sync: None,
             playback: None,
+            scheduler: None,
+            drift_evaluator: None,
             stdout,
             name,
         }
@@ -51,6 +57,16 @@ impl SessionMessageRuntime {
 
     pub fn with_playback(mut self, playback: Arc<dyn PlaybackControl>) -> Self {
         self.playback = Some(playback);
+        self
+    }
+
+    pub fn with_scheduler(mut self, scheduler: Arc<IntentScheduler>) -> Self {
+        self.scheduler = Some(scheduler);
+        self
+    }
+
+    pub fn with_drift_evaluator(mut self, evaluator: Arc<DriftEvaluator>) -> Self {
+        self.drift_evaluator = Some(evaluator);
         self
     }
 
@@ -558,11 +574,23 @@ impl SessionMessageRuntime {
                 print_event(self.stdout.as_ref(), &text);
                 Ok(())
             }
+            Message::Intent(intent) => {
+                if let Some(scheduler) = &self.scheduler {
+                    let _ = scheduler.execute_intent(&intent).await;
+                }
+                if let Some(evaluator) = &self.drift_evaluator {
+                    evaluator.trigger_immediate();
+                }
+                Ok(())
+            }
             Message::SyncAnchor(anchor) => {
                 if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
                 self.session.accept_sync_anchor(anchor.clone());
+                if let Some(evaluator) = &self.drift_evaluator {
+                    evaluator.trigger_immediate();
+                }
                 if let Some(follower_sync) = &self.follower_sync {
                     follower_sync.ingest_message(&self.session, &Message::SyncAnchor(anchor));
                 }
