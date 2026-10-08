@@ -66,6 +66,7 @@ pub enum Message {
     PeerListUpdate {
         names: Vec<String>,
     },
+    Intent(PlaybackIntent),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -112,6 +113,21 @@ pub struct SyncAnchor {
     pub media_position_us: i64,
     pub playback_rate: f32,
     pub is_playing: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum PlaybackAction {
+    Play,
+    Pause,
+    Seek { target_position_us: i64 },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PlaybackIntent {
+    pub action: PlaybackAction,
+    pub target_ref_time: u64,
+    pub position_us: i64,
+    pub track_title: Option<String>,
 }
 
 pub fn serialize(envelope: &Envelope) -> crate::error::Result<Vec<u8>> {
@@ -228,6 +244,23 @@ mod tests {
                 display_name: "Alice".into(),
                 text: "Hello everyone!".into(),
             },
+        };
+        let bytes = serialize(&env).unwrap();
+        let decoded = deserialize(&bytes).unwrap();
+        assert_eq!(env, decoded);
+    }
+
+    #[test]
+    fn test_playback_intent_roundtrip() {
+        let intent = PlaybackIntent {
+            action: PlaybackAction::Play,
+            target_ref_time: 1_234_567_890,
+            position_us: 42_000_000,
+            track_title: Some("Seven Nation Army".into()),
+        };
+        let env = Envelope {
+            sender: Uuid::new_v4(),
+            payload: Message::Intent(intent),
         };
         let bytes = serialize(&env).unwrap();
         let decoded = deserialize(&bytes).unwrap();
