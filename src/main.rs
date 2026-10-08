@@ -18,8 +18,8 @@ use synkrophase::protocol::messages::{
 };
 use synkrophase::session::discovery::Discovery;
 use synkrophase::session::runtime::{LeaderAnchorBroadcaster, SessionMessageRuntime};
-use synkrophase::session::{FollowerSyncRuntime, SessionState};
-use synkrophase::sync::controller::{NoopPlaybackControl, PlaybackControl, SyncController};
+use synkrophase::session::SessionState;
+use synkrophase::sync::controller::{NoopPlaybackControl, PlaybackControl};
 use synkrophase::sync::evaluator::DriftEvaluator;
 use synkrophase::sync::scheduler::IntentScheduler;
 use tokio::net::UdpSocket;
@@ -516,15 +516,6 @@ async fn run_join(
         50_000,
     ));
 
-    let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());
-    let follower_sync_controller = Arc::new(SyncController::new(
-        Arc::clone(&clock) as Arc<dyn synkrophase::sync::controller::ClockSource>,
-        Arc::clone(&playback),
-        sync_config.clone(),
-    ));
-    let follower_sync = Arc::new(FollowerSyncRuntime::new(follower_sync_controller));
-    follower_sync.start_sync_loop();
-
     let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
     let runtime = SessionMessageRuntime::new(
@@ -532,8 +523,8 @@ async fn run_join(
         Some(stdout.clone()),
         device.name.clone(),
     )
-    .with_follower_sync(Arc::clone(&follower_sync))
-    .with_playback(Arc::clone(&playback))
+    .with_controller(Arc::clone(&controller))
+    .with_clock(Arc::clone(&clock))
     .with_scheduler(Arc::clone(&scheduler))
     .with_drift_evaluator(Arc::clone(&drift_evaluator));
 
