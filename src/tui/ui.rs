@@ -4,7 +4,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Gauge, List, ListItem, Paragraph, Row, Table,
+        Block, BorderType, Borders, List, ListItem, Paragraph, Row, Table,
     },
 };
 
@@ -15,7 +15,7 @@ pub fn render(frame: &mut Frame, app: &TuiApp) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header / Room Bar
-            Constraint::Length(5), // Now Playing & Progress Gauge
+            Constraint::Length(4), // Now Playing & Sleek Timeline
             Constraint::Min(8),    // Split: Peers & Clock (left) + Log & Activity (right)
             Constraint::Length(3), // Command & Input bar
         ])
@@ -63,12 +63,6 @@ fn render_header(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
 }
 
 fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
-    let sub_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(2)])
-        .margin(1)
-        .split(area);
-
     let border_color = if app.playback.is_playing {
         Color::Green
     } else {
@@ -82,9 +76,19 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
 
+    let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    // Track meta line
+    if inner_area.height < 2 {
+        return;
+    }
+
+    let sub_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(inner_area);
+
+    // Row 1: Track Metadata & Status
     let (icon, state_text) = if app.playback.is_playing {
         ("▶ ", "Playing")
     } else {
@@ -109,7 +113,7 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
             }
             if let Some(album) = &m.album {
                 if !s.is_empty() {
-                    s.push_str(" — ");
+                    s.push_str(" • ");
                 }
                 s.push_str(album);
             }
@@ -118,19 +122,18 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         .unwrap_or_default();
 
     let meta_line = Line::from(vec![
-        Span::styled(icon, Style::default().fg(border_color).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {icon}"), Style::default().fg(border_color).add_modifier(Modifier::BOLD)),
         Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         if !artist_album.is_empty() {
-            Span::styled(format!("  ({artist_album})"), Style::default().fg(Color::Gray))
+            Span::styled(format!("   {artist_album}"), Style::default().fg(Color::DarkGray))
         } else {
             Span::raw("")
         },
-        Span::styled(format!(" [{state_text}]"), Style::default().fg(border_color)),
+        Span::styled(format!("  [{state_text}]"), Style::default().fg(border_color)),
     ]);
-
     frame.render_widget(Paragraph::new(meta_line), sub_layout[0]);
 
-    // Progress bar gauge
+    // Row 2: Sleek Unicode Timeline Slider
     let pos_sec = (app.playback.position_us as f64) / 1_000_000.0;
     let dur_sec = app
         .playback
@@ -140,22 +143,44 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
         .map(|d| (d as f64) / 1_000_000.0)
         .unwrap_or(0.0);
 
-    let progress_label = if dur_sec > 0.0 {
-        format!("{}:{:02} / {}:{:02}", (pos_sec / 60.0) as i64, (pos_sec % 60.0) as i64, (dur_sec / 60.0) as i64, (dur_sec % 60.0) as i64)
+    let cur_str = format!("{:02}:{:02}", (pos_sec / 60.0) as i64, (pos_sec % 60.0) as i64);
+    let total_str = if dur_sec > 0.0 {
+        format!("{:02}:{:02}", (dur_sec / 60.0) as i64, (dur_sec % 60.0) as i64)
     } else {
-        format!("{}:{:02}", (pos_sec / 60.0) as i64, (pos_sec % 60.0) as i64)
+        "--:--".to_string()
     };
 
-    let gauge = Gauge::default()
-        .gauge_style(
-            Style::default()
-                .fg(if app.playback.is_playing { Color::Green } else { Color::Yellow })
-                .bg(Color::Rgb(40, 40, 40)),
-        )
-        .ratio(app.progress_ratio())
-        .label(Span::styled(progress_label, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+    // Calculate slider width available
+    let total_width = sub_layout[1].width as usize;
+    // Overhead: " " (1) + cur_str (5) + " [" (2) + "] " (2) + total_str (5) + "  " (2) = ~17
+    let bar_width = total_width.saturating_sub(18).max(10);
+    let ratio = app.progress_ratio().clamp(0.0, 1.0);
+    let filled_chars = ((ratio * bar_width as f64).round() as usize).min(bar_width);
+    let unfilled_chars = bar_width.saturating_sub(filled_chars);
 
-    frame.render_widget(gauge, sub_layout[1]);
+    let filled_part: String = if filled_chars > 0 {
+        format!("{}●", "━".repeat(filled_chars.saturating_sub(1)))
+    } else {
+        "●".to_string()
+    };
+    let unfilled_part: String = "─".repeat(unfilled_chars.saturating_sub(if filled_chars == 0 { 1 } else { 0 }));
+
+    let slider_color = if app.playback.is_playing {
+        Color::Cyan
+    } else {
+        Color::Yellow
+    };
+
+    let timeline_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(cur_str, Style::default().fg(Color::White)),
+        Span::styled(" [", Style::default().fg(Color::DarkGray)),
+        Span::styled(filled_part, Style::default().fg(slider_color).add_modifier(Modifier::BOLD)),
+        Span::styled(unfilled_part, Style::default().fg(Color::Rgb(60, 60, 60))),
+        Span::styled("] ", Style::default().fg(Color::DarkGray)),
+        Span::styled(total_str, Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(timeline_line), sub_layout[1]);
 }
 
 fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
