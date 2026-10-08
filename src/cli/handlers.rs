@@ -143,6 +143,14 @@ pub async fn run_host(
         async move { broadcaster.run_broadcast_loop(socket, sender).await }
     });
 
+    let role_manager_task = tokio::spawn({
+        let session = Arc::clone(&session);
+        let socket = Arc::clone(&session_socket);
+        let sender = device.device_id;
+        let cfg = sync_config.clone();
+        async move { run_role_manager_loop(session, socket, sender, cfg).await }
+    });
+
     if !headless {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -151,6 +159,7 @@ pub async fn run_host(
             None,
             device.name.clone(),
         )
+        .with_event_tx(event_tx.clone())
         .with_playback(Arc::clone(&playback))
         .with_scheduler(Arc::clone(&scheduler))
         .with_controller(Arc::clone(&controller))
@@ -187,10 +196,22 @@ pub async fn run_host(
         )
         .await;
 
+        // Graceful departure notification
+        let leave_env = Envelope {
+            sender: device.device_id,
+            payload: Message::PeerLeft(device.device_id),
+        };
+        if let Ok(bytes) = serialize(&leave_env) {
+            for addr in session.peer_socket_addrs() {
+                let _ = session_socket.send_to(&bytes, addr).await;
+            }
+        }
+
         let _ = discovery.unregister();
         receive_task.abort();
         clock_task.abort();
         broadcast_task.abort();
+        role_manager_task.abort();
 
         return tui_res;
     }
@@ -253,6 +274,11 @@ pub async fn run_host(
                 eprintln!("broadcast task failed: {err}");
             }
         }
+        res = role_manager_task => {
+            if let Err(err) = res {
+                eprintln!("role manager failed: {err}");
+            }
+        }
         res = repl_task => {
             match res {
                 Ok(Ok(())) => {}
@@ -262,6 +288,17 @@ pub async fn run_host(
         }
         _ = tokio::signal::ctrl_c() => {
             println!("Shutting down host.");
+        }
+    }
+
+    // Graceful departure notification
+    let leave_env = Envelope {
+        sender: device.device_id,
+        payload: Message::PeerLeft(device.device_id),
+    };
+    if let Ok(bytes) = serialize(&leave_env) {
+        for addr in session.peer_socket_addrs() {
+            let _ = session_socket.send_to(&bytes, addr).await;
         }
     }
 
@@ -386,6 +423,7 @@ pub async fn run_join(
             None,
             device.name.clone(),
         )
+        .with_event_tx(event_tx.clone())
         .with_controller(Arc::clone(&controller))
         .with_clock(Arc::clone(&clock))
         .with_scheduler(Arc::clone(&scheduler))
@@ -416,6 +454,17 @@ pub async fn run_join(
             event_tx,
         )
         .await;
+
+        // Graceful departure notification
+        let leave_env = Envelope {
+            sender: device.device_id,
+            payload: Message::PeerLeft(device.device_id),
+        };
+        if let Ok(bytes) = serialize(&leave_env) {
+            for addr in session.peer_socket_addrs() {
+                let _ = session_socket.send_to(&bytes, addr).await;
+            }
+        }
 
         receive_task.abort();
         clock_task.abort();
@@ -515,6 +564,17 @@ pub async fn run_join(
         }
     }
 
+    // Graceful departure notification
+    let leave_env = Envelope {
+        sender: device.device_id,
+        payload: Message::PeerLeft(device.device_id),
+    };
+    if let Ok(bytes) = serialize(&leave_env) {
+        for addr in session.peer_socket_addrs() {
+            let _ = session_socket.send_to(&bytes, addr).await;
+        }
+    }
+
     Ok(())
 }
 
@@ -536,19 +596,9 @@ pub async fn run_heartbeat_loop(
         };
         let bytes = serialize(&envelope)?;
 
-        if session.is_leader() {
-            for addr in session.peer_socket_addrs() {
-                let _ = socket.send_to(&bytes, addr).await;
-            }
-        } else {
-            let leader_id = session.leader_id();
-            if let Some((_, entry)) = session
-                .all_alive_peers()
-                .into_iter()
-                .find(|(id, _)| *id == leader_id)
-            {
-                let _ = socket.send_to(&bytes, entry.addr).await;
-            }
+        // Broadcast heartbeat to all peers (or leader)
+        for addr in session.peer_socket_addrs() {
+            let _ = socket.send_to(&bytes, addr).await;
         }
     }
 }
@@ -561,9 +611,10 @@ pub async fn run_role_manager_loop(
 ) -> Result<()> {
     loop {
         sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
+        let timeout = Duration::from_millis(config.heartbeat_timeout_ms);
+
         if session.is_leader() {
-            let (expired, _) =
-                session.prune_and_appoint(Duration::from_millis(config.heartbeat_timeout_ms));
+            let (expired, _) = session.prune_and_appoint(timeout);
             for dead_peer in expired {
                 let envelope = Envelope {
                     sender,
@@ -573,6 +624,33 @@ pub async fn run_role_manager_loop(
                     for addr in session.peer_socket_addrs() {
                         let _ = socket.send_to(&bytes, addr).await;
                     }
+                }
+            }
+        } else {
+            // Follower monitoring: check if leader or other peers timed out
+            let leader_id = session.leader_id();
+            let expired = session.prune_and_appoint(timeout).0;
+
+            if expired.contains(&leader_id) {
+                // Leader timed out! Determine new leader deterministically
+                let live_infos: Vec<_> = session.all_alive_peers().into_iter().map(|(_, e)| e.info).collect();
+                let heir = crate::session::leader::appoint_successor(&live_infos, &session.self_info());
+
+                if heir == session.self_id() {
+                    // We won the election!
+                    session.promote_to_leader();
+                    let envelope = Envelope {
+                        sender,
+                        payload: Message::LeaderElected(heir),
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        for addr in session.peer_socket_addrs() {
+                            let _ = socket.send_to(&bytes, addr).await;
+                        }
+                    }
+                } else {
+                    // Another peer won the election
+                    session.set_leader_id(heir);
                 }
             }
         }

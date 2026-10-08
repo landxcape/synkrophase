@@ -13,7 +13,9 @@ use crate::sync::evaluator::DriftEvaluator;
 use crate::sync::scheduler::IntentScheduler;
 
 use rustyline_async::SharedWriter;
+use tokio::sync::mpsc;
 use crate::protocol::messages::Role;
+use crate::tui::AppEvent;
 
 pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
@@ -24,6 +26,7 @@ pub struct SessionMessageRuntime {
     controller: Option<Arc<dyn crate::controller::MediaController>>,
     clock: Option<Arc<ClockSync>>,
     stdout: Option<SharedWriter>,
+    event_tx: Option<mpsc::UnboundedSender<AppEvent>>,
     name: String,
 }
 
@@ -48,8 +51,14 @@ impl SessionMessageRuntime {
             controller: None,
             clock: None,
             stdout,
+            event_tx: None,
             name,
         }
+    }
+
+    pub fn with_event_tx(mut self, event_tx: mpsc::UnboundedSender<AppEvent>) -> Self {
+        self.event_tx = Some(event_tx);
+        self
     }
 
     pub fn with_follower_sync(mut self, follower_sync: Arc<FollowerSyncRuntime>) -> Self {
@@ -236,6 +245,19 @@ impl SessionMessageRuntime {
                 )
                 .await?;
 
+                // Broadcast PeerJoined to other peers so they add them to their registry immediately
+                let joined_env = Envelope {
+                    sender: self.session.self_id(),
+                    payload: Message::PeerJoined(peer_info.clone()),
+                };
+                if let Ok(bytes) = serialize(&joined_env) {
+                    for (peer_id, entry) in self.session.all_alive_peers() {
+                        if peer_id != envelope.sender && peer_id != self.session.self_id() {
+                            let _ = socket.send_to(&bytes, entry.addr).await;
+                        }
+                    }
+                }
+
                 // Notify other peers about the new arrival
                 let notification_msg = format!("{} joined the room.", name);
                 let notification_env = Envelope {
@@ -246,8 +268,6 @@ impl SessionMessageRuntime {
                 };
                 if let Ok(bytes) = serialize(&notification_env) {
                     for (peer_id, entry) in self.session.all_alive_peers() {
-                        // Don't send notification to the person who just joined (they got JoinAccepted)
-                        // and don't send to ourselves.
                         if peer_id != envelope.sender && peer_id != self.session.self_id() {
                             let _ = socket.send_to(&bytes, entry.addr).await;
                         }
@@ -262,6 +282,9 @@ impl SessionMessageRuntime {
                 current_anchor,
             } => {
                 print_event(self.stdout.as_ref(), "[System] Joined room successfully.");
+                if let Some(tx) = &self.event_tx {
+                    let _ = tx.send(AppEvent::Log("Joined room successfully.".into(), "System".into()));
+                }
                 self.session.accept_join_accepted(
                     envelope.sender,
                     src,
@@ -277,20 +300,40 @@ impl SessionMessageRuntime {
                 }
                 Ok(())
             }
-            Message::PeerJoined(_) => {
-                // Deprecated in favor of Notification broadcast
+            Message::PeerJoined(info) => {
+                if info.device_id != self.session.self_id() {
+                    self.session.record_peer_seen(info.clone());
+                    if let Some(tx) = &self.event_tx {
+                        let _ = tx.send(AppEvent::Log(format!("{} joined the room.", info.name), "System".into()));
+                    }
+                }
                 Ok(())
             }
             Message::PeerLeft(peer_id) => {
+                let peer_name = self.session.display_name(&peer_id);
+                print_event(
+                    self.stdout.as_ref(),
+                    &format!("[System] Peer left: {}", peer_name),
+                );
+                if let Some(tx) = &self.event_tx {
+                    let _ = tx.send(AppEvent::Log(format!("{} left the room.", peer_name), "System".into()));
+                }
+
+                // If we are leader, forward PeerLeft to all other peers so they prune their registries too
                 if self.session.is_leader() {
-                    let peer_name = self.session.display_name(&peer_id);
-                    if self.session.role() >= Role::Moderator {
-                        print_event(
-                            self.stdout.as_ref(),
-                            &format!("[System] Peer left: {}", peer_name),
-                        );
+                    let env = Envelope {
+                        sender: self.session.self_id(),
+                        payload: Message::PeerLeft(peer_id),
+                    };
+                    if let Ok(bytes) = serialize(&env) {
+                        for (p_id, entry) in self.session.all_alive_peers() {
+                            if p_id != peer_id && p_id != self.session.self_id() {
+                                let _ = socket.send_to(&bytes, entry.addr).await;
+                            }
+                        }
                     }
                 }
+
                 self.session.remove_peer(&peer_id);
                 Ok(())
             }
@@ -309,12 +352,17 @@ impl SessionMessageRuntime {
             }
             Message::LeaderElected(leader_id) => {
                 self.session.set_leader_id(leader_id);
-                if self.session.role() >= Role::Moderator {
-                    if leader_id == self.session.self_id() {
-                        print_event(self.stdout.as_ref(), "[System] You have been elected as the Leader!");
-                    } else {
-                        let name = self.session.display_name(&leader_id);
-                        print_event(self.stdout.as_ref(), &format!("[System] {} is now the Leader.", name));
+                if leader_id == self.session.self_id() {
+                    self.session.promote_to_leader();
+                    print_event(self.stdout.as_ref(), "[System] You have been elected as the Leader!");
+                    if let Some(tx) = &self.event_tx {
+                        let _ = tx.send(AppEvent::Log("You have been elected as the Leader!".into(), "System".into()));
+                    }
+                } else {
+                    let name = self.session.display_name(&leader_id);
+                    print_event(self.stdout.as_ref(), &format!("[System] {} is now the Leader.", name));
+                    if let Some(tx) = &self.event_tx {
+                        let _ = tx.send(AppEvent::Log(format!("{} is now the Leader.", name), "System".into()));
                     }
                 }
                 Ok(())

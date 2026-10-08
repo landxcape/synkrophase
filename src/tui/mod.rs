@@ -88,8 +88,10 @@ pub async fn run_tui(
     });
 
     while !app.should_quit {
-        // Update peer list from session registry
+        // Update peer list and role dynamically from session registry
         app.peers = app.session.all_alive_peers().into_iter().map(|(_, e)| e.info).collect();
+        app.role = app.session.role();
+        app.is_leader = app.session.is_leader();
 
         terminal.draw(|f| ui::render(f, &app))?;
 
