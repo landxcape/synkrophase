@@ -116,7 +116,11 @@ impl PeerRegistry {
 
     pub fn peer_addrs(&self) -> Vec<SocketAddr> {
         let peers = self.peers.read().unwrap();
-        peers.values().map(|entry| entry.addr).collect()
+        peers
+            .values()
+            .map(|entry| entry.addr)
+            .filter(|addr| addr.port() != 0 && !addr.ip().is_unspecified())
+            .collect()
     }
 
     pub fn mark_stale(&self, id: &Uuid, elapsed: Duration) {

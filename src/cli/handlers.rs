@@ -143,6 +143,15 @@ pub async fn run_host(
         async move { broadcaster.run_broadcast_loop(socket, sender).await }
     });
 
+    let heartbeat_task = tokio::spawn({
+        let session = Arc::clone(&session);
+        let socket = Arc::clone(&session_socket);
+        let sender = device.device_id;
+        let cfg = sync_config.clone();
+        let room = room_code.clone();
+        async move { run_heartbeat_loop(session, socket, sender, room, None, cfg).await }
+    });
+
     let role_manager_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
@@ -211,6 +220,7 @@ pub async fn run_host(
         receive_task.abort();
         clock_task.abort();
         broadcast_task.abort();
+        heartbeat_task.abort();
         role_manager_task.abort();
 
         return tui_res;
@@ -272,6 +282,11 @@ pub async fn run_host(
         res = broadcast_task => {
             if let Err(err) = res {
                 eprintln!("broadcast task failed: {err}");
+            }
+        }
+        res = heartbeat_task => {
+            if let Err(err) = res {
+                eprintln!("heartbeat task failed: {err}");
             }
         }
         res = role_manager_task => {
@@ -404,7 +419,7 @@ pub async fn run_join(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         let room = room_code.clone();
-        async move { run_heartbeat_loop(session, socket, sender, room, cfg).await }
+        async move { run_heartbeat_loop(session, socket, sender, room, Some(resolved_leader_addr), cfg).await }
     });
 
     let role_manager_task = tokio::spawn({
@@ -583,6 +598,7 @@ pub async fn run_heartbeat_loop(
     socket: Arc<UdpSocket>,
     sender: Uuid,
     room_code: String,
+    target_leader: Option<SocketAddr>,
     config: SyncConfig,
 ) -> Result<()> {
     loop {
@@ -596,9 +612,16 @@ pub async fn run_heartbeat_loop(
         };
         let bytes = serialize(&envelope)?;
 
-        // Broadcast heartbeat to all peers (or leader)
+        // Send to direct leader target if configured
+        if let Some(leader_addr) = target_leader {
+            let _ = socket.send_to(&bytes, leader_addr).await;
+        }
+
+        // Broadcast heartbeat to all registered peer addresses
         for addr in session.peer_socket_addrs() {
-            let _ = socket.send_to(&bytes, addr).await;
+            if Some(addr) != target_leader {
+                let _ = socket.send_to(&bytes, addr).await;
+            }
         }
     }
 }
