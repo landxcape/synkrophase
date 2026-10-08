@@ -42,9 +42,11 @@ async fn main() -> Result<()> {
             room_code,
             clock_port,
             session_port,
+            headless,
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
-            run_host(device, sync_config, room, clock_port, session_port).await
+            let is_headless = headless || cli.headless;
+            run_host(device, sync_config, room, clock_port, session_port, is_headless).await
         }
         Commands::Join {
             room_code,
@@ -52,7 +54,9 @@ async fn main() -> Result<()> {
             leader_id,
             leader_clock_port,
             session_port,
+            headless,
         } => {
+            let is_headless = headless || cli.headless;
             run_join(
                 device,
                 sync_config,
@@ -61,6 +65,7 @@ async fn main() -> Result<()> {
                 leader_id,
                 leader_clock_port,
                 session_port,
+                is_headless,
             )
             .await
         }

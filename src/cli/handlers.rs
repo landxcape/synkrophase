@@ -85,6 +85,7 @@ pub async fn run_host(
     room_code: String,
     clock_port: u16,
     session_port: u16,
+    headless: bool,
 ) -> Result<()> {
     let clock_socket =
         UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, clock_port)))
@@ -116,17 +117,17 @@ pub async fn run_host(
     ));
 
     let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());
-    let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
 
-    let runtime = SessionMessageRuntime::new(
-        Arc::clone(&session),
-        Some(stdout.clone()),
-        device.name.clone(),
-    )
-    .with_playback(Arc::clone(&playback))
-    .with_scheduler(Arc::clone(&scheduler))
-    .with_controller(Arc::clone(&controller))
-    .with_clock(Arc::clone(&clock));
+    let discovery = Discovery::new()?;
+    discovery.register_session(&room_code, device.device_id, session_port)?;
+
+    let local_ip = local_ip_address::local_ip()
+        .unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+
+    let clock_task = {
+        let clock = Arc::clone(&clock);
+        tokio::spawn(async move { clock.run_responder().await })
+    };
 
     let broadcaster = LeaderAnchorBroadcaster::new(
         Arc::clone(&session),
@@ -136,11 +137,75 @@ pub async fn run_host(
     )
     .with_controller(Arc::clone(&controller));
 
-    let discovery = Discovery::new()?;
-    discovery.register_session(&room_code, device.device_id, session_port)?;
+    let broadcast_task = tokio::spawn({
+        let socket = Arc::clone(&session_socket);
+        let sender = device.device_id;
+        async move { broadcaster.run_broadcast_loop(socket, sender).await }
+    });
 
-    let local_ip = local_ip_address::local_ip()
-        .unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    if !headless {
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let runtime = SessionMessageRuntime::new(
+            Arc::clone(&session),
+            None,
+            device.name.clone(),
+        )
+        .with_playback(Arc::clone(&playback))
+        .with_scheduler(Arc::clone(&scheduler))
+        .with_controller(Arc::clone(&controller))
+        .with_clock(Arc::clone(&clock));
+
+        let receive_task = tokio::spawn({
+            let socket = Arc::clone(&session_socket);
+            async move { runtime.run_receive_loop(socket).await }
+        });
+
+        // Initial welcome log in TUI
+        let _ = event_tx.send(crate::tui::AppEvent::Log(
+            format!("Room: {room_code} | Session: {session_port} | Clock: {clock_port}"),
+            "System".into(),
+        ));
+        let _ = event_tx.send(crate::tui::AppEvent::Log(
+            format!("Join: synkro join {room_code} --leader-addr {local_ip}:{session_port}"),
+            "System".into(),
+        ));
+
+        let tui_res = crate::tui::run_tui(
+            room_code,
+            device.name,
+            device.device_id,
+            crate::protocol::messages::Role::Leader,
+            Arc::clone(&session),
+            Arc::clone(&controller),
+            Arc::clone(&session_socket),
+            None,
+            Arc::clone(&clock),
+            Arc::clone(&scheduler),
+            event_rx,
+            event_tx,
+        )
+        .await;
+
+        let _ = discovery.unregister();
+        receive_task.abort();
+        clock_task.abort();
+        broadcast_task.abort();
+
+        return tui_res;
+    }
+
+    // Headless REPL mode
+    let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
+    let runtime = SessionMessageRuntime::new(
+        Arc::clone(&session),
+        Some(stdout.clone()),
+        device.name.clone(),
+    )
+    .with_playback(Arc::clone(&playback))
+    .with_scheduler(Arc::clone(&scheduler))
+    .with_controller(Arc::clone(&controller))
+    .with_clock(Arc::clone(&clock));
 
     crate::session::runtime::print_event(
         Some(&stdout),
@@ -153,15 +218,6 @@ pub async fn run_host(
     let receive_task = tokio::spawn({
         let socket = Arc::clone(&session_socket);
         async move { runtime.run_receive_loop(socket).await }
-    });
-    let clock_task = {
-        let clock = Arc::clone(&clock);
-        tokio::spawn(async move { clock.run_responder().await })
-    };
-    let broadcast_task = tokio::spawn({
-        let socket = Arc::clone(&session_socket);
-        let sender = device.device_id;
-        async move { broadcaster.run_broadcast_loop(socket, sender).await }
     });
 
     let repl_task = tokio::spawn({
@@ -213,6 +269,7 @@ pub async fn run_host(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_join(
     device: DeviceConfig,
     sync_config: SyncConfig,
@@ -221,6 +278,7 @@ pub async fn run_join(
     leader_id: Option<Uuid>,
     leader_clock_port: u16,
     session_port: u16,
+    headless: bool,
 ) -> Result<()> {
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;
@@ -275,26 +333,6 @@ pub async fn run_join(
         50_000,
     ));
 
-    let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
-
-    let runtime = SessionMessageRuntime::new(
-        Arc::clone(&session),
-        Some(stdout.clone()),
-        device.name.clone(),
-    )
-    .with_controller(Arc::clone(&controller))
-    .with_clock(Arc::clone(&clock))
-    .with_scheduler(Arc::clone(&scheduler))
-    .with_drift_evaluator(Arc::clone(&drift_evaluator));
-
-    crate::session::runtime::print_event(
-        Some(&stdout),
-        &format!(
-            "Joining room {room_code} as follower {} via leader {resolved_leader_addr}",
-            device.device_id
-        ),
-    );
-
     send_join_request(
         &session_socket,
         device.device_id,
@@ -304,10 +342,6 @@ pub async fn run_join(
     )
     .await?;
 
-    let receive_task = tokio::spawn({
-        let socket = Arc::clone(&session_socket);
-        async move { runtime.run_receive_loop(socket).await }
-    });
     let clock_task = {
         let clock = Arc::clone(&clock);
         tokio::spawn(async move { clock.run_responder().await })
@@ -342,6 +376,80 @@ pub async fn run_join(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         async move { run_role_manager_loop(session, socket, sender, cfg).await }
+    });
+
+    if !headless {
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let runtime = SessionMessageRuntime::new(
+            Arc::clone(&session),
+            None,
+            device.name.clone(),
+        )
+        .with_controller(Arc::clone(&controller))
+        .with_clock(Arc::clone(&clock))
+        .with_scheduler(Arc::clone(&scheduler))
+        .with_drift_evaluator(Arc::clone(&drift_evaluator));
+
+        let receive_task = tokio::spawn({
+            let socket = Arc::clone(&session_socket);
+            async move { runtime.run_receive_loop(socket).await }
+        });
+
+        let _ = event_tx.send(crate::tui::AppEvent::Log(
+            format!("Joining room {room_code} via {resolved_leader_addr}"),
+            "System".into(),
+        ));
+
+        let tui_res = crate::tui::run_tui(
+            room_code,
+            device.name,
+            device.device_id,
+            crate::protocol::messages::Role::Listener,
+            Arc::clone(&session),
+            Arc::clone(&controller),
+            Arc::clone(&session_socket),
+            Some(resolved_leader_addr),
+            Arc::clone(&clock),
+            Arc::clone(&scheduler),
+            event_rx,
+            event_tx,
+        )
+        .await;
+
+        receive_task.abort();
+        clock_task.abort();
+        drift_task.abort();
+        heartbeat_task.abort();
+        role_manager_task.abort();
+
+        return tui_res;
+    }
+
+    // Headless REPL mode
+    let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
+
+    let runtime = SessionMessageRuntime::new(
+        Arc::clone(&session),
+        Some(stdout.clone()),
+        device.name.clone(),
+    )
+    .with_controller(Arc::clone(&controller))
+    .with_clock(Arc::clone(&clock))
+    .with_scheduler(Arc::clone(&scheduler))
+    .with_drift_evaluator(Arc::clone(&drift_evaluator));
+
+    crate::session::runtime::print_event(
+        Some(&stdout),
+        &format!(
+            "Joining room {room_code} as follower {} via leader {resolved_leader_addr}",
+            device.device_id
+        ),
+    );
+
+    let receive_task = tokio::spawn({
+        let socket = Arc::clone(&session_socket);
+        async move { runtime.run_receive_loop(socket).await }
     });
 
     let repl_task = tokio::spawn({

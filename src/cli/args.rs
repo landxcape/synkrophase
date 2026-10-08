@@ -17,6 +17,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub ephemeral: bool,
 
+    /// Run in headless background mode without launching the interactive TUI
+    #[arg(long, global = true)]
+    pub headless: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -36,6 +40,9 @@ pub enum Commands {
         /// UDP port for session traffic.
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
+        /// Run in headless mode without TUI.
+        #[arg(long)]
+        headless: bool,
     },
     /// Join an existing session and run follower sync loop.
     Join {
@@ -53,6 +60,9 @@ pub enum Commands {
         /// Local UDP port for session traffic.
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
+        /// Run in headless mode without TUI.
+        #[arg(long)]
+        headless: bool,
     },
     /// Send play intent across the room.
     Play {

@@ -7,3 +7,4 @@ pub mod protocol;
 pub mod queue;
 pub mod session;
 pub mod sync;
+pub mod tui;
