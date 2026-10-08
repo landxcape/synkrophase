@@ -42,7 +42,7 @@ mod tests {
         };
 
         // Moderator (id2) should win even though id1 is lower UUID
-        assert_eq!(appoint_successor(&[info2.clone()], &info1), id2);
+        assert_eq!(appoint_successor(std::slice::from_ref(&info2), &info1), id2);
     }
 
     #[test]

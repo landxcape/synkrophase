@@ -739,30 +739,32 @@ async fn run_queue_display(
     let mut buf = [0u8; 8 * 1024];
     match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
         Ok(Ok((len, _))) => {
-            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
-                if let Message::JoinAccepted { queue_state, .. } = envelope.payload {
-                    println!("Queue for room {room_code}:");
-                    if let Some(current) = queue_state.current {
+            if let Ok(Envelope {
+                payload: Message::JoinAccepted { queue_state, .. },
+                ..
+            }) = synkrophase::protocol::messages::deserialize(&buf[..len])
+            {
+                println!("Queue for room {room_code}:");
+                if let Some(current) = queue_state.current {
+                    println!(
+                        "  [PLAYING] {} (ID: {}, requested by {})",
+                        current.title, current.id, current.requested_by
+                    );
+                } else {
+                    println!("  [PLAYING] None");
+                }
+                if queue_state.upcoming.is_empty() {
+                    println!("  (Upcoming queue is empty)");
+                } else {
+                    println!("\n  Upcoming:");
+                    for (i, track) in queue_state.upcoming.iter().enumerate() {
                         println!(
-                            "  [PLAYING] {} (ID: {}, requested by {})",
-                            current.title, current.id, current.requested_by
+                            "  {}. {} (ID: {}, requested by {})",
+                            i + 1,
+                            track.title,
+                            track.id,
+                            track.requested_by
                         );
-                    } else {
-                        println!("  [PLAYING] None");
-                    }
-                    if queue_state.upcoming.is_empty() {
-                        println!("  (Upcoming queue is empty)");
-                    } else {
-                        println!("\n  Upcoming:");
-                        for (i, track) in queue_state.upcoming.iter().enumerate() {
-                            println!(
-                                "  {}. {} (ID: {}, requested by {})",
-                                i + 1,
-                                track.title,
-                                track.id,
-                                track.requested_by
-                            );
-                        }
                     }
                 }
             }
@@ -799,15 +801,15 @@ async fn run_sync_status(
     while start.elapsed() < duration {
         let remaining = duration.saturating_sub(start.elapsed());
         if let Ok(Ok((len, _))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
+            && let Ok(Envelope {
+                payload: Message::JoinAccepted { peer_list, .. },
+                ..
+            }) = synkrophase::protocol::messages::deserialize(&buf[..len])
         {
-            if let Ok(envelope) = synkrophase::protocol::messages::deserialize(&buf[..len]) {
-                if let Message::JoinAccepted { peer_list, .. } = envelope.payload {
-                    for peer in peer_list {
-                        peer_offsets.insert(peer.device_id, peer.clock_offset_us);
-                    }
-                    break;
-                }
+            for peer in peer_list {
+                peer_offsets.insert(peer.device_id, peer.clock_offset_us);
             }
+            break;
         }
     }
 
@@ -929,6 +931,7 @@ fn generated_room_code(id: Uuid) -> String {
     compact[..6].to_ascii_uppercase()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_host_repl(
     mut rl: rustyline_async::Readline,
     session: Arc<SessionState>,
