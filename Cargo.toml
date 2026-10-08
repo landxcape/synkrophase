@@ -2,6 +2,10 @@
 name = "synkrophase"
 version = "0.2.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "High-precision, player-agnostic external media controller synchronizer for local networks"
+repository = "https://github.com/landxcape/synkrophase"
+readme = "README.md"
 
 [[bin]]
 name = "synkro"

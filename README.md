@@ -1,7 +1,6 @@
 # Synkrophase
 
-[![Crates.io](https://img.shields.io/badge/crates.io-v0.2.0-orange.svg)](https://crates.io/crates/synkrophase)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](Cargo.toml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 **Synkrophase** is a high-precision, low-latency playback controller synchronizer for local networks written in Rust.
 
