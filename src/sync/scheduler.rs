@@ -1,20 +1,25 @@
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::sleep;
 
 use crate::controller::MediaController;
 use crate::error::Result;
 use crate::protocol::messages::{PlaybackAction, PlaybackIntent};
 use crate::sync::controller::ClockSource;
+use crate::sync::tracer::TimelineTracer;
 
 pub struct IntentScheduler {
     clock: Arc<dyn ClockSource>,
     controller: Arc<dyn MediaController>,
+    tracer: TimelineTracer,
 }
 
 impl IntentScheduler {
     pub fn new(clock: Arc<dyn ClockSource>, controller: Arc<dyn MediaController>) -> Self {
-        Self { clock, controller }
+        let tracer = TimelineTracer::new(Arc::clone(&clock));
+        Self {
+            clock,
+            controller,
+            tracer,
+        }
     }
 
     pub async fn execute_intent(&self, intent: &PlaybackIntent) -> Result<()> {
@@ -28,6 +33,7 @@ impl IntentScheduler {
             let target_lower = target_title.to_lowercase();
             let local_lower = local_meta.title.to_lowercase();
             if !local_lower.is_empty()
+                && !target_lower.is_empty()
                 && !local_lower.contains(&target_lower)
                 && !target_lower.contains(&local_lower)
             {
@@ -46,9 +52,8 @@ impl IntentScheduler {
         let fire_ref_time = intent.target_ref_time.saturating_sub(actuation_delay_us);
 
         if fire_ref_time > now {
-            // Arrived ahead of time: sleep until pre-dispatch fire time
-            let wait_us = fire_ref_time - now;
-            sleep(Duration::from_micros(wait_us)).await;
+            // Arrived ahead of time: wait until deadline using timeline tracer
+            self.tracer.wait_until_deadline(fire_ref_time).await;
 
             match intent.action {
                 PlaybackAction::Play => {

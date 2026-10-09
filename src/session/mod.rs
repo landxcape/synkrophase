@@ -281,6 +281,7 @@ impl SessionState {
             media_position_us: playback_status.position_us,
             playback_rate: playback_status.rate,
             is_playing: playback_status.is_playing,
+            track_title: playback_status.track_id.clone(),
         }))
     }
 

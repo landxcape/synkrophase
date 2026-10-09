@@ -89,9 +89,61 @@ impl LeaderAnchorBroadcaster {
     }
 
     pub async fn run_broadcast_loop(&self, socket: Arc<UdpSocket>, sender: Uuid) -> Result<()> {
+        let mut last_sample_ref_time: u64 = self.clock.reference_now();
+        let mut last_sample_pos_us: i64 = 0;
+        let mut last_track: Option<String> = None;
+        let mut last_broadcast_ref_time: u64 = 0;
+
         loop {
-            let _ = self.broadcast_once(&socket, sender).await;
-            sleep(Duration::from_secs(self.config.anchor_broadcast_secs)).await;
+            // Poll cadence: check active player state every 250ms
+            sleep(Duration::from_millis(250)).await;
+
+            let now_ref = self.clock.reference_now();
+            let mut should_broadcast = false;
+
+            if let Some(controller) = &self.controller
+                && let Ok(state) = controller.get_playback_state().await
+            {
+                let current_track = state.metadata.as_ref().map(|m| m.title.clone());
+
+                // Condition 1: Track changed in Spotify / Music!
+                if current_track != last_track && last_track.is_some() {
+                    tracing::info!(
+                        prev = ?last_track,
+                        curr = ?current_track,
+                        "Leader track changed in player, broadcasting immediate anchor"
+                    );
+                    should_broadcast = true;
+                }
+
+                // Condition 2: Timeline scrubbed (>1.5s position jump from continuous trajectory)
+                if state.is_playing && last_sample_pos_us > 0 {
+                    let elapsed_ref_us = now_ref.saturating_sub(last_sample_ref_time) as i64;
+                    let expected_pos_us = last_sample_pos_us + elapsed_ref_us;
+                    let diff_us = (state.position_us - expected_pos_us).abs();
+
+                    if diff_us > 1_500_000 {
+                        tracing::info!(
+                            jump_ms = diff_us / 1000,
+                            "Leader manual scrub detected in player, broadcasting immediate anchor"
+                        );
+                        should_broadcast = true;
+                    }
+                }
+
+                last_sample_ref_time = now_ref;
+                last_sample_pos_us = state.position_us;
+                last_track = current_track;
+            }
+
+            // Condition 3: Periodic heartbeat anchor (every anchor_broadcast_secs, default 1s)
+            let broadcast_interval_us = self.config.anchor_broadcast_secs * 1_000_000;
+            if should_broadcast
+                || now_ref.saturating_sub(last_broadcast_ref_time) >= broadcast_interval_us
+            {
+                let _ = self.broadcast_once(&socket, sender).await;
+                last_broadcast_ref_time = now_ref;
+            }
         }
     }
 }

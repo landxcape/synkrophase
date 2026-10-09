@@ -223,6 +223,7 @@ fn apply_message_updates_sync_anchor_state() {
         media_position_us: 20_000,
         playback_rate: 1.02,
         is_playing: true,
+        track_title: None,
     };
 
     session
@@ -251,6 +252,7 @@ fn leader_builds_sync_anchor_message_from_playback_status() {
             media_position_us: 111_000,
             playback_rate: 0.98,
             is_playing: true,
+            track_title: Some("track-1".into()),
         })
     );
 }

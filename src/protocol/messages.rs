@@ -124,6 +124,7 @@ pub struct SyncAnchor {
     pub media_position_us: i64,
     pub playback_rate: f32,
     pub is_playing: bool,
+    pub track_title: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -222,6 +223,7 @@ mod tests {
                 media_position_us: 50_000,
                 playback_rate: 1.02,
                 is_playing: true,
+                track_title: Some("Song Name".into()),
             }),
         };
 

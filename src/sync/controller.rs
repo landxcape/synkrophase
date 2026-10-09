@@ -309,6 +309,7 @@ mod tests {
             media_position_us: 100_000,
             playback_rate: 1.0,
             is_playing: true,
+            track_title: None,
         });
 
         assert_eq!(controller.evaluate(), SyncAction::InSync);
@@ -324,6 +325,7 @@ mod tests {
             media_position_us: 100_000,
             playback_rate: 1.0,
             is_playing: true,
+            track_title: None,
         });
 
         assert_eq!(controller.evaluate(), SyncAction::RestoreRate);
@@ -339,6 +341,7 @@ mod tests {
             media_position_us: 100_000,
             playback_rate: 1.0,
             is_playing: true,
+            track_title: None,
         });
 
         assert_eq!(controller.evaluate(), SyncAction::AdjustRate { rate: 0.95 });
@@ -354,6 +357,7 @@ mod tests {
             media_position_us: 100_000,
             playback_rate: 1.0,
             is_playing: true,
+            track_title: None,
         });
 
         assert_eq!(
