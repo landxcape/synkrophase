@@ -6,12 +6,12 @@
 **Synkrophase** is a high-precision, low-latency playback controller synchronizer for local networks written in Rust.
 
 Instead of streaming, decoding, or transmitting heavy audio/video media files over the network, Synkrophase operates exclusively as an external **control plane synchronizer**:
-- Interfaces directly with native media players (**macOS Spotify & Apple Music**, Linux MPRIS, Windows GSMTC).
+- **Primary Player Support**: Native **Spotify** and **Apple Music** integration on macOS with automatic active player detection and state prioritization.
 - Synchronizes LAN peer clocks using a high-precision **PTP-lite** UDP engine with sub-millisecond precision.
 - Broadcasts lightweight binary **playback intents** stamped with synchronized reference clock trigger targets.
-- Executes commands with microsecond accuracy, using **exact value-skip compensation** for network jitter or mid-track joins.
+- Pre-dispatches OS commands using local **actuation latency compensation** (accounting for macOS AppleScript delays) with exact **value-skip compensation** for network jitter or mid-track joins.
 - Features a full **interactive Ratatui terminal dashboard (TUI)** with an inline Unicode timeline slider, activity log, room chat, and a headless REPL mode fallback.
-- Offers **native track navigation** (next/previous) and **one-shot room volume synchronization**.
+- Offers **native track navigation** (next/previous), **one-shot room volume synchronization**, and automatic **clipboard room sharing**.
 
 ---
 
@@ -59,8 +59,9 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 ## Features
 
 - **Zero Media Overhead**: Never transmits raw audio or video files. CPU, memory, and bandwidth footprints remain negligible.
-- **Player Agnostic**: Controls desktop applications like Spotify or Apple Music directly without browser extensions, accounts, or custom builds.
-- **Interactive TUI Dashboard**: Full Ratatui terminal UI with live progress bar, peer status table, drift indicators, activity log, and integrated chat.
+- **Primary Player Focus (macOS)**: Optimized primarily for **Spotify** and **Apple Music** on macOS. Synkrophase automatically detects whichever player is actively playing, prioritizes it dynamically, and maintains state memory across pauses without manual configuration.
+- **Actuation Latency Compensation & Pre-Dispatch**: Autonomously profiles local OS command overhead (~150ms for AppleScript IPC) using exponential moving averages and pre-dispatches actions early, ensuring audio commands take physical effect right at the synchronized network timestamp.
+- **Interactive TUI Dashboard**: Full Ratatui terminal UI with live progress bar, peer status table with live clock offset telemetry, drift indicators, activity log, and integrated chat.
 - **Sub-Millisecond Clock Sync**: Built-in PTP-lite UDP engine measures round-trip time and clock offset across LAN peers.
 - **Exact Value-Skip Compensation**: If a command arrives late due to network delay or a peer connects mid-track, Synkrophase calculates temporal overshoot ($\Delta_{\text{late}} = \text{now} - T_{\text{target}}$) and seeks forward seamlessly.
 - **Native Track Controls**: Seamless next track (`n`) and previous track (`p`) navigation across room peers.
@@ -219,7 +220,7 @@ Synkrophase comes configured for low latency out of the box, with options custom
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--lead-time-ms` | `100` | Scheduled future execution window for intent delivery |
+| `--lead-time-ms` | `350` | Scheduled future execution window for intent delivery & pre-dispatch |
 | `--threshold-ms` | `50` | Maximum acceptable media drift before triggering micro-seeks |
 | `--heartbeat-ms` | `3000` | Peer health ping cadence |
 | `--heartbeat-timeout-ms`| `10000` | Timeout before declaring a peer dead and triggering succession |
