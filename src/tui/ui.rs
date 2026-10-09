@@ -288,8 +288,10 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
             } else {
                 p.name.clone()
             };
+            let short_id = p.device_id.to_string()[..8].to_string();
 
             Row::new(vec![
+                Span::styled(short_id, Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     name_display,
                     if is_self {
@@ -307,13 +309,14 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
     let peer_table = Table::new(
         rows,
         [
-            Constraint::Percentage(50),
+            Constraint::Length(9),
+            Constraint::Percentage(40),
             Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(35),
         ],
     )
     .header(
-        Row::new(vec!["Peer", "Role", "Offset"]).style(
+        Row::new(vec!["ID", "Peer", "Role", "Offset"]).style(
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),

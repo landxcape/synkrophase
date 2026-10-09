@@ -160,9 +160,9 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 │ 01:05 [━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●─────────────────────────────────────────────────] 03:07   (+12µs sync)        │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ Room Members ──────────────────────────────────────╮╭ Activity & Room Chat ─────────────────────────────────────────╮
-│Peer                     Role          Offset       ││[21:14:03] [System] Session started. Ready.                    │
-│Host (You)               Leader        Local        ││[21:14:03] [System] Room: TESTROOM | Session: 5871             │
-│Follower                 Moderator     +12µs        ││[21:14:09] [Follower] Hey everyone!                            │
+│ID       Peer            Role          Offset       ││[21:14:03] [System] Session started. Ready.                    │
+│e8a15b3a Host (You)      Leader        Reference    ││[21:14:03] [System] Room: TESTROOM | Session: 5871             │
+│a3f290d1 Follower        Moderator     +12µs        ││[21:14:09] [Follower] Hey everyone!                            │
 │                                                    ││[21:14:12] [Host] Sync locked.                                 │
 ╰────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
 [?] Help • [Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] VolSync • [c] Copy • [/] Chat/Cmd • [q] Quit
@@ -184,6 +184,7 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 - **`/next`**, **`/prev`** — Skip to next or previous track
 - **`/seek <seconds>`** — Jump to absolute timeline position (e.g. `/seek 90`)
 - **`/vol [0-100]`** — Sync room volume (e.g. `/vol 80`, or `/vol` to mirror self)
+- **`/transfer <peer>`** — Transfer room leadership by peer name or 8-char short UUID (Leader only)
 - **`/copy`**, **`/share`** — Copy room invitation / join command to clipboard
 - **`/help`** — Toggle help popup
 - **`/quit`** — Leave the room
