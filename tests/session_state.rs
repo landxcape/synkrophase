@@ -254,3 +254,54 @@ fn leader_builds_sync_anchor_message_from_playback_status() {
         })
     );
 }
+
+#[tokio::test]
+async fn test_dual_leader_demotes_higher_uuid() {
+    let lower_leader = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    let higher_leader = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+
+    let session = std::sync::Arc::new(SessionState::new_leader(
+        "ROOM42".into(),
+        higher_leader,
+        "HigherHost".into(),
+    ));
+
+    assert!(session.is_leader());
+
+    let runtime = synkrophase::session::runtime::SessionMessageRuntime::new(
+        session.clone(),
+        None,
+        "HigherHost".into(),
+    );
+
+    let socket = std::sync::Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+
+    let heartbeat = synkrophase::protocol::messages::Envelope {
+        sender: lower_leader,
+        payload: Message::Heartbeat {
+            room_code: "ROOM42".into(),
+            info: synkrophase::protocol::messages::PeerInfo {
+                device_id: lower_leader,
+                name: "LowerHost".into(),
+                clock_offset_us: 0,
+                last_seen: 0,
+                role: synkrophase::protocol::messages::Role::Leader,
+            },
+        },
+    };
+
+    let src = "127.0.0.1:9999".parse().unwrap();
+
+    runtime
+        .handle_incoming(&socket, src, heartbeat)
+        .await
+        .unwrap();
+
+    // Higher UUID should have demoted itself to Moderator
+    assert!(!session.is_leader());
+    assert_eq!(
+        session.role(),
+        synkrophase::protocol::messages::Role::Moderator
+    );
+    assert_eq!(session.leader_id(), lower_leader);
+}

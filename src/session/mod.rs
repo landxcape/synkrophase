@@ -124,6 +124,11 @@ impl SessionState {
         self.set_leader_id(self.self_id);
     }
 
+    pub fn demote_from_leader(&self, new_leader_id: Uuid) {
+        self.set_role(Role::Moderator);
+        self.set_leader_id(new_leader_id);
+    }
+
     pub fn room_code(&self) -> &str {
         &self.room_code
     }

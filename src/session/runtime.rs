@@ -181,7 +181,7 @@ impl SessionMessageRuntime {
         Ok(())
     }
 
-    async fn handle_incoming(
+    pub async fn handle_incoming(
         &self,
         socket: &UdpSocket,
         src: SocketAddr,
@@ -390,7 +390,27 @@ impl SessionMessageRuntime {
                 }
                 self.session.record_peer_heartbeat(info.clone(), src);
                 if info.role == Role::Leader {
-                    self.session.set_leader_id(envelope.sender);
+                    if self.session.is_leader() && envelope.sender != self.session.self_id() {
+                        // Split-brain detected: two nodes claim to be Leader!
+                        // Tie-break deterministically: lowest UUID wins leadership.
+                        if envelope.sender < self.session.self_id() {
+                            // Remote node has priority; demote local node to Moderator.
+                            self.session.demote_from_leader(envelope.sender);
+                            let remote_name = self.session.display_name(&envelope.sender);
+                            self.log_system(format!(
+                                "Dual-leader conflict resolved: recognized {} as Leader. Demoted to Moderator.",
+                                remote_name
+                            ));
+                        } else {
+                            // Local node has priority; ignore remote leader assertion.
+                            tracing::info!(
+                                remote_leader = %envelope.sender,
+                                "Ignoring conflicting leader claim from higher UUID peer"
+                            );
+                        }
+                    } else if !self.session.is_leader() {
+                        self.session.set_leader_id(envelope.sender);
+                    }
                 }
                 Ok(())
             }
