@@ -277,6 +277,24 @@ async fn handle_slash_command(
             };
             sync_room_volume(app, target_vol, socket, leader_addr).await?;
         }
+        "sync" => {
+            let offset = clock.offset();
+            let role_str = if app.is_leader {
+                "Leader (Local)"
+            } else {
+                "Follower"
+            };
+            app.add_log(
+                "System".to_string(),
+                format!(
+                    "Clock Sync Health: Offset: {:+}µs ({:.3}ms) | Role: {} | Actuation: ~{}ms",
+                    offset,
+                    offset as f64 / 1000.0,
+                    role_str,
+                    app.controller.estimated_actuation_delay_us() / 1000
+                ),
+            );
+        }
         "copy" | "share" | "invitation" | "join-cmd" => {
             copy_invitation_command(app);
         }

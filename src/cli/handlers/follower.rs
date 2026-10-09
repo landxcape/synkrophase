@@ -118,6 +118,20 @@ pub async fn run_join(
         }
     });
 
+    // Background periodic PTP offset refresh (every 10s)
+    let clock_refresh_task = tokio::spawn({
+        let clock = Arc::clone(&clock);
+        let session = Arc::clone(&session);
+        async move {
+            loop {
+                sleep(Duration::from_secs(10)).await;
+                if let Ok(offset) = clock.measure_offset(leader_clock_addr).await {
+                    session.set_clock_offset(offset);
+                }
+            }
+        }
+    });
+
     let heartbeat_task = tokio::spawn({
         let session = Arc::clone(&session);
         let socket = Arc::clone(&session_socket);
@@ -216,6 +230,7 @@ pub async fn run_join(
         receive_task.abort();
         drift_tui_task.abort();
         clock_task.abort();
+        clock_refresh_task.abort();
         drift_task.abort();
         heartbeat_task.abort();
         role_manager_task.abort();

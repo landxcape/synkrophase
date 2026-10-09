@@ -4,16 +4,23 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
-use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 lazy_static::lazy_static! {
-    static ref EPOCH: Instant = Instant::now();
+    static ref BASE_SYSTEM_TIME: std::time::SystemTime = std::time::SystemTime::now();
+    static ref BASE_INSTANT: std::time::Instant = std::time::Instant::now();
 }
 
 pub fn local_now() -> u64 {
-    Instant::now().duration_since(*EPOCH).as_micros() as u64
+    let sys_micros = BASE_SYSTEM_TIME
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time before Unix epoch")
+        .as_micros() as u64;
+    let mono_micros = std::time::Instant::now()
+        .duration_since(*BASE_INSTANT)
+        .as_micros() as u64;
+    sys_micros + mono_micros
 }
 
 pub struct ClockSync {

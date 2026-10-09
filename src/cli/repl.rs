@@ -25,6 +25,7 @@ pub enum ReplCommand {
     Queue,
     Skip,
     Copy,
+    Sync,
     Help,
     Exit,
     Chat(String),
@@ -62,6 +63,7 @@ impl ReplCommand {
                 | "copy"
                 | "share"
                 | "invitation"
+                | "sync"
                 | "help"
                 | "exit"
                 | "quit"
@@ -95,6 +97,7 @@ impl ReplCommand {
                 "queue" => Self::Queue,
                 "skip" => Self::Skip,
                 "copy" | "share" | "invitation" => Self::Copy,
+                "sync" => Self::Sync,
                 "help" => Self::Help,
                 "exit" | "quit" => Self::Exit,
                 _ => Self::Help,
@@ -387,10 +390,22 @@ pub async fn run_host_repl(
                     }
                 }
             }
+            ReplCommand::Sync => {
+                let offset = clock.offset();
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    &format!(
+                        "[System] Clock Sync Health: Offset: {:+}µs ({:.3}ms) | Role: Leader (Local) | Actuation Delay: ~{}ms",
+                        offset,
+                        offset as f64 / 1000.0,
+                        controller.estimated_actuation_delay_us() / 1000
+                    ),
+                );
+            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, status, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, sync, status, exit",
                 );
             }
             ReplCommand::Exit => {
@@ -430,7 +445,7 @@ pub async fn run_follower_repl(
     name: String,
     leader_addr: SocketAddr,
     controller: Arc<dyn MediaController>,
-    _clock: Arc<ClockSync>,
+    clock: Arc<ClockSync>,
     _scheduler: Arc<IntentScheduler>,
     stdout: SharedWriter,
 ) -> Result<()> {
@@ -591,10 +606,22 @@ pub async fn run_follower_repl(
                     }
                 }
             }
+            ReplCommand::Sync => {
+                let offset = clock.offset();
+                crate::session::runtime::print_event(
+                    Some(&stdout),
+                    &format!(
+                        "[Follower] Clock Sync Health: Offset: {:+}µs ({:.3}ms) | Role: Follower | Actuation Delay: ~{}ms",
+                        offset,
+                        offset as f64 / 1000.0,
+                        controller.estimated_actuation_delay_us() / 1000
+                    ),
+                );
+            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, status, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, sync, status, exit",
                 );
             }
             ReplCommand::Exit => {

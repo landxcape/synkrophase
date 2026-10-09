@@ -582,6 +582,10 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
             Span::raw("Sync room volume (e.g. /vol 80 or /vol to mirror self)"),
         ]),
         Line::from(vec![
+            Span::styled("  /sync         ", Style::default().fg(Color::Green)),
+            Span::raw("Display clock synchronization health and offset"),
+        ]),
+        Line::from(vec![
             Span::styled("  /copy, /share ", Style::default().fg(Color::Green)),
             Span::raw("Copy room invitation / join command to clipboard"),
         ]),
