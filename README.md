@@ -67,7 +67,9 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 - **Native Track Controls**: Seamless next track (`n`) and previous track (`p`) navigation across room peers.
 - **One-Shot Room Volume Sync**: Broadcast host volume across all connected devices in one touch (`v` or `/vol`).
 - **Autonomous Follower Filtering**: Followers verify their active player track against incoming intents; if playing another track, followers gracefully skip execution without interrupting peers.
-- **Automatic Host Failover**: Deterministic leader succession ensures playback synchronization continues uninterrupted if the room host leaves.
+- **Dynamic Leadership Transfer**: Hand off room host duties on the fly via `/transfer <peer|uuid>` in the TUI, REPL, or `synkro transfer <room> <peer>` CLI.
+- **Adaptive Rolling Drift Smoothing**: Outlier-resistant rolling median window filter eliminates jitter from AppleScript polling spikes while guaranteeing drift stays within ±50ms.
+- **Automatic Host Failover**: Deterministic leader succession ensures playback synchronization continues uninterrupted if the room host leaves or disconnects.
 
 ---
 
