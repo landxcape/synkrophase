@@ -113,3 +113,30 @@ async fn test_intent_scheduler_autonomous_filtering_skips_mismatched_track() {
     assert!(!state.is_playing);
     assert_eq!(state.position_us, 0);
 }
+
+#[tokio::test]
+async fn test_intent_scheduler_predispatch_with_actuation_delay() {
+    // Current clock is at 1_000_000 us
+    let clock = Arc::new(TestClock::new(1_000_000));
+    let controller = Arc::new(MockMediaController::new());
+    // Simulate an actuation delay of 150_000 us (150ms)
+    controller.set_actuation_delay_us(150_000);
+
+    let scheduler = IntentScheduler::new(clock, controller.clone());
+
+    // Target ref time is 1_150_000 us (+150ms).
+    // fire_ref_time = 1_150_000 - 150_000 = 1_000_000 <= now.
+    // Scheduler should fire immediately rather than sleeping for 150ms!
+    let intent = PlaybackIntent {
+        action: PlaybackAction::Play,
+        target_ref_time: 1_150_000,
+        position_us: 5_000_000,
+        track_title: None,
+    };
+
+    scheduler.execute_intent(&intent).await.unwrap();
+
+    let state = controller.get_playback_state().await.unwrap();
+    assert!(state.is_playing);
+    assert_eq!(state.position_us, 5_000_000);
+}

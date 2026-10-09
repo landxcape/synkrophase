@@ -4,16 +4,24 @@ use tokio::sync::RwLock;
 use super::{MediaController, PlaybackState, TrackMetadata};
 use crate::error::Result;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 #[derive(Default, Clone)]
 pub struct MockMediaController {
     state: Arc<RwLock<PlaybackState>>,
+    actuation_delay_us: Arc<AtomicU64>,
 }
 
 impl MockMediaController {
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(PlaybackState::default())),
+            actuation_delay_us: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    pub fn set_actuation_delay_us(&self, delay_us: u64) {
+        self.actuation_delay_us.store(delay_us, Ordering::Relaxed);
     }
 
     pub async fn set_track(&self, metadata: Option<TrackMetadata>) {
@@ -75,5 +83,9 @@ impl MediaController for MockMediaController {
 
     async fn set_volume(&self, _volume: u8) -> Result<()> {
         Ok(())
+    }
+
+    fn estimated_actuation_delay_us(&self) -> u64 {
+        self.actuation_delay_us.load(Ordering::Relaxed)
     }
 }

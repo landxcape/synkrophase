@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 pub const DEFAULT_CLOCK_PORT: u16 = 5870;
 pub const DEFAULT_SESSION_PORT: u16 = 5871;
-pub const DEFAULT_LEAD_TIME_US: u64 = 100_000; // 100ms dynamic lead time
+pub const DEFAULT_LEAD_TIME_US: u64 = 350_000; // 350ms dynamic lead time for pre-dispatch & OS actuation
 
 #[derive(Parser, Debug)]
 #[command(

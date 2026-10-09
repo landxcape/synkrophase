@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::time::Instant;
 
 use super::{MediaController, PlaybackState, TrackMetadata};
 use crate::error::{Result, SynkroError};
@@ -9,9 +10,13 @@ const PLAYER_AUTO: u8 = 0;
 const PLAYER_SPOTIFY: u8 = 1;
 const PLAYER_MUSIC: u8 = 2;
 
+// Default initial assumption for macOS osascript execution is ~150ms
+const DEFAULT_OSASCRIPT_DELAY_US: u64 = 150_000;
+
 #[derive(Debug, Clone)]
 pub struct MacOsMediaController {
     last_player: Arc<AtomicU8>,
+    actuation_delay_us: Arc<AtomicU64>,
 }
 
 impl Default for MacOsMediaController {
@@ -24,7 +29,15 @@ impl MacOsMediaController {
     pub fn new() -> Self {
         Self {
             last_player: Arc::new(AtomicU8::new(PLAYER_AUTO)),
+            actuation_delay_us: Arc::new(AtomicU64::new(DEFAULT_OSASCRIPT_DELAY_US)),
         }
+    }
+
+    fn record_actuation_time(&self, elapsed_us: u64) {
+        // Exponential moving average: new_delay = (prev * 8 + elapsed * 2) / 10
+        let prev = self.actuation_delay_us.load(Ordering::Relaxed);
+        let updated = (prev * 8 + elapsed_us * 2) / 10;
+        self.actuation_delay_us.store(updated, Ordering::Relaxed);
     }
 
     fn run_osascript(script: &str) -> std::result::Result<String, std::io::Error> {
@@ -235,8 +248,11 @@ impl MediaController for MacOsMediaController {
 
     async fn play(&self) -> Result<()> {
         let script = self.action_script("play");
+        let this = self.clone();
         tokio::task::spawn_blocking(move || {
+            let start = Instant::now();
             let _ = Self::run_osascript(&script);
+            this.record_actuation_time(start.elapsed().as_micros() as u64);
             Ok(())
         })
         .await
@@ -245,8 +261,11 @@ impl MediaController for MacOsMediaController {
 
     async fn pause(&self) -> Result<()> {
         let script = self.action_script("pause");
+        let this = self.clone();
         tokio::task::spawn_blocking(move || {
+            let start = Instant::now();
             let _ = Self::run_osascript(&script);
+            this.record_actuation_time(start.elapsed().as_micros() as u64);
             Ok(())
         })
         .await
@@ -256,8 +275,11 @@ impl MediaController for MacOsMediaController {
     async fn seek_to(&self, position_us: i64) -> Result<()> {
         let seconds = (position_us as f64) / 1_000_000.0;
         let script = self.action_script(&format!("set player position to {seconds}"));
+        let this = self.clone();
         tokio::task::spawn_blocking(move || {
+            let start = Instant::now();
             let _ = Self::run_osascript(&script);
+            this.record_actuation_time(start.elapsed().as_micros() as u64);
             Ok(())
         })
         .await
@@ -311,5 +333,9 @@ impl MediaController for MacOsMediaController {
         })
         .await
         .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
+
+    fn estimated_actuation_delay_us(&self) -> u64 {
+        self.actuation_delay_us.load(Ordering::Relaxed)
     }
 }

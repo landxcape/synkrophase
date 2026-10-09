@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::net::UdpSocket;
 
 use super::app::{InputMode, TuiApp};
+use crate::cli::args::DEFAULT_LEAD_TIME_US;
 use crate::clock::sync::ClockSync;
 use crate::error::Result;
 use crate::protocol::messages::{Envelope, Message, PlaybackAction, PlaybackIntent, serialize};
@@ -146,7 +147,7 @@ async fn send_playback_action(
 ) -> Result<()> {
     if app.is_leader {
         let now = clock.reference_now();
-        let target_ref_time = now + 100_000;
+        let target_ref_time = now + DEFAULT_LEAD_TIME_US;
         let title = app.playback.metadata.as_ref().map(|m| m.title.clone());
         let pos = match action {
             PlaybackAction::Seek { target_position_us } => target_position_us,

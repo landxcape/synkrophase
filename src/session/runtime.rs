@@ -787,13 +787,13 @@ impl SessionMessageRuntime {
             }
             Message::Intent(mut intent) => {
                 if self.session.is_leader() && envelope.sender != self.session.self_id() {
-                    // Follower requested an intent! Leader schedules it for T+100ms on the synced clock
+                    // Follower requested an intent! Leader schedules it for T+lead_time on the synced clock
                     let now = if let Some(clock) = &self.clock {
                         clock.reference_now()
                     } else {
                         intent.target_ref_time
                     };
-                    intent.target_ref_time = now + 100_000;
+                    intent.target_ref_time = now + crate::cli::args::DEFAULT_LEAD_TIME_US;
 
                     // If track_title or position is unset, sample the leader's active track
                     if let Some(controller) = &self.controller

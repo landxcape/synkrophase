@@ -40,12 +40,14 @@ impl IntentScheduler {
             }
         }
 
-        // 2. Scheduled Trigger / Exact Value Skip
+        // 2. Scheduled Trigger with Pre-Dispatch Actuation Compensation
         let now = self.clock.reference_now();
+        let actuation_delay_us = self.controller.estimated_actuation_delay_us();
+        let fire_ref_time = intent.target_ref_time.saturating_sub(actuation_delay_us);
 
-        if intent.target_ref_time > now {
-            // Arrived ahead of time: high-precision sleep until target time
-            let wait_us = intent.target_ref_time - now;
+        if fire_ref_time > now {
+            // Arrived ahead of time: sleep until pre-dispatch fire time
+            let wait_us = fire_ref_time - now;
             sleep(Duration::from_micros(wait_us)).await;
 
             match intent.action {
@@ -68,8 +70,30 @@ impl IntentScheduler {
                     self.controller.previous_track().await?;
                 }
             }
+        } else if now <= intent.target_ref_time {
+            // Fire immediately: between fire_ref_time and target_ref_time (partial actuation buffer)
+            match intent.action {
+                PlaybackAction::Play => {
+                    if intent.position_us > 0 {
+                        self.controller.seek_to(intent.position_us).await?;
+                    }
+                    self.controller.play().await?;
+                }
+                PlaybackAction::Pause => {
+                    self.controller.pause().await?;
+                }
+                PlaybackAction::Seek { target_position_us } => {
+                    self.controller.seek_to(target_position_us).await?;
+                }
+                PlaybackAction::NextTrack => {
+                    self.controller.next_track().await?;
+                }
+                PlaybackAction::PreviousTrack => {
+                    self.controller.previous_track().await?;
+                }
+            }
         } else {
-            // Overdue arrival / mid-track join
+            // Overdue arrival / mid-track join: target_ref_time was in the past
             let overshoot_us = (now - intent.target_ref_time) as i64;
 
             match intent.action {

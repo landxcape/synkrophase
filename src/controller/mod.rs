@@ -60,4 +60,10 @@ pub trait MediaController: Send + Sync {
 
     /// Set audio output volume (0-100%).
     async fn set_volume(&self, volume: u8) -> Result<()>;
+
+    /// Estimated execution latency (in microseconds) for controller commands
+    /// (e.g. OS IPC, AppleScript, MPRIS delays) to allow pre-dispatching.
+    fn estimated_actuation_delay_us(&self) -> u64 {
+        0
+    }
 }

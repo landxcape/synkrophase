@@ -207,8 +207,9 @@ pub async fn run_host_repl(
                 crate::session::runtime::print_event(
                     Some(&stdout),
                     &format!(
-                        "[System] Play intent scheduled for {:?} at T+100ms",
-                        title.unwrap_or_else(|| "active track".into())
+                        "[System] Play intent scheduled for {:?} at T+{}ms",
+                        title.unwrap_or_else(|| "active track".into()),
+                        DEFAULT_LEAD_TIME_US / 1000
                     ),
                 );
             }
@@ -238,7 +239,10 @@ pub async fn run_host_repl(
 
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "[System] Pause intent scheduled at T+100ms",
+                    &format!(
+                        "[System] Pause intent scheduled at T+{}ms",
+                        DEFAULT_LEAD_TIME_US / 1000
+                    ),
                 );
             }
             ReplCommand::Seek(sec) => {
@@ -269,7 +273,11 @@ pub async fn run_host_repl(
 
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    &format!("[System] Seek to {:.2}s scheduled at T+100ms", sec),
+                    &format!(
+                        "[System] Seek to {:.2}s scheduled at T+{}ms",
+                        sec,
+                        DEFAULT_LEAD_TIME_US / 1000
+                    ),
                 );
             }
             ReplCommand::Next | ReplCommand::Skip => {
@@ -295,7 +303,10 @@ pub async fn run_host_repl(
                 let _ = scheduler.execute_intent(&intent).await;
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "[System] Next track scheduled at T+100ms",
+                    &format!(
+                        "[System] Next track scheduled at T+{}ms",
+                        DEFAULT_LEAD_TIME_US / 1000
+                    ),
                 );
             }
             ReplCommand::Prev => {
@@ -321,7 +332,10 @@ pub async fn run_host_repl(
                 let _ = scheduler.execute_intent(&intent).await;
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "[System] Previous track scheduled at T+100ms",
+                    &format!(
+                        "[System] Previous track scheduled at T+{}ms",
+                        DEFAULT_LEAD_TIME_US / 1000
+                    ),
                 );
             }
             ReplCommand::Volume(target_vol) => {
