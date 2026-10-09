@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
@@ -28,7 +29,8 @@ pub struct DriftEvaluator {
     controller: Arc<dyn MediaController>,
     threshold_us: u64,
     notify_event: Arc<Notify>,
-    last_seek: std::sync::Mutex<Option<std::time::Instant>>,
+    last_seek: Mutex<Option<std::time::Instant>>,
+    drift_history: Mutex<VecDeque<i64>>,
 }
 
 impl DriftEvaluator {
@@ -42,7 +44,8 @@ impl DriftEvaluator {
             controller,
             threshold_us,
             notify_event: Arc::new(Notify::new()),
-            last_seek: std::sync::Mutex::new(None),
+            last_seek: Mutex::new(None),
+            drift_history: Mutex::new(VecDeque::with_capacity(5)),
         }
     }
 
@@ -52,6 +55,18 @@ impl DriftEvaluator {
 
     pub fn trigger_immediate(&self) {
         self.notify_event.notify_one();
+    }
+
+    fn push_and_median_drift(&self, raw_drift: i64) -> i64 {
+        let mut history = self.drift_history.lock().unwrap();
+        if history.len() >= 5 {
+            history.pop_front();
+        }
+        history.push_back(raw_drift);
+
+        let mut sorted: Vec<i64> = history.iter().copied().collect();
+        sorted.sort_unstable();
+        sorted[sorted.len() / 2]
     }
 
     pub async fn evaluate_drift(&self, anchor: &SyncAnchor) -> Result<(i64, u8, String)> {
@@ -68,22 +83,23 @@ impl DriftEvaluator {
             * anchor.playback_rate as f64) as i64;
         let expected_position_us = anchor.media_position_us + elapsed_us;
 
-        let drift_us = local_state.position_us - expected_position_us;
-        let drift_abs = drift_us.unsigned_abs();
+        let raw_drift_us = local_state.position_us - expected_position_us;
+        let smoothed_drift_us = self.push_and_median_drift(raw_drift_us);
+        let drift_abs = smoothed_drift_us.unsigned_abs();
 
         if drift_abs <= self.threshold_us {
-            Ok((drift_us, 1, "Locked (<50ms)".to_string()))
+            Ok((smoothed_drift_us, 1, "Locked (<50ms)".to_string()))
         } else if drift_abs < 200_000 {
             Ok((
-                drift_us,
+                smoothed_drift_us,
                 2,
-                format!("Nudging ({:+0.1}ms)", (drift_us as f64) / 1000.0),
+                format!("Nudging ({:+0.1}ms)", (smoothed_drift_us as f64) / 1000.0),
             ))
         } else {
             Ok((
-                drift_us,
+                smoothed_drift_us,
                 3,
-                format!("Drifting ({:+0.1}ms)", (drift_us as f64) / 1000.0),
+                format!("Drifting ({:+0.1}ms)", (smoothed_drift_us as f64) / 1000.0),
             ))
         }
     }

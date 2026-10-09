@@ -122,11 +122,14 @@ impl SessionState {
     pub fn promote_to_leader(&self) {
         self.set_role(Role::Leader);
         self.set_leader_id(self.self_id);
+        self.peers.set_role(&self.self_id, Role::Leader);
     }
 
     pub fn demote_from_leader(&self, new_leader_id: Uuid) {
         self.set_role(Role::Moderator);
         self.set_leader_id(new_leader_id);
+        self.peers.set_role(&self.self_id, Role::Moderator);
+        self.peers.set_role(&new_leader_id, Role::Leader);
     }
 
     pub fn room_code(&self) -> &str {
@@ -161,6 +164,10 @@ impl SessionState {
 
     pub fn peer_ids(&self) -> Vec<Uuid> {
         self.peers.peer_ids()
+    }
+
+    pub fn peer_infos(&self) -> Vec<PeerInfo> {
+        self.peers.peer_infos()
     }
 
     pub fn display_name(&self, id: &Uuid) -> String {

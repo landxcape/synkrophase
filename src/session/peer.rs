@@ -73,6 +73,13 @@ impl PeerRegistry {
         peers.get(id).map(|entry| entry.info.role)
     }
 
+    pub fn set_role(&self, id: &Uuid, role: Role) {
+        let mut peers = self.peers.write().unwrap();
+        if let Some(entry) = peers.get_mut(id) {
+            entry.info.role = role;
+        }
+    }
+
     pub fn all_alive(&self) -> Vec<(Uuid, PeerEntry)> {
         let peers = self.peers.read().unwrap();
         peers

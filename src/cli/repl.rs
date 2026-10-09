@@ -25,6 +25,7 @@ pub enum ReplCommand {
     Queue,
     Skip,
     Copy,
+    Transfer(String),
     Sync,
     Help,
     Exit,
@@ -63,6 +64,7 @@ impl ReplCommand {
                 | "copy"
                 | "share"
                 | "invitation"
+                | "transfer"
                 | "sync"
                 | "help"
                 | "exit"
@@ -97,6 +99,13 @@ impl ReplCommand {
                 "queue" => Self::Queue,
                 "skip" => Self::Skip,
                 "copy" | "share" | "invitation" => Self::Copy,
+                "transfer" => {
+                    if parts.len() > 1 {
+                        Self::Transfer(parts[1..].join(" "))
+                    } else {
+                        Self::Help
+                    }
+                }
                 "sync" => Self::Sync,
                 "help" => Self::Help,
                 "exit" | "quit" => Self::Exit,
@@ -392,20 +401,64 @@ pub async fn run_host_repl(
             }
             ReplCommand::Sync => {
                 let offset = clock.offset();
+                let formatted = crate::clock::format_offset_smart(offset);
                 crate::session::runtime::print_event(
                     Some(&stdout),
                     &format!(
-                        "[System] Clock Sync Health: Offset: {:+}µs ({:.3}ms) | Role: Leader (Local) | Actuation Delay: ~{}ms",
-                        offset,
-                        offset as f64 / 1000.0,
+                        "[System] Clock Sync Health: Offset: {} | Role: Leader (Local) | Actuation Delay: ~{}ms",
+                        formatted,
                         controller.estimated_actuation_delay_us() / 1000
                     ),
                 );
             }
+            ReplCommand::Transfer(target_query) => {
+                let query = target_query.trim().to_lowercase();
+                let matched_peer = session.peer_infos().into_iter().find(|p| {
+                    p.device_id.to_string().to_lowercase().starts_with(&query)
+                        || p.name.to_lowercase().contains(&query)
+                });
+
+                match matched_peer {
+                    Some(target) => {
+                        let envelope = Envelope {
+                            sender,
+                            payload: Message::TransferLeadership {
+                                to: target.device_id,
+                            },
+                        };
+                        if let Ok(bytes) = serialize(&envelope) {
+                            for addr in session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                        }
+                        session.demote_from_leader(target.device_id);
+                        let target_name = session.display_name(&target.device_id);
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[System] Leadership transferred to {target_name}"),
+                        );
+                        let elected_env = Envelope {
+                            sender,
+                            payload: Message::LeaderElected(target.device_id),
+                        };
+                        if let Ok(bytes) = serialize(&elected_env) {
+                            for addr in session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                        }
+                    }
+                    None => {
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[System] No peer matching '{query}' found in room"),
+                        );
+                    }
+                }
+            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, sync, status, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, transfer <peer>, sync, status, exit",
                 );
             }
             ReplCommand::Exit => {
@@ -608,20 +661,54 @@ pub async fn run_follower_repl(
             }
             ReplCommand::Sync => {
                 let offset = clock.offset();
+                let formatted = crate::clock::format_offset_smart(offset);
                 crate::session::runtime::print_event(
                     Some(&stdout),
                     &format!(
-                        "[Follower] Clock Sync Health: Offset: {:+}µs ({:.3}ms) | Role: Follower | Actuation Delay: ~{}ms",
-                        offset,
-                        offset as f64 / 1000.0,
+                        "[Follower] Clock Sync Health: Offset: {} | Role: Follower | Actuation Delay: ~{}ms",
+                        formatted,
                         controller.estimated_actuation_delay_us() / 1000
                     ),
                 );
             }
+            ReplCommand::Transfer(target_query) => {
+                let query = target_query.trim().to_lowercase();
+                let matched_peer = session.peer_infos().into_iter().find(|p| {
+                    p.device_id.to_string().to_lowercase().starts_with(&query)
+                        || p.name.to_lowercase().contains(&query)
+                });
+
+                match matched_peer {
+                    Some(target) => {
+                        let envelope = Envelope {
+                            sender,
+                            payload: Message::TransferLeadership {
+                                to: target.device_id,
+                            },
+                        };
+                        if let Ok(bytes) = serialize(&envelope) {
+                            let _ = socket.send_to(&bytes, leader_addr).await;
+                            crate::session::runtime::print_event(
+                                Some(&stdout),
+                                &format!(
+                                    "[Follower] Requested leadership transfer to {}",
+                                    target.name
+                                ),
+                            );
+                        }
+                    }
+                    None => {
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[Follower] No peer matching '{query}' found in room"),
+                        );
+                    }
+                }
+            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, sync, status, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, transfer <peer>, sync, status, exit",
                 );
             }
             ReplCommand::Exit => {

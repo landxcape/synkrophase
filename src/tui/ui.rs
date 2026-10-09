@@ -206,7 +206,8 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
             2 => Color::Yellow,
             _ => Color::Red,
         };
-        (format!("   ({:+}µs sync)", app.drift.offset_us), color)
+        let formatted = crate::clock::format_offset_smart(app.drift.offset_us);
+        (format!("   ({} sync)", formatted), color)
     };
 
     // Overhead: " " (1) + cur_str (5) + " [" (2) + "] " (2) + total_str (5) + sync_badge_str (~16) = ~31
@@ -272,9 +273,15 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
                 crate::protocol::messages::Role::Listener => "Listener",
             };
             let offset_str = if is_self {
-                "Local".to_string()
+                if app.is_leader {
+                    "Local (Ref)".to_string()
+                } else {
+                    crate::clock::format_offset_smart(p.clock_offset_us)
+                }
+            } else if p.role == crate::protocol::messages::Role::Leader {
+                "Reference".to_string()
             } else {
-                format!("{:+}µs", p.clock_offset_us)
+                crate::clock::format_offset_smart(p.clock_offset_us)
             };
             let name_display = if is_self {
                 format!("{} (You)", p.name)
@@ -588,6 +595,10 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
         Line::from(vec![
             Span::styled("  /copy, /share ", Style::default().fg(Color::Green)),
             Span::raw("Copy room invitation / join command to clipboard"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /transfer <p> ", Style::default().fg(Color::Green)),
+            Span::raw("Transfer leadership to peer name or UUID prefix"),
         ]),
         Line::from(vec![
             Span::styled("  /help         ", Style::default().fg(Color::Green)),

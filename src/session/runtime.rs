@@ -196,6 +196,7 @@ impl SessionMessageRuntime {
                     | Message::Play { .. }
                     | Message::QueueProposal(_)
                     | Message::Chat { .. }
+                    | Message::TransferLeadership { .. }
             );
             if !allowed {
                 return Ok(());
@@ -415,14 +416,28 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::LeaderElected(leader_id) => {
-                self.session.set_leader_id(leader_id);
                 if leader_id == self.session.self_id() {
                     self.session.promote_to_leader();
                     self.log_system("You have been elected as the Leader!");
                 } else {
+                    self.session.demote_from_leader(leader_id);
                     let name = self.session.display_name(&leader_id);
                     self.log_system(format!("{} is now the Leader.", name));
                 }
+                Ok(())
+            }
+            Message::TransferLeadership { to } => {
+                if !self.session.is_leader() {
+                    return Ok(());
+                }
+                if to == self.session.self_id() {
+                    return Ok(());
+                }
+                self.session.demote_from_leader(to);
+                let new_leader_name = self.session.display_name(&to);
+                self.log_system(format!("Leadership transferred to {}", new_leader_name));
+                self.send_to_peers(socket, Message::LeaderElected(to))
+                    .await?;
                 Ok(())
             }
             Message::QueueProposal(command) => {

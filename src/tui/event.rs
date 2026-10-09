@@ -21,8 +21,15 @@ pub async fn handle_key_event(
 ) -> Result<()> {
     match app.input_mode {
         InputMode::Normal => match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
+            KeyCode::Char('q') => {
                 app.should_quit = true;
+            }
+            KeyCode::Esc => {
+                if app.show_help {
+                    app.show_help = false;
+                } else {
+                    app.should_quit = true;
+                }
             }
             KeyCode::Char(' ') => {
                 // Toggle play / pause
@@ -284,12 +291,12 @@ async fn handle_slash_command(
             } else {
                 "Follower"
             };
+            let formatted_offset = crate::clock::format_offset_smart(offset);
             app.add_log(
                 "System".to_string(),
                 format!(
-                    "Clock Sync Health: Offset: {:+}µs ({:.3}ms) | Role: {} | Actuation: ~{}ms",
-                    offset,
-                    offset as f64 / 1000.0,
+                    "Clock Sync Health: Offset: {} | Role: {} | Actuation Delay: ~{}ms",
+                    formatted_offset,
                     role_str,
                     app.controller.estimated_actuation_delay_us() / 1000
                 ),
@@ -297,6 +304,71 @@ async fn handle_slash_command(
         }
         "copy" | "share" | "invitation" | "join-cmd" => {
             copy_invitation_command(app);
+        }
+        "transfer" => {
+            if parts.len() < 2 {
+                app.add_log(
+                    "System".to_string(),
+                    "Usage: /transfer <peer_name_or_uuid>".to_string(),
+                );
+                return Ok(());
+            }
+            let query = parts[1..].join(" ").to_lowercase();
+            // Search amongst other room peers (excluding self)
+            let matched_peer = app
+                .peers
+                .iter()
+                .filter(|p| p.device_id != app.self_id)
+                .find(|p| {
+                    p.device_id.to_string().to_lowercase().starts_with(&query)
+                        || p.name.to_lowercase().contains(&query)
+                })
+                .cloned();
+
+            match matched_peer {
+                Some(target) => {
+                    let envelope = Envelope {
+                        sender: app.self_id,
+                        payload: Message::TransferLeadership {
+                            to: target.device_id,
+                        },
+                    };
+                    if let Ok(bytes) = serialize(&envelope) {
+                        if app.is_leader {
+                            for addr in app.session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                            app.session.demote_from_leader(target.device_id);
+                            let target_name = app.session.display_name(&target.device_id);
+                            app.add_log(
+                                "System".to_string(),
+                                format!("Leadership transferred to {}", target_name),
+                            );
+                            let elected_env = Envelope {
+                                sender: app.self_id,
+                                payload: Message::LeaderElected(target.device_id),
+                            };
+                            if let Ok(bytes) = serialize(&elected_env) {
+                                for addr in app.session.peer_socket_addrs() {
+                                    let _ = socket.send_to(&bytes, addr).await;
+                                }
+                            }
+                        } else if let Some(addr) = leader_addr {
+                            let _ = socket.send_to(&bytes, addr).await;
+                            app.add_log(
+                                "System".to_string(),
+                                format!("Requested leadership transfer to {}", target.name),
+                            );
+                        }
+                    }
+                }
+                None => {
+                    app.add_log(
+                        "System".to_string(),
+                        format!("No peer matching '{}' found in room", query),
+                    );
+                }
+            }
         }
         "help" | "?" => {
             app.show_help = !app.show_help;
