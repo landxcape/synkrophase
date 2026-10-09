@@ -1,14 +1,30 @@
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use super::{MediaController, PlaybackState, TrackMetadata};
 use crate::error::{Result, SynkroError};
 
-#[derive(Default, Debug, Clone)]
-pub struct MacOsMediaController;
+const PLAYER_AUTO: u8 = 0;
+const PLAYER_SPOTIFY: u8 = 1;
+const PLAYER_MUSIC: u8 = 2;
+
+#[derive(Debug, Clone)]
+pub struct MacOsMediaController {
+    last_player: Arc<AtomicU8>,
+}
+
+impl Default for MacOsMediaController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl MacOsMediaController {
     pub fn new() -> Self {
-        Self
+        Self {
+            last_player: Arc::new(AtomicU8::new(PLAYER_AUTO)),
+        }
     }
 
     fn run_osascript(script: &str) -> std::result::Result<String, std::io::Error> {
@@ -23,84 +39,192 @@ impl MacOsMediaController {
         }
     }
 
-    fn query_active_player() -> Option<PlaybackState> {
-        let script = r#"
+    fn query_active_player(&self) -> Option<PlaybackState> {
+        let last = self.last_player.load(Ordering::Acquire);
+        let script = format!(
+            r#"
+            set sRunning to false
+            set mRunning to false
+            set sState to ""
+            set mState to ""
+
             if application "Spotify" is running then
+                set sRunning to true
+                try
+                    tell application "Spotify" to set sState to (player state as string)
+                end try
+            end if
+
+            if application "Music" is running then
+                set mRunning to true
+                try
+                    tell application "Music" to set mState to (player state as string)
+                end try
+            end if
+
+            -- Rule 1: Actively playing player takes absolute precedence
+            if sRunning and sState is "playing" then
                 tell application "Spotify"
-                    set pState to player state as string
                     set pPos to player position
                     set tName to name of current track
                     set tArtist to artist of current track
                     set tAlbum to album of current track
                     set tDur to (duration of current track) / 1000
-                    return pState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
                 end tell
-            else if application "Music" is running then
+            else if mRunning and mState is "playing" then
                 tell application "Music"
-                    set pState to player state as string
                     set pPos to player position
                     set tName to name of current track
                     set tArtist to artist of current track
                     set tAlbum to album of current track
                     set tDur to duration of current track
-                    return pState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                end tell
+            -- Rule 2: Fall back to last active player if running
+            else if {last} = 2 and mRunning and mState is not "" then
+                tell application "Music"
+                    set pPos to player position
+                    set tName to name of current track
+                    set tArtist to artist of current track
+                    set tAlbum to album of current track
+                    set tDur to duration of current track
+                    return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                end tell
+            else if {last} = 1 and sRunning and sState is not "" then
+                tell application "Spotify"
+                    set pPos to player position
+                    set tName to name of current track
+                    set tArtist to artist of current track
+                    set tAlbum to album of current track
+                    set tDur to (duration of current track) / 1000
+                    return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                end tell
+            -- Rule 3: Whichever player is running and responsive
+            else if sRunning and sState is not "" then
+                tell application "Spotify"
+                    set pPos to player position
+                    set tName to name of current track
+                    set tArtist to artist of current track
+                    set tAlbum to album of current track
+                    set tDur to (duration of current track) / 1000
+                    return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                end tell
+            else if mRunning and mState is not "" then
+                tell application "Music"
+                    set pPos to player position
+                    set tName to name of current track
+                    set tArtist to artist of current track
+                    set tAlbum to album of current track
+                    set tDur to duration of current track
+                    return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
                 end tell
             else
                 return "none"
             end if
-        "#;
+            "#
+        );
 
-        let output = Self::run_osascript(script).ok()?;
+        let output = Self::run_osascript(&script).ok()?;
         if output == "none" || output.is_empty() {
             return None;
         }
-        Self::parse_script_output(&output)
+
+        let (player_id, state) = Self::parse_script_output(&output)?;
+        self.last_player.store(player_id, Ordering::Release);
+        Some(state)
     }
 
-    fn parse_script_output(output: &str) -> Option<PlaybackState> {
+    fn parse_script_output(output: &str) -> Option<(u8, PlaybackState)> {
         let parts: Vec<&str> = output.split("|||").collect();
-        if parts.len() < 6 {
+        if parts.len() < 7 {
             return None;
         }
 
-        let is_playing = parts[0].eq_ignore_ascii_case("playing");
-        let position_sec: f64 = parts[1].parse().unwrap_or(0.0);
-        let title = parts[2].to_string();
-        let artist = if parts[3].is_empty() {
-            None
-        } else {
-            Some(parts[3].to_string())
+        let player_id = match parts[0] {
+            "spotify" => PLAYER_SPOTIFY,
+            "music" => PLAYER_MUSIC,
+            _ => PLAYER_AUTO,
         };
-        let album = if parts[4].is_empty() {
+
+        let is_playing = parts[1].eq_ignore_ascii_case("playing");
+        let position_sec: f64 = parts[2].parse().unwrap_or(0.0);
+        let title = parts[3].to_string();
+        let artist = if parts[4].is_empty() {
             None
         } else {
             Some(parts[4].to_string())
         };
-        let duration_sec: f64 = parts[5].parse().unwrap_or(0.0);
+        let album = if parts[5].is_empty() {
+            None
+        } else {
+            Some(parts[5].to_string())
+        };
+        let duration_sec: f64 = parts[6].parse().unwrap_or(0.0);
 
-        Some(PlaybackState {
-            is_playing,
-            position_us: (position_sec * 1_000_000.0) as i64,
-            rate: 1.0,
-            metadata: Some(TrackMetadata {
-                title,
-                artist,
-                album,
-                duration_us: if duration_sec > 0.0 {
-                    Some((duration_sec * 1_000_000.0) as u64)
-                } else {
-                    None
-                },
-            }),
-        })
+        Some((
+            player_id,
+            PlaybackState {
+                is_playing,
+                position_us: (position_sec * 1_000_000.0) as i64,
+                rate: 1.0,
+                metadata: Some(TrackMetadata {
+                    title,
+                    artist,
+                    album,
+                    duration_us: if duration_sec > 0.0 {
+                        Some((duration_sec * 1_000_000.0) as u64)
+                    } else {
+                        None
+                    },
+                }),
+            },
+        ))
+    }
+
+    fn action_script(&self, action_cmd: &str) -> String {
+        let last = self.last_player.load(Ordering::Acquire);
+        format!(
+            r#"
+            set sPlaying to false
+            set mPlaying to false
+
+            if application "Spotify" is running then
+                try
+                    tell application "Spotify" to set sPlaying to (player state is playing)
+                end try
+            end if
+
+            if application "Music" is running then
+                try
+                    tell application "Music" to set mPlaying to (player state is playing)
+                end try
+            end if
+
+            if sPlaying then
+                tell application "Spotify" to {action_cmd}
+            else if mPlaying then
+                tell application "Music" to {action_cmd}
+            else if {last} = 2 and application "Music" is running then
+                tell application "Music" to {action_cmd}
+            else if {last} = 1 and application "Spotify" is running then
+                tell application "Spotify" to {action_cmd}
+            else if application "Spotify" is running then
+                tell application "Spotify" to {action_cmd}
+            else if application "Music" is running then
+                tell application "Music" to {action_cmd}
+            end if
+            "#
+        )
     }
 }
 
 #[async_trait::async_trait]
 impl MediaController for MacOsMediaController {
     async fn get_playback_state(&self) -> Result<PlaybackState> {
-        tokio::task::spawn_blocking(|| {
-            if let Some(state) = Self::query_active_player() {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Some(state) = this.query_active_player() {
                 return Ok(state);
             }
             Ok(PlaybackState::default())
@@ -110,15 +234,9 @@ impl MediaController for MacOsMediaController {
     }
 
     async fn play(&self) -> Result<()> {
-        tokio::task::spawn_blocking(|| {
-            let script = r#"
-                if application "Spotify" is running then
-                    tell application "Spotify" to play
-                else if application "Music" is running then
-                    tell application "Music" to play
-                end if
-            "#;
-            let _ = Self::run_osascript(script);
+        let script = self.action_script("play");
+        tokio::task::spawn_blocking(move || {
+            let _ = Self::run_osascript(&script);
             Ok(())
         })
         .await
@@ -126,15 +244,9 @@ impl MediaController for MacOsMediaController {
     }
 
     async fn pause(&self) -> Result<()> {
-        tokio::task::spawn_blocking(|| {
-            let script = r#"
-                if application "Spotify" is running then
-                    tell application "Spotify" to pause
-                else if application "Music" is running then
-                    tell application "Music" to pause
-                end if
-            "#;
-            let _ = Self::run_osascript(script);
+        let script = self.action_script("pause");
+        tokio::task::spawn_blocking(move || {
+            let _ = Self::run_osascript(&script);
             Ok(())
         })
         .await
@@ -143,16 +255,8 @@ impl MediaController for MacOsMediaController {
 
     async fn seek_to(&self, position_us: i64) -> Result<()> {
         let seconds = (position_us as f64) / 1_000_000.0;
+        let script = self.action_script(&format!("set player position to {seconds}"));
         tokio::task::spawn_blocking(move || {
-            let script = format!(
-                r#"
-                if application "Spotify" is running then
-                    tell application "Spotify" to set player position to {seconds}
-                else if application "Music" is running then
-                    tell application "Music" to set player position to {seconds}
-                end if
-                "#
-            );
             let _ = Self::run_osascript(&script);
             Ok(())
         })
@@ -167,15 +271,9 @@ impl MediaController for MacOsMediaController {
     }
 
     async fn next_track(&self) -> Result<()> {
-        tokio::task::spawn_blocking(|| {
-            let script = r#"
-                if application "Spotify" is running then
-                    tell application "Spotify" to next track
-                else if application "Music" is running then
-                    tell application "Music" to next track
-                end if
-            "#;
-            let _ = Self::run_osascript(script);
+        let script = self.action_script("next track");
+        tokio::task::spawn_blocking(move || {
+            let _ = Self::run_osascript(&script);
             Ok(())
         })
         .await
@@ -183,15 +281,9 @@ impl MediaController for MacOsMediaController {
     }
 
     async fn previous_track(&self) -> Result<()> {
-        tokio::task::spawn_blocking(|| {
-            let script = r#"
-                if application "Spotify" is running then
-                    tell application "Spotify" to previous track
-                else if application "Music" is running then
-                    tell application "Music" to previous track
-                end if
-            "#;
-            let _ = Self::run_osascript(script);
+        let script = self.action_script("previous track");
+        tokio::task::spawn_blocking(move || {
+            let _ = Self::run_osascript(&script);
             Ok(())
         })
         .await
