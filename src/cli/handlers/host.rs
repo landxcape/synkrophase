@@ -100,7 +100,7 @@ pub async fn run_host(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         let room = room_code.clone();
-        async move { run_heartbeat_loop(session, socket, sender, room, None, cfg).await }
+        async move { run_heartbeat_loop(session, socket, sender, room, None, cfg, None).await }
     });
 
     let role_manager_task = tokio::spawn({

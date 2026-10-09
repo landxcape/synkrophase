@@ -18,23 +18,25 @@ impl IntentScheduler {
     }
 
     pub async fn execute_intent(&self, intent: &PlaybackIntent) -> Result<()> {
-        // 1. Follower Autonomous Self-Filtering
-        if let Some(target_title) = &intent.track_title {
-            let local_state = self.controller.get_playback_state().await?;
-            if let Some(local_meta) = local_state.metadata {
-                let target_lower = target_title.to_lowercase();
-                let local_lower = local_meta.title.to_lowercase();
-                if !local_lower.is_empty()
-                    && !local_lower.contains(&target_lower)
-                    && !target_lower.contains(&local_lower)
-                {
-                    tracing::info!(
-                        local_track = %local_meta.title,
-                        target_track = %target_title,
-                        "Skipping playback intent: active track mismatch"
-                    );
-                    return Ok(());
-                }
+        // 1. Follower Autonomous Self-Filtering: only if target track is explicitly specified
+        // and intent action is Play
+        if let Some(target_title) = &intent.track_title
+            && matches!(intent.action, PlaybackAction::Play)
+            && let Ok(local_state) = self.controller.get_playback_state().await
+            && let Some(local_meta) = local_state.metadata
+        {
+            let target_lower = target_title.to_lowercase();
+            let local_lower = local_meta.title.to_lowercase();
+            if !local_lower.is_empty()
+                && !local_lower.contains(&target_lower)
+                && !target_lower.contains(&local_lower)
+            {
+                tracing::info!(
+                    local_track = %local_meta.title,
+                    target_track = %target_title,
+                    "Skipping playback intent: active track mismatch"
+                );
+                return Ok(());
             }
         }
 
@@ -48,7 +50,9 @@ impl IntentScheduler {
 
             match intent.action {
                 PlaybackAction::Play => {
-                    self.controller.seek_to(intent.position_us).await?;
+                    if intent.position_us > 0 {
+                        self.controller.seek_to(intent.position_us).await?;
+                    }
                     self.controller.play().await?;
                 }
                 PlaybackAction::Pause => {
@@ -65,13 +69,15 @@ impl IntentScheduler {
                 }
             }
         } else {
-            // Overdue arrival / mid-track join: compute exact value skip
+            // Overdue arrival / mid-track join
             let overshoot_us = (now - intent.target_ref_time) as i64;
 
             match intent.action {
                 PlaybackAction::Play => {
-                    let compensated_position_us = intent.position_us + overshoot_us;
-                    self.controller.seek_to(compensated_position_us).await?;
+                    if intent.position_us > 0 {
+                        let compensated_position_us = intent.position_us + overshoot_us;
+                        self.controller.seek_to(compensated_position_us).await?;
+                    }
                     self.controller.play().await?;
                 }
                 PlaybackAction::Pause => {

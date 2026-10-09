@@ -23,55 +23,37 @@ impl MacOsMediaController {
         }
     }
 
-    fn is_process_running(app_name: &str) -> bool {
-        let script = format!(
-            "tell application \"System Events\" to (name of processes) contains \"{}\"",
-            app_name
-        );
-        Self::run_osascript(&script)
-            .map(|res| res.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-    }
-
-    fn query_spotify() -> Option<PlaybackState> {
-        if !Self::is_process_running("Spotify") {
-            return None;
-        }
-
+    fn query_active_player() -> Option<PlaybackState> {
         let script = r#"
-            tell application "Spotify"
-                set pState to player state as string
-                set pPos to player position
-                set tName to name of current track
-                set tArtist to artist of current track
-                set tAlbum to album of current track
-                set tDur to (duration of current track) / 1000
-                return pState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
-            end tell
+            if application "Spotify" is running then
+                tell application "Spotify"
+                    set pState to player state as string
+                    set pPos to player position
+                    set tName to name of current track
+                    set tArtist to artist of current track
+                    set tAlbum to album of current track
+                    set tDur to (duration of current track) / 1000
+                    return pState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                end tell
+            else if application "Music" is running then
+                tell application "Music"
+                    set pState to player state as string
+                    set pPos to player position
+                    set tName to name of current track
+                    set tArtist to artist of current track
+                    set tAlbum to album of current track
+                    set tDur to duration of current track
+                    return pState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                end tell
+            else
+                return "none"
+            end if
         "#;
 
         let output = Self::run_osascript(script).ok()?;
-        Self::parse_script_output(&output)
-    }
-
-    fn query_music() -> Option<PlaybackState> {
-        if !Self::is_process_running("Music") {
+        if output == "none" || output.is_empty() {
             return None;
         }
-
-        let script = r#"
-            tell application "Music"
-                set pState to player state as string
-                set pPos to player position
-                set tName to name of current track
-                set tArtist to artist of current track
-                set tAlbum to album of current track
-                set tDur to duration of current track
-                return pState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
-            end tell
-        "#;
-
-        let output = Self::run_osascript(script).ok()?;
         Self::parse_script_output(&output)
     }
 
@@ -118,10 +100,7 @@ impl MacOsMediaController {
 impl MediaController for MacOsMediaController {
     async fn get_playback_state(&self) -> Result<PlaybackState> {
         tokio::task::spawn_blocking(|| {
-            if let Some(state) = Self::query_spotify() {
-                return Ok(state);
-            }
-            if let Some(state) = Self::query_music() {
+            if let Some(state) = Self::query_active_player() {
                 return Ok(state);
             }
             Ok(PlaybackState::default())
@@ -132,11 +111,14 @@ impl MediaController for MacOsMediaController {
 
     async fn play(&self) -> Result<()> {
         tokio::task::spawn_blocking(|| {
-            if Self::is_process_running("Spotify") {
-                let _ = Self::run_osascript("tell application \"Spotify\" to play");
-            } else if Self::is_process_running("Music") {
-                let _ = Self::run_osascript("tell application \"Music\" to play");
-            }
+            let script = r#"
+                if application "Spotify" is running then
+                    tell application "Spotify" to play
+                else if application "Music" is running then
+                    tell application "Music" to play
+                end if
+            "#;
+            let _ = Self::run_osascript(script);
             Ok(())
         })
         .await
@@ -145,11 +127,14 @@ impl MediaController for MacOsMediaController {
 
     async fn pause(&self) -> Result<()> {
         tokio::task::spawn_blocking(|| {
-            if Self::is_process_running("Spotify") {
-                let _ = Self::run_osascript("tell application \"Spotify\" to pause");
-            } else if Self::is_process_running("Music") {
-                let _ = Self::run_osascript("tell application \"Music\" to pause");
-            }
+            let script = r#"
+                if application "Spotify" is running then
+                    tell application "Spotify" to pause
+                else if application "Music" is running then
+                    tell application "Music" to pause
+                end if
+            "#;
+            let _ = Self::run_osascript(script);
             Ok(())
         })
         .await
@@ -159,19 +144,16 @@ impl MediaController for MacOsMediaController {
     async fn seek_to(&self, position_us: i64) -> Result<()> {
         let seconds = (position_us as f64) / 1_000_000.0;
         tokio::task::spawn_blocking(move || {
-            if Self::is_process_running("Spotify") {
-                let script = format!(
-                    "tell application \"Spotify\" to set player position to {}",
-                    seconds
-                );
-                let _ = Self::run_osascript(&script);
-            } else if Self::is_process_running("Music") {
-                let script = format!(
-                    "tell application \"Music\" to set player position to {}",
-                    seconds
-                );
-                let _ = Self::run_osascript(&script);
-            }
+            let script = format!(
+                r#"
+                if application "Spotify" is running then
+                    tell application "Spotify" to set player position to {seconds}
+                else if application "Music" is running then
+                    tell application "Music" to set player position to {seconds}
+                end if
+                "#
+            );
+            let _ = Self::run_osascript(&script);
             Ok(())
         })
         .await
@@ -186,11 +168,14 @@ impl MediaController for MacOsMediaController {
 
     async fn next_track(&self) -> Result<()> {
         tokio::task::spawn_blocking(|| {
-            if Self::is_process_running("Spotify") {
-                let _ = Self::run_osascript("tell application \"Spotify\" to next track");
-            } else if Self::is_process_running("Music") {
-                let _ = Self::run_osascript("tell application \"Music\" to next track");
-            }
+            let script = r#"
+                if application "Spotify" is running then
+                    tell application "Spotify" to next track
+                else if application "Music" is running then
+                    tell application "Music" to next track
+                end if
+            "#;
+            let _ = Self::run_osascript(script);
             Ok(())
         })
         .await
@@ -199,11 +184,14 @@ impl MediaController for MacOsMediaController {
 
     async fn previous_track(&self) -> Result<()> {
         tokio::task::spawn_blocking(|| {
-            if Self::is_process_running("Spotify") {
-                let _ = Self::run_osascript("tell application \"Spotify\" to previous track");
-            } else if Self::is_process_running("Music") {
-                let _ = Self::run_osascript("tell application \"Music\" to previous track");
-            }
+            let script = r#"
+                if application "Spotify" is running then
+                    tell application "Spotify" to previous track
+                else if application "Music" is running then
+                    tell application "Music" to previous track
+                end if
+            "#;
+            let _ = Self::run_osascript(script);
             Ok(())
         })
         .await

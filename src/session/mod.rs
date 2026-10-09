@@ -1,4 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ pub struct SessionState {
     self_name: String,
     self_role: RwLock<Role>,
     leader_id: RwLock<Uuid>,
+    clock_offset_us: AtomicI64,
     peers: PeerRegistry,
     queue: QueueManager,
     current_anchor: RwLock<Option<SyncAnchor>>,
@@ -47,6 +49,7 @@ impl SessionState {
             self_name,
             self_role: RwLock::new(Role::Leader),
             leader_id: RwLock::new(self_id),
+            clock_offset_us: AtomicI64::new(0),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
             current_anchor: RwLock::new(None),
@@ -68,6 +71,7 @@ impl SessionState {
             self_name,
             self_role: RwLock::new(Role::Listener),
             leader_id: RwLock::new(leader_id),
+            clock_offset_us: AtomicI64::new(0),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
             current_anchor: RwLock::new(None),
@@ -132,11 +136,19 @@ impl SessionState {
         *self.leader_id.write().unwrap() = leader_id;
     }
 
+    pub fn clock_offset(&self) -> i64 {
+        self.clock_offset_us.load(Ordering::Acquire)
+    }
+
+    pub fn set_clock_offset(&self, offset_us: i64) {
+        self.clock_offset_us.store(offset_us, Ordering::Release);
+    }
+
     pub fn self_info(&self) -> PeerInfo {
         PeerInfo {
             device_id: self.self_id,
             name: self.self_name.clone(),
-            clock_offset_us: 0,
+            clock_offset_us: self.clock_offset(),
             last_seen: 0,
             role: self.role(),
         }

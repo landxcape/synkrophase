@@ -42,20 +42,6 @@ pub async fn run_join(
         device.device_id,
     ));
 
-    let leader_clock_addr = SocketAddr::new(resolved_leader_addr.ip(), leader_clock_port);
-    if let Err(err) = clock.measure_offset(leader_clock_addr).await {
-        eprintln!("clock offset measurement failed: {err}");
-    }
-
-    let session_socket = Arc::new({
-        let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::UNSPECIFIED,
-            session_port,
-        )))
-        .await?;
-        socket.set_broadcast(true)?;
-        socket
-    });
     let session = Arc::new(SessionState::from_join(
         room_code.clone(),
         device.device_id,
@@ -71,6 +57,26 @@ pub async fn run_join(
         }],
         QueueState::default(),
     ));
+
+    let leader_clock_addr = SocketAddr::new(resolved_leader_addr.ip(), leader_clock_port);
+    match clock.measure_offset(leader_clock_addr).await {
+        Ok(offset) => {
+            session.set_clock_offset(offset);
+        }
+        Err(err) => {
+            eprintln!("clock offset measurement failed: {err}");
+        }
+    }
+
+    let session_socket = Arc::new({
+        let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::UNSPECIFIED,
+            session_port,
+        )))
+        .await?;
+        socket.set_broadcast(true)?;
+        socket
+    });
 
     let controller = create_media_controller();
     let scheduler = Arc::new(IntentScheduler::new(
@@ -118,6 +124,7 @@ pub async fn run_join(
         let sender = device.device_id;
         let cfg = sync_config.clone();
         let room = room_code.clone();
+        let clock = Arc::clone(&clock);
         async move {
             run_heartbeat_loop(
                 session,
@@ -126,6 +133,7 @@ pub async fn run_join(
                 room,
                 Some(resolved_leader_addr),
                 cfg,
+                Some(clock),
             )
             .await
         }
@@ -151,20 +159,9 @@ pub async fn run_join(
                 loop {
                     sleep(Duration::from_millis(500)).await;
                     if let Some(anchor) = session.latest_sync_anchor()
-                        && let Ok(action) = evaluator.evaluate_and_reconcile(&anchor).await
+                        && let Ok((offset_us, zone, status)) =
+                            evaluator.evaluate_drift(&anchor).await
                     {
-                        let (offset_us, zone, status) = match action {
-                            crate::sync::evaluator::DriftAction::InSync { drift_us } => {
-                                (drift_us, 1, "Locked (<50ms)".to_string())
-                            }
-                            crate::sync::evaluator::DriftAction::FineTuneRate {
-                                rate,
-                                drift_us,
-                            } => (drift_us, 2, format!("Nudging (rate: {:.2})", rate)),
-                            crate::sync::evaluator::DriftAction::MicroSeek { drift_us, .. } => {
-                                (drift_us, 3, "Resyncing (Micro-seek)".to_string())
-                            }
-                        };
                         let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
                     }
                 }

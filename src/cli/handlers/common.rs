@@ -82,9 +82,13 @@ pub async fn run_heartbeat_loop(
     room_code: String,
     target_leader: Option<SocketAddr>,
     config: SyncConfig,
+    clock: Option<Arc<crate::clock::sync::ClockSync>>,
 ) -> Result<()> {
     loop {
         sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
+        if let Some(c) = &clock {
+            session.set_clock_offset(c.offset());
+        }
         let envelope = Envelope {
             sender,
             payload: Message::Heartbeat {

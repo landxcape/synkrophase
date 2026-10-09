@@ -54,6 +54,40 @@ impl DriftEvaluator {
         self.notify_event.notify_one();
     }
 
+    pub async fn evaluate_drift(&self, anchor: &SyncAnchor) -> Result<(i64, u8, String)> {
+        if !anchor.is_playing {
+            return Ok((0, 1, "Paused".to_string()));
+        }
+
+        let t_start = self.clock.reference_now();
+        let local_state = self.controller.get_playback_state().await?;
+        let t_end = self.clock.reference_now();
+        let query_midpoint = t_start + (t_end.saturating_sub(t_start)) / 2;
+
+        let elapsed_us = (query_midpoint.saturating_sub(anchor.reference_time) as f64
+            * anchor.playback_rate as f64) as i64;
+        let expected_position_us = anchor.media_position_us + elapsed_us;
+
+        let drift_us = local_state.position_us - expected_position_us;
+        let drift_abs = drift_us.unsigned_abs();
+
+        if drift_abs <= self.threshold_us {
+            Ok((drift_us, 1, "Locked (<50ms)".to_string()))
+        } else if drift_abs < 200_000 {
+            Ok((
+                drift_us,
+                2,
+                format!("Nudging ({:+0.1}ms)", (drift_us as f64) / 1000.0),
+            ))
+        } else {
+            Ok((
+                drift_us,
+                3,
+                format!("Drifting ({:+0.1}ms)", (drift_us as f64) / 1000.0),
+            ))
+        }
+    }
+
     pub async fn evaluate_and_reconcile(&self, anchor: &SyncAnchor) -> Result<DriftAction> {
         if !anchor.is_playing {
             return Ok(DriftAction::InSync { drift_us: 0 });
