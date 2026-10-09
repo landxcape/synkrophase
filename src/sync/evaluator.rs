@@ -147,7 +147,7 @@ impl DriftEvaluator {
         let should_seek = {
             let mut last = self.last_seek.lock().unwrap();
             match *last {
-                Some(prev) if now.duration_since(prev) < Duration::from_millis(2500) => false,
+                Some(prev) if now.duration_since(prev) < Duration::from_millis(1500) => false,
                 _ => {
                     *last = Some(now);
                     true
@@ -155,12 +155,17 @@ impl DriftEvaluator {
             }
         };
 
+        let actuation_delay_us = self.controller.estimated_actuation_delay_us() as i64;
+        let target_seek_position_us = expected_position_us + actuation_delay_us;
+
         if should_seek {
-            self.controller.seek_to(expected_position_us).await?;
+            self.controller.seek_to(target_seek_position_us).await?;
+            // Reset smoothed drift window so stale pre-seek samples don't contaminate post-seek evaluation
+            self.drift_history.lock().unwrap().clear();
         }
 
         Ok(DriftAction::MicroSeek {
-            target_position_us: expected_position_us,
+            target_position_us: target_seek_position_us,
             drift_us,
         })
     }

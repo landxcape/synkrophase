@@ -104,13 +104,13 @@ pub async fn run_join(
         tokio::spawn(async move { clock.run_responder().await })
     };
 
-    // Sparse background drift check (every 4s)
+    // Active background drift check (every 1s)
     let drift_task = tokio::spawn({
         let evaluator = Arc::clone(&drift_evaluator);
         let session = Arc::clone(&session);
         async move {
             loop {
-                sleep(Duration::from_secs(4)).await;
+                sleep(Duration::from_millis(1000)).await;
                 if let Some(anchor) = session.latest_sync_anchor() {
                     let _ = evaluator.evaluate_and_reconcile(&anchor).await;
                 }

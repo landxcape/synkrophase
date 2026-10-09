@@ -54,7 +54,7 @@ impl ClockSync {
     }
 
     pub async fn measure_offset(&self, target_addr: SocketAddr) -> crate::error::Result<i64> {
-        let mut offsets = Vec::with_capacity(self.config.clock_sample_count);
+        let mut samples = Vec::with_capacity(self.config.clock_sample_count);
         let mut buf = [0u8; 1024];
 
         for _ in 0..self.config.clock_sample_count {
@@ -91,18 +91,28 @@ impl ClockSync {
             if let Ok(Ok((rt1, t2, t3))) = recv_result {
                 let t4 = local_now();
                 let offset = ((t2 as i64 - rt1 as i64) + (t3 as i64 - t4 as i64)) / 2;
-                offsets.push(offset);
+                // Calculate Round-Trip Time (RTT): Total round trip minus remote processing time
+                let total_delay = t4.saturating_sub(rt1);
+                let remote_processing = t3.saturating_sub(t2);
+                let rtt = total_delay.saturating_sub(remote_processing);
+                samples.push((offset, rtt));
             }
         }
 
-        if offsets.is_empty() {
+        if samples.is_empty() {
             return Err(crate::error::SynkroError::ClockSync(
                 "failed to get any valid clock responses".into(),
             ));
         }
 
-        offsets.sort_unstable();
-        let median = offsets[offsets.len() / 2];
+        // Standard NTP/PTP best practice: sort samples by RTT (lowest latency has the least network jitter/asymmetry)
+        // and evaluate the median offset among the best 50% lowest-RTT samples.
+        samples.sort_by_key(|&(_, rtt)| rtt);
+        let best_count = samples.len().div_ceil(2).max(1);
+        let mut best_offsets: Vec<i64> =
+            samples[..best_count].iter().map(|&(off, _)| off).collect();
+        best_offsets.sort_unstable();
+        let median = best_offsets[best_offsets.len() / 2];
         self.set_offset(median);
 
         Ok(median)
