@@ -24,6 +24,7 @@ pub enum ReplCommand {
     Status,
     Queue,
     Skip,
+    Copy,
     Help,
     Exit,
     Chat(String),
@@ -58,6 +59,9 @@ impl ReplCommand {
                 | "status"
                 | "queue"
                 | "skip"
+                | "copy"
+                | "share"
+                | "invitation"
                 | "help"
                 | "exit"
                 | "quit"
@@ -90,6 +94,7 @@ impl ReplCommand {
                 "status" => Self::Status,
                 "queue" => Self::Queue,
                 "skip" => Self::Skip,
+                "copy" | "share" | "invitation" => Self::Copy,
                 "help" => Self::Help,
                 "exit" | "quit" => Self::Exit,
                 _ => Self::Help,
@@ -164,6 +169,7 @@ pub async fn run_host_repl(
     controller: Arc<dyn MediaController>,
     scheduler: Arc<IntentScheduler>,
     stdout: SharedWriter,
+    invitation: Option<crate::session::invitation::RoomInvitation>,
 ) -> Result<()> {
     loop {
         let line = rl.readline().await;
@@ -347,10 +353,30 @@ pub async fn run_host_repl(
             ReplCommand::Queue => {
                 print_queue(&session, Some(&stdout));
             }
+            ReplCommand::Copy => {
+                let text = match &invitation {
+                    Some(inv) => inv.cli_command(),
+                    None => format!("synkro join {}", session.room_code()),
+                };
+                match crate::session::invitation::copy_text_to_clipboard(&text) {
+                    Ok(()) => {
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[System] Copied join command to clipboard: {text}"),
+                        );
+                    }
+                    Err(e) => {
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[System] Failed to copy to clipboard: {e}. Command: {text}"),
+                        );
+                    }
+                }
+            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], status, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, status, exit",
                 );
             }
             ReplCommand::Exit => {
@@ -529,10 +555,32 @@ pub async fn run_follower_repl(
             ReplCommand::Queue => {
                 print_queue(&session, Some(&stdout));
             }
+            ReplCommand::Copy => {
+                let text = format!(
+                    "synkro join {} --leader-addr {leader_addr}",
+                    session.room_code()
+                );
+                match crate::session::invitation::copy_text_to_clipboard(&text) {
+                    Ok(()) => {
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!("[Follower] Copied join command to clipboard: {text}"),
+                        );
+                    }
+                    Err(e) => {
+                        crate::session::runtime::print_event(
+                            Some(&stdout),
+                            &format!(
+                                "[Follower] Failed to copy to clipboard: {e}. Command: {text}"
+                            ),
+                        );
+                    }
+                }
+            }
             ReplCommand::Help => {
                 crate::session::runtime::print_event(
                     Some(&stdout),
-                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], status, exit",
+                    "Available commands: play, pause, seek <sec>, next, prev, vol [0-100], copy, status, exit",
                 );
             }
             ReplCommand::Exit => {

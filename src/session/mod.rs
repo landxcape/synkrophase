@@ -15,6 +15,7 @@ use self::peer::{PeerEntry, PeerRegistry};
 
 pub mod broadcaster;
 pub mod discovery;
+pub mod invitation;
 pub mod leader;
 pub mod peer;
 pub mod runtime;

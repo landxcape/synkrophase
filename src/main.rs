@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
             clock_port,
             session_port,
             headless,
+            no_copy,
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
             let is_headless = headless || cli.headless;
@@ -56,6 +57,7 @@ async fn main() -> Result<()> {
                 clock_port,
                 session_port,
                 is_headless,
+                no_copy,
             )
             .await
         }

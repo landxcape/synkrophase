@@ -87,6 +87,9 @@ pub async fn handle_key_event(
             KeyCode::Char('v') => {
                 sync_room_volume(app, None, socket, leader_addr).await?;
             }
+            KeyCode::Char('c') => {
+                copy_invitation_command(app);
+            }
             KeyCode::Char('?') | KeyCode::Char('h') => {
                 app.show_help = !app.show_help;
             }
@@ -273,6 +276,9 @@ async fn handle_slash_command(
             };
             sync_room_volume(app, target_vol, socket, leader_addr).await?;
         }
+        "copy" | "share" | "invitation" | "join-cmd" => {
+            copy_invitation_command(app);
+        }
         "help" | "?" => {
             app.show_help = !app.show_help;
         }
@@ -358,4 +364,40 @@ async fn send_chat_message(
         app.add_log(format!("{} (You)", app.device_name), text);
     }
     Ok(())
+}
+
+fn copy_invitation_command(app: &mut TuiApp) {
+    if let Some(inv) = &app.invitation {
+        match inv.copy_to_clipboard() {
+            Ok(()) => {
+                app.add_log(
+                    "System".to_string(),
+                    "Join command copied to clipboard!".to_string(),
+                );
+            }
+            Err(err) => {
+                app.add_log(
+                    "System".to_string(),
+                    format!("Failed to copy to clipboard: {err}"),
+                );
+            }
+        }
+    } else {
+        // Fallback for follower or when invitation is not set
+        let cmd = format!("synkro join {}", app.room_code);
+        match crate::session::invitation::copy_text_to_clipboard(&cmd) {
+            Ok(()) => {
+                app.add_log(
+                    "System".to_string(),
+                    format!("Copied '{cmd}' to clipboard!"),
+                );
+            }
+            Err(err) => {
+                app.add_log(
+                    "System".to_string(),
+                    format!("Failed to copy to clipboard: {err}"),
+                );
+            }
+        }
+    }
 }

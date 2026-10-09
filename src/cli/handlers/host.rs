@@ -22,6 +22,7 @@ pub async fn run_host(
     clock_port: u16,
     session_port: u16,
     headless: bool,
+    no_copy: bool,
 ) -> Result<()> {
     let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::UNSPECIFIED,
@@ -61,6 +62,18 @@ pub async fn run_host(
 
     let local_ip =
         local_ip_address::local_ip().unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    let leader_sock_addr = SocketAddr::new(local_ip, session_port);
+    let invitation = crate::session::invitation::RoomInvitation::new(
+        room_code.clone(),
+        leader_sock_addr,
+        session_port,
+        clock_port,
+    );
+
+    let mut auto_copied = false;
+    if !no_copy && invitation.copy_to_clipboard().is_ok() {
+        auto_copied = true;
+    }
 
     let clock_task = {
         let clock = Arc::clone(&clock);
@@ -120,8 +133,14 @@ pub async fn run_host(
         });
         let _ = event_tx.send(crate::tui::AppEvent::Log {
             source: "System".into(),
-            text: format!("Join: synkro join {room_code} --leader-addr {local_ip}:{session_port}"),
+            text: format!("Join: {}", invitation.cli_command()),
         });
+        if auto_copied {
+            let _ = event_tx.send(crate::tui::AppEvent::Log {
+                source: "System".into(),
+                text: "Join command copied to clipboard!".into(),
+            });
+        }
 
         let tui_res = crate::tui::run_tui(
             room_code,
@@ -132,6 +151,7 @@ pub async fn run_host(
             Arc::clone(&controller),
             Arc::clone(&session_socket),
             None,
+            Some(invitation),
             Arc::clone(&clock),
             Arc::clone(&scheduler),
             event_rx,
@@ -172,11 +192,18 @@ pub async fn run_host(
     .with_controller(Arc::clone(&controller))
     .with_clock(Arc::clone(&clock));
 
+    let copy_msg = if auto_copied {
+        " (Copied to clipboard!)"
+    } else {
+        ""
+    };
+
     crate::session::runtime::print_event(
         Some(&stdout),
         &format!(
-            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n\nJoin with: synkro join {room_code} --leader-addr {local_ip}:{session_port}",
-            device.device_id
+            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n\nJoin with: {}{copy_msg}",
+            device.device_id,
+            invitation.cli_command()
         ),
     );
 
@@ -194,9 +221,10 @@ pub async fn run_host(
         let controller = Arc::clone(&controller);
         let scheduler = Arc::clone(&scheduler);
         let stdout = stdout.clone();
+        let invitation = Some(invitation);
         async move {
             run_host_repl(
-                rl, session, socket, sender, name, clock, controller, scheduler, stdout,
+                rl, session, socket, sender, name, clock, controller, scheduler, stdout, invitation,
             )
             .await
         }

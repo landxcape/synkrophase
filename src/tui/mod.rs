@@ -37,6 +37,7 @@ pub async fn run_tui(
     controller: Arc<dyn MediaController>,
     socket: Arc<UdpSocket>,
     leader_addr: Option<SocketAddr>,
+    invitation: Option<crate::session::invitation::RoomInvitation>,
     clock: Arc<ClockSync>,
     scheduler: Arc<IntentScheduler>,
     mut event_rx: mpsc::UnboundedReceiver<AppEvent>,
@@ -57,6 +58,7 @@ pub async fn run_tui(
         Arc::clone(&controller),
         event_tx.clone(),
     );
+    app.invitation = invitation;
 
     // Initial state query
     if let Ok(state) = controller.get_playback_state().await {

@@ -438,6 +438,13 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
                 ),
                 Span::raw("VolSync  • "),
                 Span::styled(
+                    "[c] ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Copy  • "),
+                Span::styled(
                     "[/] ",
                     Style::default()
                         .fg(Color::Cyan)
@@ -536,6 +543,10 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
             Span::raw("One-shot volume sync (broadcast host volume to room)"),
         ]),
         Line::from(vec![
+            Span::styled("  [c]         ", Style::default().fg(Color::Cyan)),
+            Span::raw("Copy room invitation / join command to clipboard"),
+        ]),
+        Line::from(vec![
             Span::styled("  [/] or [i]  ", Style::default().fg(Color::Cyan)),
             Span::raw("Open Chat & Slash Command input prompt"),
         ]),
@@ -569,6 +580,10 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
         Line::from(vec![
             Span::styled("  /vol [0-100]  ", Style::default().fg(Color::Green)),
             Span::raw("Sync room volume (e.g. /vol 80 or /vol to mirror self)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /copy, /share ", Style::default().fg(Color::Green)),
+            Span::raw("Copy room invitation / join command to clipboard"),
         ]),
         Line::from(vec![
             Span::styled("  /help         ", Style::default().fg(Color::Green)),

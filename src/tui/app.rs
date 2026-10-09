@@ -61,6 +61,7 @@ pub struct TuiApp {
     pub input_buffer: String,
     pub show_help: bool,
     pub should_quit: bool,
+    pub invitation: Option<crate::session::invitation::RoomInvitation>,
 
     pub session: Arc<SessionState>,
     pub controller: Arc<dyn MediaController>,
@@ -96,6 +97,7 @@ impl TuiApp {
             input_buffer: String::new(),
             show_help: false,
             should_quit: false,
+            invitation: None,
             session,
             controller,
             event_tx,

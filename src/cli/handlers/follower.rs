@@ -197,6 +197,7 @@ pub async fn run_join(
             Arc::clone(&controller),
             Arc::clone(&session_socket),
             Some(resolved_leader_addr),
+            None,
             Arc::clone(&clock),
             Arc::clone(&scheduler),
             event_rx,

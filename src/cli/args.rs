@@ -47,6 +47,9 @@ pub enum Commands {
         /// Run in headless mode without TUI.
         #[arg(long)]
         headless: bool,
+        /// Disable automatically copying the join command to system clipboard on launch.
+        #[arg(long)]
+        no_copy: bool,
     },
     /// Join an existing session and run follower sync loop.
     Join {

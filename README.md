@@ -164,7 +164,7 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 │Follower                 Moderator     +12µs        ││[21:14:09] [Follower] Hey everyone!                            │
 │                                                    ││[21:14:12] [Host] Sync locked.                                 │
 ╰────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
-[?] Help • [Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] VolSync • [/] Chat/Cmd • [q] Quit
+[?] Help • [Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] VolSync • [c] Copy • [/] Chat/Cmd • [q] Quit
 ```
 
 ### Hotkeys (Normal Mode)
@@ -173,6 +173,7 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 - **`[n]`** — Next track (Spotify / Apple Music)
 - **`[p]`** — Previous track (Spotify / Apple Music)
 - **`[v]`** — One-shot volume sync (broadcasts host volume to room)
+- **`[c]`** — Copy room invitation / join command to clipboard
 - **`[/]`** or **`[i]`** — Open Chat & Command input prompt
 - **`[?]`** or **`[h]`** — Open interactive Quick Reference help modal
 - **`[q]`** — Disconnect and quit
@@ -182,6 +183,7 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 - **`/next`**, **`/prev`** — Skip to next or previous track
 - **`/seek <seconds>`** — Jump to absolute timeline position (e.g. `/seek 90`)
 - **`/vol [0-100]`** — Sync room volume (e.g. `/vol 80`, or `/vol` to mirror self)
+- **`/copy`**, **`/share`** — Copy room invitation / join command to clipboard
 - **`/help`** — Toggle help popup
 - **`/quit`** — Leave the room
 
@@ -222,6 +224,7 @@ Synkrophase comes configured for low latency out of the box, with options custom
 | `--heartbeat-ms` | `3000` | Peer health ping cadence |
 | `--heartbeat-timeout-ms`| `10000` | Timeout before declaring a peer dead and triggering succession |
 | `--headless` | `false` | Run in headless REPL mode without terminal UI |
+| `--no-copy` | `false` | Disable automatic copying of the join command to system clipboard on host start |
 
 ---
 
