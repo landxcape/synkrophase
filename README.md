@@ -113,11 +113,11 @@ Output:
 ```text
 === Local Media Player Status ===
   Playing:  Yes
-  Position: 74.20s
-  Title:    Aerials
-  Artist:   System Of A Down
-  Album:    Toxicity
-  Duration: 235.00s
+  Position: 65.40s
+  Title:    Numb
+  Artist:   Linkin Park
+  Album:    Meteora
+  Duration: 187.00s
 ```
 
 ### 2. Host a Synchronization Room (Leader)
@@ -156,8 +156,8 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 ╭ Synkrophase • Room: TESTROOM • Role:  [LEADER]  • Device: Host ─────────────────────────────────────────────────────╮
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ Now Playing ────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ▶ Aerials   System Of A Down • Toxicity  [Playing]                                                                  │
-│ 01:24 [━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●─────────────────────────────────────────] 03:55   (+12µs sync)        │
+│ ▶ Numb   Linkin Park • Meteora  [Playing]                                                                           │
+│ 01:05 [━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●─────────────────────────────────────────────────] 03:07   (+12µs sync)        │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭ Room Members ──────────────────────────────────────╮╭ Activity & Room Chat ─────────────────────────────────────────╮
 │Peer                     Role          Offset       ││[21:14:03] [System] Session started. Ready.                    │
