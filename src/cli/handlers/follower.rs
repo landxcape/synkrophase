@@ -194,46 +194,55 @@ pub async fn run_join(
             async move { runtime.run_receive_loop(socket).await }
         });
 
+        let abort_handles = vec![
+            clock_task.abort_handle(),
+            drift_task.abort_handle(),
+            clock_refresh_task.abort_handle(),
+            heartbeat_task.abort_handle(),
+            role_manager_task.abort_handle(),
+            drift_tui_task.abort_handle(),
+            receive_task.abort_handle(),
+        ];
+
+        let (engine, mut command_rx) = crate::session::SynkroEngine::new(
+            Arc::clone(&session),
+            Arc::clone(&controller),
+            Arc::clone(&session_socket),
+            Some(resolved_leader_addr),
+            Arc::clone(&clock),
+            Arc::clone(&scheduler),
+            event_tx.clone(),
+            abort_handles,
+        );
+        let engine = Arc::new(engine);
+
+        // Command dispatcher task
+        let engine_cmd_worker = {
+            let engine = Arc::clone(&engine);
+            tokio::spawn(async move {
+                while let Some(cmd) = command_rx.recv().await {
+                    let _ = engine.execute_command(cmd).await;
+                }
+            })
+        };
+
         let _ = event_tx.send(crate::tui::AppEvent::Log {
             source: "System".into(),
             text: format!("Joining room {room_code} via {resolved_leader_addr}"),
         });
 
         let tui_res = crate::tui::run_tui(
+            Arc::clone(&engine),
             room_code,
             device.name,
-            device.device_id,
-            crate::protocol::messages::Role::Listener,
-            Arc::clone(&session),
-            Arc::clone(&controller),
-            Arc::clone(&session_socket),
-            Some(resolved_leader_addr),
             None,
-            Arc::clone(&clock),
-            Arc::clone(&scheduler),
             event_rx,
             event_tx,
         )
         .await;
 
-        // Graceful departure notification
-        let leave_env = Envelope {
-            sender: device.device_id,
-            payload: Message::PeerLeft(device.device_id),
-        };
-        if let Ok(bytes) = serialize(&leave_env) {
-            for addr in session.peer_socket_addrs() {
-                let _ = session_socket.send_to(&bytes, addr).await;
-            }
-        }
-
-        receive_task.abort();
-        drift_tui_task.abort();
-        clock_task.abort();
-        clock_refresh_task.abort();
-        drift_task.abort();
-        heartbeat_task.abort();
-        role_manager_task.abort();
+        engine_cmd_worker.abort();
+        let _ = Arc::into_inner(engine).unwrap().shutdown().await;
 
         return tui_res;
     }

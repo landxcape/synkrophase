@@ -16,10 +16,13 @@ use self::peer::{PeerEntry, PeerRegistry};
 
 pub mod broadcaster;
 pub mod discovery;
+pub mod engine;
 pub mod invitation;
 pub mod leader;
 pub mod peer;
 pub mod runtime;
+
+pub use engine::{EngineCommand, SynkroEngine};
 
 pub struct SessionState {
     room_code: String,

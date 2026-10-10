@@ -3,7 +3,6 @@ pub mod event;
 pub mod ui;
 
 use std::io::stdout;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,32 +13,18 @@ use crossterm::{
 };
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
-use crate::clock::sync::ClockSync;
-use crate::controller::MediaController;
 use crate::error::Result;
-use crate::protocol::messages::Role;
-use crate::session::SessionState;
-use crate::sync::scheduler::IntentScheduler;
+use crate::session::engine::SynkroEngine;
 
 pub use app::{AppEvent, TuiApp};
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_tui(
+    engine: Arc<SynkroEngine>,
     room_code: String,
     device_name: String,
-    self_id: Uuid,
-    role: Role,
-    session: Arc<SessionState>,
-    controller: Arc<dyn MediaController>,
-    socket: Arc<UdpSocket>,
-    leader_addr: Option<SocketAddr>,
     invitation: Option<crate::session::invitation::RoomInvitation>,
-    clock: Arc<ClockSync>,
-    scheduler: Arc<IntentScheduler>,
     mut event_rx: mpsc::UnboundedReceiver<AppEvent>,
     event_tx: mpsc::UnboundedSender<AppEvent>,
 ) -> Result<()> {
@@ -48,6 +33,11 @@ pub async fn run_tui(
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    let session = engine.session();
+    let controller = engine.controller();
+    let self_id = session.self_id();
+    let role = session.role();
 
     let mut app = TuiApp::new(
         room_code,
@@ -111,15 +101,7 @@ pub async fn run_tui(
             match event {
                 AppEvent::Tick => {}
                 AppEvent::Key(key) => {
-                    event::handle_key_event(
-                        &mut app,
-                        key,
-                        &socket,
-                        leader_addr,
-                        &clock,
-                        &scheduler,
-                    )
-                    .await?;
+                    event::handle_key_event(&mut app, key, &engine).await?;
                 }
                 AppEvent::Log { source, text } => {
                     app.add_log(source, text);
