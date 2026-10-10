@@ -7,9 +7,13 @@ use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::time::timeout;
 
+#[cfg(unix)]
 use crate::daemon::paths::DaemonPaths;
+#[cfg(unix)]
 use crate::daemon::protocol::{IpcRequest, IpcResponse};
-use crate::error::{Result, SynkroError};
+use crate::error::Result;
+#[cfg(unix)]
+use crate::error::SynkroError;
 
 /// Client helper for dispatching JSON-RPC requests to the active daemon via `synkro.sock`.
 pub struct IpcClient;

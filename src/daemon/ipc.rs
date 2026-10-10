@@ -1,4 +1,5 @@
 use std::sync::Arc;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
@@ -7,17 +8,22 @@ use uuid::Uuid;
 
 use crate::daemon::paths::DaemonPaths;
 use crate::daemon::protocol::{DaemonStatusSnapshot, IpcEvent, IpcRequest, IpcResponse};
-use crate::error::{Result, SynkroError};
+use crate::error::Result;
+#[cfg(unix)]
+use crate::error::SynkroError;
 use crate::protocol::messages::{PlaybackAction, Role};
 use crate::session::engine::{EngineCommand, SynkroEngine};
 
 pub struct IpcServer {
+    #[allow(dead_code)]
     paths: DaemonPaths,
+    #[allow(dead_code)]
     engine: Arc<SynkroEngine>,
     event_tx: broadcast::Sender<IpcEvent>,
     latest_drift: Arc<std::sync::Mutex<(i64, u8, String)>>,
 }
 
+#[allow(dead_code)]
 impl IpcServer {
     pub fn new(paths: DaemonPaths, engine: Arc<SynkroEngine>) -> (Self, broadcast::Sender<IpcEvent>) {
         let (event_tx, _) = broadcast::channel(128);

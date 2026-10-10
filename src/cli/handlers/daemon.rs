@@ -5,8 +5,11 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
-use tokio::net::{UdpSocket, UnixStream};
+use tokio::net::UdpSocket;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::time::sleep;
 use uuid::Uuid;
 
@@ -18,6 +21,7 @@ use crate::cli::handlers::common::{
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
 use crate::daemon::paths::DaemonPaths;
+#[cfg(unix)]
 use crate::daemon::protocol::{DaemonStatusSnapshot, IpcRequest, IpcResponse};
 use crate::daemon::{FollowerZeroTouchMonitor, IpcServer};
 use crate::error::{Result, SynkroError};
@@ -210,6 +214,7 @@ async fn stop_daemon(paths: &DaemonPaths) -> Result<()> {
     }
 
     // Try IPC shutdown first
+    #[cfg(unix)]
     if let Ok(mut stream) = UnixStream::connect(&paths.socket_path).await {
         let req = IpcRequest {
             id: Some(1),
@@ -230,6 +235,10 @@ async fn stop_daemon(paths: &DaemonPaths) -> Result<()> {
                 sleep(Duration::from_millis(500)).await;
             }
         }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
     }
 
     paths.clean_pid();
@@ -248,20 +257,32 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let Ok(mut stream) = UnixStream::connect(&paths.socket_path).await else {
+    #[cfg(not(unix))]
+    {
         if json {
-            println!("{}", serde_json::json!({"running": false, "error": "Cannot connect to IPC socket"}));
+            println!("{}", serde_json::json!({"running": true, "note": "IPC status inspection is only supported on Unix systems"}));
         } else {
-            println!("Synkrophase daemon is running (PID: {:?}), but IPC socket is unresponsive.", paths.read_pid()?);
+            println!("Synkrophase daemon is running (PID: {:?}). IPC socket inspection is only supported on Unix.", paths.read_pid()?);
         }
         return Ok(());
-    };
+    }
 
-    let req = IpcRequest {
-        id: Some(1),
-        method: "status".to_string(),
-        params: serde_json::Value::Null,
-    };
+    #[cfg(unix)]
+    {
+        let Ok(mut stream) = UnixStream::connect(&paths.socket_path).await else {
+            if json {
+                println!("{}", serde_json::json!({"running": false, "error": "Cannot connect to IPC socket"}));
+            } else {
+                println!("Synkrophase daemon is running (PID: {:?}), but IPC socket is unresponsive.", paths.read_pid()?);
+            }
+            return Ok(());
+        };
+
+        let req = IpcRequest {
+            id: Some(1),
+            method: "status".to_string(),
+            params: serde_json::Value::Null,
+        };
     let mut msg = serde_json::to_string(&req).unwrap_or_default();
     msg.push('\n');
     stream.write_all(msg.as_bytes()).await?;
@@ -299,6 +320,7 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
     }
 
     Ok(())
+    }
 }
 
 fn view_daemon_logs(paths: &DaemonPaths, follow: bool) -> Result<()> {
