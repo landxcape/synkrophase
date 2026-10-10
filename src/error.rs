@@ -25,6 +25,9 @@ pub enum SynkroError {
 
     #[error("deserialization error: {0}")]
     Deserialization(String),
+
+    #[error("configuration error: {0}")]
+    Config(String),
 }
 
 pub type Result<T> = std::result::Result<T, SynkroError>;

@@ -86,6 +86,11 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("play", serde_json::Value::Null).await {
+                println!("Play intent sent via running daemon.");
+                return Ok(());
+            }
+
             let controller = create_media_controller();
             let state = controller.get_playback_state().await?;
             let title = state.metadata.map(|m| m.title);
@@ -107,6 +112,11 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("pause", serde_json::Value::Null).await {
+                println!("Pause intent sent via running daemon.");
+                return Ok(());
+            }
+
             let intent = PlaybackIntent {
                 action: PlaybackAction::Pause,
                 target_ref_time: 0,
@@ -125,6 +135,11 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("resume", serde_json::Value::Null).await {
+                println!("Resume intent sent via running daemon.");
+                return Ok(());
+            }
+
             let intent = PlaybackIntent {
                 action: PlaybackAction::Play,
                 target_ref_time: 0,
@@ -147,6 +162,11 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("next", serde_json::Value::Null).await {
+                println!("Next track intent sent via running daemon.");
+                return Ok(());
+            }
+
             let intent = PlaybackIntent {
                 action: PlaybackAction::NextTrack,
                 target_ref_time: 0,
@@ -159,6 +179,11 @@ async fn main() -> Result<()> {
             room_code,
             leader_addr,
         } => {
+            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("prev", serde_json::Value::Null).await {
+                println!("Previous track intent sent via running daemon.");
+                return Ok(());
+            }
+
             let intent = PlaybackIntent {
                 action: PlaybackAction::PreviousTrack,
                 target_ref_time: 0,
@@ -231,6 +256,9 @@ async fn main() -> Result<()> {
             };
             run_simple_command(device, room_code, leader_addr, envelope_msg).await
         }
+        Commands::Daemon { command } => {
+            synkrophase::cli::handle_daemon_command(command, device, sync_config).await
+        }
     }?;
 
     std::process::exit(0);
@@ -279,6 +307,35 @@ mod tests {
                 assert_eq!(device_id, "00000000-0000-0000-0000-000000000001");
             }
             _ => panic!("Expected Transfer command"),
+        }
+
+        // Test Daemon Status
+        let cli = Cli::try_parse_from(["synkro", "daemon", "status", "--json"]).unwrap();
+        match cli.command {
+            Commands::Daemon { command: synkrophase::cli::args::DaemonCommands::Status { json } } => {
+                assert!(json);
+            }
+            _ => panic!("Expected Daemon Status command"),
+        }
+
+        // Test Daemon Stop
+        let cli = Cli::try_parse_from(["synkro", "daemon", "stop"]).unwrap();
+        match cli.command {
+            Commands::Daemon { command: synkrophase::cli::args::DaemonCommands::Stop } => {}
+            _ => panic!("Expected Daemon Stop command"),
+        }
+
+        // Test Daemon Start Host
+        let cli = Cli::try_parse_from(["synkro", "daemon", "start", "host", "DEMO1"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Start {
+                    mode: synkrophase::cli::args::DaemonRunMode::Host { room_code, .. },
+                },
+            } => {
+                assert_eq!(room_code, Some("DEMO1".to_string()));
+            }
+            _ => panic!("Expected Daemon Start Host command"),
         }
     }
 }

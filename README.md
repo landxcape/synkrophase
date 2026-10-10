@@ -153,6 +153,52 @@ synkro join MYROOM --leader-addr 192.168.1.100:5871
 
 Followers lock their reference clocks to the leader, listen for playback intents, and adjust their local players automatically.
 
+### 4. Background "Zero-Touch" Sync Daemon (v0.5.0)
+Run Synkrophase headlessly in the background without keeping a terminal window open:
+
+```bash
+# Start a room host daemon in the background:
+synkro daemon start host MYROOM
+
+# Or join a room in the background:
+synkro daemon start join MYROOM
+
+# Query live status over the local IPC socket:
+synkro daemon status
+synkro daemon status --json  # Format as JSON for Waybar, SketchyBar, or scripts
+
+# Tail real-time background logs:
+synkro daemon logs -f
+
+# Cleanly stop the background daemon:
+synkro daemon stop
+```
+
+When running in daemon mode:
+- **Zero-Touch Local Interactivity**: Moderator followers who press physical keyboard media keys or headphone buttons automatically propagate their playback intentions to the room.
+- **Fast-Lane One-Shot CLI Integration**: Commands like `synkro play`, `synkro pause`, `synkro next`, and `synkro volume` automatically detect the running daemon via the local domain socket (`~/.synkrophase/synkro.sock`) and dispatch instantly without ad-hoc UDP reconnection overhead.
+
+---
+
+## Local IPC Specification (`~/.synkrophase/synkro.sock`)
+
+Synkrophase exposes a local Unix Domain Socket at `~/.synkrophase/synkro.sock` accepting line-delimited JSON (NDJSON). Any third-party application, desktop status bar, or GUI can connect and exchange messages:
+
+### Request Format
+```json
+{"id": 1, "method": "status"}
+{"id": 2, "method": "pause"}
+{"id": 3, "method": "seek", "params": {"position_sec": 45.0}}
+{"id": 4, "method": "subscribe"}
+```
+
+### Real-Time Event Streaming
+Sending `{"method": "subscribe"}` streams real-time asynchronous sync events:
+```json
+{"event": "drift_update", "data": {"offset_us": 12, "zone": 1, "status": "Locked (<50ms)"}}
+{"event": "track_change", "data": {"title": "Numb", "artist": "Linkin Park", "album": "Meteora"}}
+```
+
 ---
 
 ## Interactive Dashboard (TUI)

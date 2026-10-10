@@ -2,6 +2,7 @@ pub mod cli;
 pub mod clock;
 pub mod config;
 pub mod controller;
+pub mod daemon;
 pub mod error;
 pub mod protocol;
 pub mod queue;

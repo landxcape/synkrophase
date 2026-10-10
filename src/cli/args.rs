@@ -150,4 +150,63 @@ pub enum Commands {
         #[arg(long)]
         leader_addr: Option<SocketAddr>,
     },
+    /// Manage the headless background sync daemon.
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DaemonCommands {
+    /// Run the daemon in foreground mode (for launchd/systemd or internal spawn).
+    Run {
+        #[command(subcommand)]
+        mode: DaemonRunMode,
+    },
+    /// Spawn a detached background daemon process.
+    Start {
+        #[command(subcommand)]
+        mode: DaemonRunMode,
+    },
+    /// Stop a running background daemon.
+    Stop,
+    /// Query status of a running daemon over IPC.
+    Status {
+        /// Output status in raw JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Display or tail daemon logs.
+    Logs {
+        /// Follow log output in real-time.
+        #[arg(short, long)]
+        follow: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DaemonRunMode {
+    /// Host a room as leader in daemon mode.
+    Host {
+        /// Room code. If omitted, an alphanumeric room code is generated.
+        room_code: Option<String>,
+        #[arg(long, default_value_t = DEFAULT_CLOCK_PORT)]
+        clock_port: u16,
+        #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
+        session_port: u16,
+    },
+    /// Join a room as follower in daemon mode.
+    Join {
+        /// Session room code.
+        room_code: String,
+        #[arg(long)]
+        leader_addr: Option<SocketAddr>,
+        #[arg(long)]
+        leader_id: Option<Uuid>,
+        #[arg(long, default_value_t = DEFAULT_CLOCK_PORT)]
+        leader_clock_port: u16,
+        #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
+        session_port: u16,
+    },
 }
