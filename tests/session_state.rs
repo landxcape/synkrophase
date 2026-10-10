@@ -272,7 +272,6 @@ async fn test_dual_leader_demotes_higher_uuid() {
 
     let runtime = synkrophase::session::runtime::SessionMessageRuntime::new(
         session.clone(),
-        None,
         "HigherHost".into(),
     );
 

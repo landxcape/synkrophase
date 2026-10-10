@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 
 use super::common::{create_media_controller, run_heartbeat_loop, run_role_manager_loop};
-use crate::cli::repl::run_host_repl;
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
 use crate::error::Result;
@@ -114,7 +113,7 @@ pub async fn run_host(
     if !headless {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let runtime = SessionMessageRuntime::new(Arc::clone(&session), None, device.name.clone())
+        let runtime = SessionMessageRuntime::new(Arc::clone(&session), device.name.clone())
             .with_event_tx(event_tx.clone())
             .with_playback(Arc::clone(&playback))
             .with_scheduler(Arc::clone(&scheduler))
@@ -189,11 +188,9 @@ pub async fn run_host(
         return tui_res;
     }
 
-    // Headless REPL mode
-    let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
+    // Headless mode
     let runtime = SessionMessageRuntime::new(
         Arc::clone(&session),
-        Some(stdout.clone()),
         device.name.clone(),
     )
     .with_playback(Arc::clone(&playback))
@@ -207,36 +204,15 @@ pub async fn run_host(
         ""
     };
 
-    crate::session::runtime::print_event(
-        Some(&stdout),
-        &format!(
-            "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n\nJoin with: {}{copy_msg}",
-            device.device_id,
-            invitation.cli_command()
-        ),
+    println!(
+        "Hosting room {room_code} as leader {} on {local_ip}\n  - Session Port: {session_port}\n  - Clock Port: {clock_port}\n\nJoin with: {}{copy_msg}",
+        device.device_id,
+        invitation.cli_command()
     );
 
     let receive_task = tokio::spawn({
         let socket = Arc::clone(&session_socket);
         async move { runtime.run_receive_loop(socket).await }
-    });
-
-    let repl_task = tokio::spawn({
-        let session = Arc::clone(&session);
-        let socket = Arc::clone(&session_socket);
-        let sender = device.device_id;
-        let name = device.name.clone();
-        let clock = Arc::clone(&clock);
-        let controller = Arc::clone(&controller);
-        let scheduler = Arc::clone(&scheduler);
-        let stdout = stdout.clone();
-        let invitation = Some(invitation);
-        async move {
-            run_host_repl(
-                rl, session, socket, sender, name, clock, controller, scheduler, stdout, invitation,
-            )
-            .await
-        }
     });
 
     tokio::select! {
@@ -263,13 +239,6 @@ pub async fn run_host(
         res = role_manager_task => {
             if let Err(err) = res {
                 eprintln!("role manager failed: {err}");
-            }
-        }
-        res = repl_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("repl loop stopped: {err}"),
-                Err(err) => eprintln!("repl task cancelled: {err}"),
             }
         }
         _ = tokio::signal::ctrl_c() => {

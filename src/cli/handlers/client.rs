@@ -28,63 +28,6 @@ pub async fn run_simple_command(
     Ok(())
 }
 
-pub async fn run_queue_display(
-    _device: DeviceConfig,
-    room_code: String,
-    leader_addr: Option<SocketAddr>,
-) -> Result<()> {
-    let (resolved_leader_addr, _) = resolve_join_target(&room_code, leader_addr, None)?;
-    let socket =
-        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-
-    let ephemeral_id = Uuid::new_v4();
-    send_join_request(
-        &socket,
-        ephemeral_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        "QueueViewer".into(),
-    )
-    .await?;
-
-    let mut buf = [0u8; 8 * 1024];
-    match tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf)).await {
-        Ok(Ok((len, _))) => {
-            if let Ok(Envelope {
-                payload: Message::JoinAccepted { queue_state, .. },
-                ..
-            }) = crate::protocol::messages::deserialize(&buf[..len])
-            {
-                println!("Queue for room {room_code}:");
-                if let Some(current) = queue_state.current {
-                    println!(
-                        "  [PLAYING] {} (ID: {}, requested by {})",
-                        current.title, current.id, current.requested_by
-                    );
-                } else {
-                    println!("  [PLAYING] None");
-                }
-                if queue_state.upcoming.is_empty() {
-                    println!("  (Upcoming queue is empty)");
-                } else {
-                    println!("\n  Upcoming:");
-                    for (i, track) in queue_state.upcoming.iter().enumerate() {
-                        println!(
-                            "  {}. {} (ID: {}, requested by {})",
-                            i + 1,
-                            track.title,
-                            track.id,
-                            track.requested_by
-                        );
-                    }
-                }
-            }
-        }
-        _ => println!("Timed out waiting for queue information from leader."),
-    }
-    Ok(())
-}
-
 pub async fn run_sync_status(
     device: DeviceConfig,
     room_code: String,

@@ -255,6 +255,27 @@ impl IpcServer {
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
             }
+            "invite" | "share" => {
+                let room_code = self.engine.session().room_code().to_string();
+                let is_leader = self.engine.session().is_leader();
+                let leader_addr = if is_leader {
+                    if let Ok(ip) = local_ip_address::local_ip() {
+                        format!("{ip}:{}", self.engine.socket().local_addr().map(|a| a.port()).unwrap_or(0))
+                    } else {
+                        "127.0.0.1".to_string()
+                    }
+                } else if let Some(addr) = self.engine.leader_addr() {
+                    addr.to_string()
+                } else {
+                    "unknown".to_string()
+                };
+                let join_command = format!("synkro join {room_code} --leader-addr {leader_addr}");
+                IpcResponse::ok(req.id, serde_json::json!({
+                    "room_code": room_code,
+                    "leader_addr": leader_addr,
+                    "join_command": join_command,
+                }))
+            }
             "shutdown" => {
                 let _ = self.engine.send_command(EngineCommand::Shutdown);
                 IpcResponse::ok(req.id, serde_json::json!({"shutting_down": true}))

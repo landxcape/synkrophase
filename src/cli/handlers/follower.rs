@@ -10,7 +10,6 @@ use super::common::{
     create_media_controller, resolve_join_target, run_heartbeat_loop, run_role_manager_loop,
     send_join_request,
 };
-use crate::cli::repl::run_follower_repl;
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
 use crate::error::Result;
@@ -182,7 +181,7 @@ pub async fn run_join(
             }
         });
 
-        let runtime = SessionMessageRuntime::new(Arc::clone(&session), None, device.name.clone())
+        let runtime = SessionMessageRuntime::new(Arc::clone(&session), device.name.clone())
             .with_event_tx(event_tx.clone())
             .with_controller(Arc::clone(&controller))
             .with_clock(Arc::clone(&clock))
@@ -247,12 +246,9 @@ pub async fn run_join(
         return tui_res;
     }
 
-    // Headless REPL mode
-    let (rl, stdout) = rustyline_async::Readline::new("synkro> ".to_string()).unwrap();
-
+    // Headless mode
     let runtime = SessionMessageRuntime::new(
         Arc::clone(&session),
-        Some(stdout.clone()),
         device.name.clone(),
     )
     .with_controller(Arc::clone(&controller))
@@ -260,44 +256,14 @@ pub async fn run_join(
     .with_scheduler(Arc::clone(&scheduler))
     .with_drift_evaluator(Arc::clone(&drift_evaluator));
 
-    crate::session::runtime::print_event(
-        Some(&stdout),
-        &format!(
-            "Joining room {room_code} as follower {} via leader {resolved_leader_addr}",
-            device.device_id
-        ),
+    println!(
+        "Joining room {room_code} as follower {} via leader {resolved_leader_addr}",
+        device.device_id
     );
 
     let receive_task = tokio::spawn({
         let socket = Arc::clone(&session_socket);
         async move { runtime.run_receive_loop(socket).await }
-    });
-
-    let repl_task = tokio::spawn({
-        let session = Arc::clone(&session);
-        let socket = Arc::clone(&session_socket);
-        let sender = device.device_id;
-        let name = device.name.clone();
-        let leader_addr = resolved_leader_addr;
-        let controller = Arc::clone(&controller);
-        let clock = Arc::clone(&clock);
-        let scheduler = Arc::clone(&scheduler);
-        let stdout = stdout.clone();
-        async move {
-            run_follower_repl(
-                rl,
-                session,
-                socket,
-                sender,
-                name,
-                leader_addr,
-                controller,
-                clock,
-                scheduler,
-                stdout,
-            )
-            .await
-        }
     });
 
     tokio::select! {
@@ -322,13 +288,6 @@ pub async fn run_join(
         res = role_manager_task => {
             if let Err(err) = res {
                 eprintln!("role manager loop failed: {err}");
-            }
-        }
-        res = repl_task => {
-            match res {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("repl loop stopped: {err}"),
-                Err(err) => eprintln!("repl task cancelled: {err}"),
             }
         }
         _ = tokio::signal::ctrl_c() => {

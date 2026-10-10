@@ -415,7 +415,7 @@ async fn setup_host_daemon(
         async move { run_role_manager_loop(sess, sock, id, cfg).await }
     });
 
-    let runtime = SessionMessageRuntime::new(Arc::clone(&session), None, device.name.clone())
+    let runtime = SessionMessageRuntime::new(Arc::clone(&session), device.name.clone())
         .with_event_tx(event_tx.clone())
         .with_controller(Arc::clone(&controller))
         .with_clock(Arc::clone(&clock))
@@ -574,7 +574,7 @@ async fn setup_join_daemon(
         async move { run_role_manager_loop(sess, sock, id, cfg).await }
     });
 
-    let runtime = SessionMessageRuntime::new(Arc::clone(&session), None, device.name.clone())
+    let runtime = SessionMessageRuntime::new(Arc::clone(&session), device.name.clone())
         .with_event_tx(event_tx.clone())
         .with_controller(Arc::clone(&controller))
         .with_clock(Arc::clone(&clock))

@@ -72,83 +72,49 @@ pub enum Commands {
         headless: bool,
     },
     /// Send play intent across the room.
-    Play {
-        /// Session room code.
-        room_code: String,
-        /// Optional leader session address (ip:port). If omitted, mDNS discovery is used.
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
+    Play,
     /// Pause playback across the room.
-    Pause {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
+    Pause,
     /// Resume playback across the room.
-    Resume {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
+    Resume,
     /// Skip to next track across the room.
-    Next {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
+    Next,
     /// Skip to previous track across the room.
-    Prev {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
+    Prev,
     /// Skip current track across the room (alias for next).
-    Skip {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
+    Skip,
+    /// Seek timeline position in seconds.
+    Seek {
+        /// Target position in seconds (e.g. 45.5).
+        position_sec: f64,
     },
     /// Sync room volume across all connected peers.
     Volume {
-        room_code: String,
-        /// Optional volume level (0-100). If omitted, host volume is mirrored.
-        #[arg(long)]
+        /// Optional volume level (0-100). If omitted, mirrors leader volume.
         level: Option<u8>,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
     },
-    /// Show current queue.
-    Queue {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
-    /// Show live sync status per peer.
-    Sync {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
+    /// Show live sync status and drift metrics.
+    Sync,
     /// Verbose sync metrics mode.
-    Debug {
-        room_code: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
-    },
-    /// Transfer leadership to another device.
+    Debug,
+    /// Share / copy room invitation command to clipboard.
+    Share,
+    /// Transfer leadership to another peer (by UUID or name prefix).
     Transfer {
-        room_code: String,
-        device_id: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
+        /// Target peer UUID or name prefix.
+        peer: String,
     },
-    /// Send a chat message to a room.
+    /// Assign a role to a peer (Leader, Moderator, Listener).
+    Role {
+        /// Target peer UUID or name prefix.
+        peer: String,
+        /// Role to assign: 'leader', 'moderator', or 'listener'.
+        role: String,
+    },
+    /// Send a chat message to the room.
     Chat {
-        room_code: String,
+        /// Message text to broadcast.
         message: String,
-        #[arg(long)]
-        leader_addr: Option<SocketAddr>,
     },
     /// Manage the headless background sync daemon.
     Daemon {

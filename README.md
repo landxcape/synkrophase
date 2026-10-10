@@ -244,26 +244,29 @@ When hosting or joining a room, Synkrophase launches an interactive dashboard:
 
 ---
 
-## One-Shot CLI Commands
+## CLI Controls (Fast-Lane IPC Integration)
 
-Synkrophase can also be invoked as a one-shot remote control CLI tool:
+When a Synkrophase session is active (either via `synkro host`, `synkro join`, or `synkro daemon`), one-shot CLI commands automatically connect to the local session via IPC:
 
 ```bash
-# Playback commands
-synkro play MYROOM
-synkro pause MYROOM
-synkro resume MYROOM
-synkro next MYROOM
-synkro prev MYROOM
-synkro seek MYROOM 120.5
+# Playback commands (no room code needed)
+synkro play
+synkro pause
+synkro resume
+synkro next
+synkro prev
+synkro seek 120.5
 
 # Volume control
-synkro volume MYROOM --level 80
+synkro volume 80      # Set volume across all peers
+synkro volume         # Mirror local volume across all peers
 
 # Room administration & telemetry
-synkro sync MYROOM                      # Inspect peer clock offsets
-synkro chat MYROOM "Starting now!"      # Send a chat message
-synkro transfer MYROOM <DEVICE_UUID>    # Hand off room leadership
+synkro sync           # Inspect room clock offsets and drift zones
+synkro share          # Copy room join command to clipboard
+synkro chat "Starting now!" # Send a chat message
+synkro transfer <PEER>     # Hand off room leadership by peer name or UUID
+synkro role <PEER> <ROLE>  # Assign role ('moderator' or 'listener')
 ```
 
 ---

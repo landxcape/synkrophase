@@ -1,6 +1,6 @@
 [package]
 name = "synkrophase"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "High-precision, player-agnostic external media controller synchronizer for local networks"
@@ -24,7 +24,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lazy_static = "1.5.1"
 mdns-sd = "0.21"
-rustyline-async = "0.4.9"
 local-ip-address = "0.6.13"
 home = "0.5.12"
 async-trait = "0.1"

@@ -1,11 +1,10 @@
 use clap::Parser;
 use synkrophase::cli::{
-    Cli, Commands, create_media_controller, generated_room_code, load_device_config, run_debug,
-    run_host, run_join, run_queue_display, run_simple_command, run_sync_status,
+    Cli, Commands, create_media_controller, generated_room_code, load_device_config, run_host,
+    run_join,
 };
 use synkrophase::config::SyncConfig;
 use synkrophase::error::Result;
-use synkrophase::protocol::messages::{Message, PlaybackAction, PlaybackIntent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -82,179 +81,105 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Commands::Play {
-            room_code,
-            leader_addr,
-        } => {
-            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("play", serde_json::Value::Null).await {
-                println!("Play intent sent via running daemon.");
-                return Ok(());
-            }
-
-            let controller = create_media_controller();
-            let state = controller.get_playback_state().await?;
-            let title = state.metadata.map(|m| m.title);
-            let intent = PlaybackIntent {
-                action: PlaybackAction::Play,
-                target_ref_time: 0,
-                position_us: state.position_us,
-                track_title: title,
-            };
-            run_simple_command(
-                device.clone(),
-                room_code,
-                leader_addr,
-                Message::Intent(intent),
+        Commands::Play => {
+            send_ipc_or_fail("play", serde_json::Value::Null, "Play intent sent to active session.").await
+        }
+        Commands::Pause => {
+            send_ipc_or_fail("pause", serde_json::Value::Null, "Pause intent sent to active session.").await
+        }
+        Commands::Resume => {
+            send_ipc_or_fail("resume", serde_json::Value::Null, "Resume intent sent to active session.").await
+        }
+        Commands::Next | Commands::Skip => {
+            send_ipc_or_fail("next", serde_json::Value::Null, "Next track intent sent to active session.").await
+        }
+        Commands::Prev => {
+            send_ipc_or_fail("prev", serde_json::Value::Null, "Previous track intent sent to active session.").await
+        }
+        Commands::Seek { position_sec } => {
+            send_ipc_or_fail(
+                "seek",
+                serde_json::json!({ "position_sec": position_sec }),
+                &format!("Seeked to {position_sec:.2}s across session."),
             )
             .await
         }
-        Commands::Pause {
-            room_code,
-            leader_addr,
-        } => {
-            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("pause", serde_json::Value::Null).await {
-                println!("Pause intent sent via running daemon.");
-                return Ok(());
-            }
-
-            let intent = PlaybackIntent {
-                action: PlaybackAction::Pause,
-                target_ref_time: 0,
-                position_us: 0,
-                track_title: None,
+        Commands::Volume { level } => {
+            let params = match level {
+                Some(lvl) => serde_json::json!({ "level": lvl }),
+                None => serde_json::Value::Null,
             };
-            run_simple_command(
-                device.clone(),
-                room_code,
-                leader_addr,
-                Message::Intent(intent),
+            send_ipc_or_fail(
+                "volume",
+                params,
+                &match level {
+                    Some(lvl) => format!("Volume set to {lvl}% across session."),
+                    None => "Mirrored host volume across session.".to_string(),
+                },
             )
             .await
         }
-        Commands::Resume {
-            room_code,
-            leader_addr,
-        } => {
-            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("resume", serde_json::Value::Null).await {
-                println!("Resume intent sent via running daemon.");
-                return Ok(());
-            }
-
-            let intent = PlaybackIntent {
-                action: PlaybackAction::Play,
-                target_ref_time: 0,
-                position_us: 0,
-                track_title: None,
-            };
-            run_simple_command(
-                device.clone(),
-                room_code,
-                leader_addr,
-                Message::Intent(intent),
-            )
-            .await
-        }
-        Commands::Next {
-            room_code,
-            leader_addr,
-        }
-        | Commands::Skip {
-            room_code,
-            leader_addr,
-        } => {
-            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("next", serde_json::Value::Null).await {
-                println!("Next track intent sent via running daemon.");
-                return Ok(());
-            }
-
-            let intent = PlaybackIntent {
-                action: PlaybackAction::NextTrack,
-                target_ref_time: 0,
-                position_us: 0,
-                track_title: None,
-            };
-            run_simple_command(device, room_code, leader_addr, Message::Intent(intent)).await
-        }
-        Commands::Prev {
-            room_code,
-            leader_addr,
-        } => {
-            if let Ok(Some(_)) = synkrophase::daemon::IpcClient::send_command("prev", serde_json::Value::Null).await {
-                println!("Previous track intent sent via running daemon.");
-                return Ok(());
-            }
-
-            let intent = PlaybackIntent {
-                action: PlaybackAction::PreviousTrack,
-                target_ref_time: 0,
-                position_us: 0,
-                track_title: None,
-            };
-            run_simple_command(device, room_code, leader_addr, Message::Intent(intent)).await
-        }
-        Commands::Volume {
-            room_code,
-            level,
-            leader_addr,
-        } => {
-            let vol = match level {
-                Some(v) => v.min(100),
-                None => {
-                    let controller = create_media_controller();
-                    controller.get_volume().await.unwrap_or(70)
+        Commands::Sync => {
+            if let Ok(Some(res)) = synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null).await
+                && let Ok(snapshot) = serde_json::from_value::<synkrophase::daemon::DaemonStatusSnapshot>(res)
+            {
+                println!("\n=== Synkrophase Session Sync Status ===");
+                println!("  Room Code:      {}", snapshot.room_code);
+                println!("  Role:           {:?}", snapshot.role);
+                println!("  Clock Offset:   {:+0.2}ms", (snapshot.clock_offset_us as f64) / 1000.0);
+                println!("  Drift Status:   {} ({:+0.2}ms)", snapshot.drift_status, (snapshot.drift_offset_us as f64) / 1000.0);
+                println!("  Peers Online:   {}", snapshot.peers.len());
+                for peer in snapshot.peers {
+                    println!("    - {} ({:?}) offset: {:+0.2}ms", peer.name, peer.role, (peer.clock_offset_us as f64) / 1000.0);
                 }
-            };
-            let actor = device.device_id;
-            run_simple_command(
-                device,
-                room_code,
-                leader_addr,
-                Message::SetVolume { volume: vol, actor },
+                println!();
+                return Ok(());
+            }
+            eprintln!("Error: Synkrophase session is not running. Start with 'synkro host' or 'synkro daemon start'.");
+            std::process::exit(1);
+        }
+        Commands::Debug => {
+            if let Ok(Some(res)) = synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null).await {
+                println!("{}", serde_json::to_string_pretty(&res).unwrap_or_default());
+                return Ok(());
+            }
+            eprintln!("Error: Synkrophase session is not running.");
+            std::process::exit(1);
+        }
+        Commands::Share => {
+            if let Ok(Some(res)) = synkrophase::daemon::IpcClient::send_command("invite", serde_json::Value::Null).await
+                && let Some(cmd) = res.get("join_command").and_then(|v| v.as_str())
+            {
+                let _ = synkrophase::session::invitation::copy_text_to_clipboard(cmd);
+                println!("Room Invitation Command (Copied to clipboard!):\n  {cmd}");
+                return Ok(());
+            }
+            eprintln!("Error: Synkrophase session is not running.");
+            std::process::exit(1);
+        }
+        Commands::Transfer { peer } => {
+            send_ipc_or_fail(
+                "transfer",
+                serde_json::json!({ "target": peer }),
+                &format!("Leadership transfer initiated to peer '{peer}'."),
             )
             .await
         }
-        Commands::Queue {
-            room_code,
-            leader_addr,
-        } => run_queue_display(device, room_code, leader_addr).await,
-        Commands::Sync {
-            room_code,
-            leader_addr,
-        } => run_sync_status(device, room_code, leader_addr).await,
-        Commands::Debug {
-            room_code,
-            leader_addr,
-        } => run_debug(device, room_code, leader_addr).await,
-        Commands::Transfer {
-            room_code,
-            device_id,
-            leader_addr,
-        } => {
-            let target_uuid = uuid::Uuid::parse_str(&device_id).map_err(|e| {
-                synkrophase::error::SynkroError::Network(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("Invalid device UUID: {e}"),
-                ))
-            })?;
-            run_simple_command(
-                device,
-                room_code,
-                leader_addr,
-                Message::TransferLeadership { to: target_uuid },
+        Commands::Role { peer, role } => {
+            send_ipc_or_fail(
+                "assign_role",
+                serde_json::json!({ "target": peer, "role": role }),
+                &format!("Assigned role '{role}' to peer '{peer}'."),
             )
             .await
         }
-        Commands::Chat {
-            room_code,
-            message,
-            leader_addr,
-        } => {
-            let envelope_msg = Message::Chat {
-                sender: device.device_id,
-                name: device.name.clone(),
-                text: message,
-            };
-            run_simple_command(device, room_code, leader_addr, envelope_msg).await
+        Commands::Chat { message } => {
+            send_ipc_or_fail(
+                "chat",
+                serde_json::json!({ "message": message }),
+                "Chat message broadcasted.",
+            )
+            .await
         }
         Commands::Daemon { command } => {
             synkrophase::cli::handle_daemon_command(command, device, sync_config).await
@@ -262,6 +187,23 @@ async fn main() -> Result<()> {
     }?;
 
     std::process::exit(0);
+}
+
+async fn send_ipc_or_fail(method: &str, params: serde_json::Value, success_msg: &str) -> synkrophase::error::Result<()> {
+    match synkrophase::daemon::IpcClient::send_command(method, params).await {
+        Ok(Some(_)) => {
+            println!("{success_msg}");
+            Ok(())
+        }
+        Ok(None) => {
+            eprintln!("Error: Synkrophase is not running. Start a session with 'synkro host' or 'synkro daemon start'.");
+            std::process::exit(1);
+        }
+        Err(err) => {
+            eprintln!("IPC Error: {err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -283,28 +225,32 @@ mod tests {
         }
 
         // Test Pause
-        let cli = Cli::try_parse_from(["synkro", "pause", "ROOM12"]).unwrap();
+        let cli = Cli::try_parse_from(["synkro", "pause"]).unwrap();
+        assert!(matches!(cli.command, Commands::Pause));
+
+        // Test Play
+        let cli = Cli::try_parse_from(["synkro", "play"]).unwrap();
+        assert!(matches!(cli.command, Commands::Play));
+
+        // Test Seek
+        let cli = Cli::try_parse_from(["synkro", "seek", "45.5"]).unwrap();
         match cli.command {
-            Commands::Pause { room_code, .. } => assert_eq!(room_code, "ROOM12"),
-            _ => panic!("Expected Pause command"),
+            Commands::Seek { position_sec } => {
+                assert!((position_sec - 45.5).abs() < f64::EPSILON);
+            }
+            _ => panic!("Expected Seek command"),
         }
 
         // Test Transfer
         let cli = Cli::try_parse_from([
             "synkro",
             "transfer",
-            "ROOM12",
             "00000000-0000-0000-0000-000000000001",
         ])
         .unwrap();
         match cli.command {
-            Commands::Transfer {
-                room_code,
-                device_id,
-                ..
-            } => {
-                assert_eq!(room_code, "ROOM12");
-                assert_eq!(device_id, "00000000-0000-0000-0000-000000000001");
+            Commands::Transfer { peer } => {
+                assert_eq!(peer, "00000000-0000-0000-0000-000000000001");
             }
             _ => panic!("Expected Transfer command"),
         }

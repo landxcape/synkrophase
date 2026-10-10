@@ -14,7 +14,6 @@ use crate::sync::scheduler::IntentScheduler;
 
 use crate::protocol::messages::Role;
 use crate::tui::AppEvent;
-use rustyline_async::SharedWriter;
 use tokio::sync::mpsc;
 
 pub struct SessionMessageRuntime {
@@ -25,21 +24,16 @@ pub struct SessionMessageRuntime {
     drift_evaluator: Option<Arc<DriftEvaluator>>,
     controller: Option<Arc<dyn crate::controller::MediaController>>,
     clock: Option<Arc<ClockSync>>,
-    stdout: Option<SharedWriter>,
     event_tx: Option<mpsc::UnboundedSender<AppEvent>>,
     name: String,
 }
 
-pub fn print_event(stdout: Option<&SharedWriter>, msg: &str) {
-    if let Some(out) = stdout {
-        use std::io::Write;
-        let mut out = out.clone();
-        let _ = writeln!(out, "{}", msg);
-    }
+pub fn print_event(msg: &str) {
+    println!("{msg}");
 }
 
 impl SessionMessageRuntime {
-    pub fn new(session: Arc<SessionState>, stdout: Option<SharedWriter>, name: String) -> Self {
+    pub fn new(session: Arc<SessionState>, name: String) -> Self {
         Self {
             session,
             follower_sync: None,
@@ -48,7 +42,6 @@ impl SessionMessageRuntime {
             drift_evaluator: None,
             controller: None,
             clock: None,
-            stdout,
             event_tx: None,
             name,
         }
@@ -100,7 +93,7 @@ impl SessionMessageRuntime {
                 text: msg,
             });
         } else {
-            print_event(self.stdout.as_ref(), &msg);
+            print_event(&msg);
         }
     }
 
@@ -113,7 +106,7 @@ impl SessionMessageRuntime {
                 text: msg.clone(),
             });
         } else {
-            print_event(self.stdout.as_ref(), &format!("[{}]: {}", source, msg));
+            print_event(&format!("[{}]: {}", source, msg));
         }
     }
 
