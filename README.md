@@ -45,7 +45,7 @@ Requires Rust 1.85+ (2024 edition):
 
 ```bash
 git clone https://github.com/landxcape/synkrophase.git
-cd synkrophase/synkrophase
+cd synkrophase
 cargo build --release
 ```
 
