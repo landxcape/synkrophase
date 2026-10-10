@@ -32,6 +32,7 @@ pub struct DriftEvaluator {
     last_seek: Mutex<Option<std::time::Instant>>,
     last_anchor_ref: Mutex<Option<u64>>,
     drift_history: Mutex<VecDeque<i64>>,
+    display_drift_history: Mutex<VecDeque<i64>>,
     last_zone: Mutex<u8>,
     consecutive_outliers: Mutex<u32>,
     buffering_until: Mutex<Option<std::time::Instant>>,
@@ -51,6 +52,7 @@ impl DriftEvaluator {
             last_seek: Mutex::new(None),
             last_anchor_ref: Mutex::new(None),
             drift_history: Mutex::new(VecDeque::with_capacity(5)),
+            display_drift_history: Mutex::new(VecDeque::with_capacity(5)),
             last_zone: Mutex::new(1),
             consecutive_outliers: Mutex::new(0),
             buffering_until: Mutex::new(None),
@@ -61,6 +63,8 @@ impl DriftEvaluator {
         let deadline = std::time::Instant::now() + duration;
         *self.buffering_until.lock().unwrap() = Some(deadline);
         *self.last_zone.lock().unwrap() = 1;
+        self.drift_history.lock().unwrap().clear();
+        self.display_drift_history.lock().unwrap().clear();
         self.trigger_immediate();
     }
 
@@ -74,6 +78,18 @@ impl DriftEvaluator {
 
     fn push_and_median_drift(&self, raw_drift: i64) -> i64 {
         let mut history = self.drift_history.lock().unwrap();
+        if history.len() >= 5 {
+            history.pop_front();
+        }
+        history.push_back(raw_drift);
+
+        let mut sorted: Vec<i64> = history.iter().copied().collect();
+        sorted.sort_unstable();
+        sorted[sorted.len() / 2]
+    }
+
+    fn push_and_median_display(&self, raw_drift: i64) -> i64 {
+        let mut history = self.display_drift_history.lock().unwrap();
         if history.len() >= 5 {
             history.pop_front();
         }
@@ -131,7 +147,7 @@ impl DriftEvaluator {
         let expected_position_us = anchor.media_position_us + elapsed_us;
 
         let raw_drift_us = local_state.position_us - expected_position_us;
-        let smoothed_drift_us = self.push_and_median_drift(raw_drift_us);
+        let smoothed_drift_us = self.push_and_median_display(raw_drift_us);
         let drift_abs = smoothed_drift_us.unsigned_abs();
 
         let mut current_zone = self.last_zone.lock().unwrap();
@@ -189,8 +205,17 @@ impl DriftEvaluator {
             return Ok(DriftAction::InSync { drift_us: 0 });
         }
 
-        // Settling grace period check (1500ms post-seek)
+        // Buffering grace period check
         let now = std::time::Instant::now();
+        if let Some(buf_until) = *self.buffering_until.lock().unwrap() {
+            if now < buf_until {
+                return Ok(DriftAction::InSync { drift_us: 0 });
+            } else {
+                *self.buffering_until.lock().unwrap() = None;
+            }
+        }
+
+        // Settling grace period check (1500ms post-seek)
         {
             let last_seek_guard = self.last_seek.lock().unwrap();
             let last_ref_guard = self.last_anchor_ref.lock().unwrap();

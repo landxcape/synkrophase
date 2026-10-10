@@ -79,59 +79,83 @@ impl MacOsMediaController {
             -- Rule 1: Actively playing player takes absolute precedence
             if sRunning and sState is "playing" then
                 tell application "Spotify"
-                    set pPos to player position
-                    set tName to name of current track
-                    set tArtist to artist of current track
-                    set tAlbum to album of current track
-                    set tDur to (duration of current track) / 1000
-                    return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    try
+                        set pPos to player position
+                        set tName to name of current track
+                        set tArtist to artist of current track
+                        set tAlbum to album of current track
+                        set tDur to (duration of current track) / 1000
+                        return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    on error
+                        return "spotify|||" & sState & "|||0.0|||||||||0.0"
+                    end try
                 end tell
             else if mRunning and mState is "playing" then
                 tell application "Music"
-                    set pPos to player position
-                    set tName to name of current track
-                    set tArtist to artist of current track
-                    set tAlbum to album of current track
-                    set tDur to duration of current track
-                    return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    try
+                        set pPos to player position
+                        set tName to name of current track
+                        set tArtist to artist of current track
+                        set tAlbum to album of current track
+                        set tDur to duration of current track
+                        return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    on error
+                        return "music|||" & mState & "|||0.0|||||||||0.0"
+                    end try
                 end tell
             -- Rule 2: Fall back to last active player if running
             else if {last} = 2 and mRunning and mState is not "" then
                 tell application "Music"
-                    set pPos to player position
-                    set tName to name of current track
-                    set tArtist to artist of current track
-                    set tAlbum to album of current track
-                    set tDur to duration of current track
-                    return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    try
+                        set pPos to player position
+                        set tName to name of current track
+                        set tArtist to artist of current track
+                        set tAlbum to album of current track
+                        set tDur to duration of current track
+                        return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    on error
+                        return "music|||" & mState & "|||0.0|||||||||0.0"
+                    end try
                 end tell
             else if {last} = 1 and sRunning and sState is not "" then
                 tell application "Spotify"
-                    set pPos to player position
-                    set tName to name of current track
-                    set tArtist to artist of current track
-                    set tAlbum to album of current track
-                    set tDur to (duration of current track) / 1000
-                    return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    try
+                        set pPos to player position
+                        set tName to name of current track
+                        set tArtist to artist of current track
+                        set tAlbum to album of current track
+                        set tDur to (duration of current track) / 1000
+                        return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    on error
+                        return "spotify|||" & sState & "|||0.0|||||||||0.0"
+                    end try
                 end tell
             -- Rule 3: Whichever player is running and responsive
             else if sRunning and sState is not "" then
                 tell application "Spotify"
-                    set pPos to player position
-                    set tName to name of current track
-                    set tArtist to artist of current track
-                    set tAlbum to album of current track
-                    set tDur to (duration of current track) / 1000
-                    return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    try
+                        set pPos to player position
+                        set tName to name of current track
+                        set tArtist to artist of current track
+                        set tAlbum to album of current track
+                        set tDur to (duration of current track) / 1000
+                        return "spotify|||" & sState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    on error
+                        return "spotify|||" & sState & "|||0.0|||||||||0.0"
+                    end try
                 end tell
             else if mRunning and mState is not "" then
                 tell application "Music"
-                    set pPos to player position
-                    set tName to name of current track
-                    set tArtist to artist of current track
-                    set tAlbum to album of current track
-                    set tDur to duration of current track
-                    return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    try
+                        set pPos to player position
+                        set tName to name of current track
+                        set tArtist to artist of current track
+                        set tAlbum to album of current track
+                        set tDur to duration of current track
+                        return "music|||" & mState & "|||" & (pPos as string) & "|||" & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & (tDur as string)
+                    on error
+                        return "music|||" & mState & "|||0.0|||||||||0.0"
+                    end try
                 end tell
             else
                 return "none"
@@ -324,7 +348,21 @@ impl MediaController for MacOsMediaController {
                 let script = format!(
                     r#"
                     if application "Spotify" is running then
+                        set prevProc to ""
+                        tell application "System Events"
+                            try
+                                set prevProc to name of first application process whose frontmost is true
+                            end try
+                        end tell
+
                         tell application "Spotify" to play track "{uri}"
+
+                        if prevProc is not "" and prevProc is not "Spotify" then
+                            delay 0.05
+                            try
+                                tell application prevProc to activate
+                            end try
+                        end if
                     end if
                     "#
                 );
@@ -337,25 +375,33 @@ impl MediaController for MacOsMediaController {
             let artist_query = track.artist.as_deref().unwrap_or("");
             let script = format!(
                 r#"
-                if application "Music" is running then
-                    tell application "Music"
+                if application "Spotify" is running then
+                    set prevProc to ""
+                    tell application "System Events"
                         try
-                            set matched to (every track whose name contains "{title_escaped}")
-                            if (count of matched) > 0 then
-                                play item 1 of matched
-                                return "ok"
-                            end if
+                            set prevProc to name of first application process whose frontmost is true
                         end try
                     end tell
-                end if
-                if application "Spotify" is running then
-                    tell application "Spotify"
-                        -- Trigger search/play query via spotify URI
-                        -- Format: spotify:search:<query>
-                        set q to "{title_escaped} {artist_query}"
-                        -- Attempt to play
-                        play track "spotify:search:" & q
-                    end tell
+
+                    try
+                        tell application "Spotify"
+                            set q to "{title_escaped} {artist_query}"
+                            play track "spotify:search:" & q
+                        end tell
+                    end try
+
+                    if prevProc is not "" and prevProc is not "Spotify" then
+                        delay 0.05
+                        try
+                            tell application prevProc to activate
+                        end try
+                    end if
+                else if application "Music" is running then
+                    try
+                        tell application "Music"
+                            play (first track whose name is "{title_escaped}")
+                        end tell
+                    end try
                 end if
                 "#
             );

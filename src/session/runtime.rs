@@ -506,11 +506,14 @@ impl SessionMessageRuntime {
                     self.log_system(format!("Leader changed track to: {} - {}", title, artist));
 
                     if let Some(drift) = &self.drift_evaluator {
-                        drift.enter_buffering(Duration::from_millis(800));
+                        drift.enter_buffering(Duration::from_millis(1500));
                     }
 
                     if let Some(controller) = &self.controller {
-                        let _ = controller.load_track(&track).await;
+                        let controller = Arc::clone(controller);
+                        tokio::spawn(async move {
+                            let _ = controller.load_track(&track).await;
+                        });
                     }
                 }
                 Ok(())

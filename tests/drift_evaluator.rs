@@ -187,3 +187,32 @@ async fn test_drift_evaluator_hysteresis_and_settling_display() {
     assert_eq!(zone, 2);
     assert!(text.contains("Nudging"));
 }
+
+#[tokio::test]
+async fn test_drift_evaluator_independent_display_and_reconciliation_smoothing() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.play().await.unwrap();
+    controller.seek_to(10_000_000).await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    // Calling evaluate_drift for UI display should not contaminate reconciliation
+    for _ in 0..10 {
+        let (drift, zone, _) = evaluator.evaluate_drift(&anchor).await.unwrap();
+        assert_eq!(drift, 0);
+        assert_eq!(zone, 1);
+    }
+
+    // Now call evaluate_and_reconcile; it should evaluate independently without history starvation
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action, DriftAction::InSync { drift_us: 0 }));
+}
