@@ -3,78 +3,28 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Release](https://img.shields.io/github/v/release/landxcape/synkrophase)](https://github.com/landxcape/synkrophase/releases)
 
-**Synkrophase** is a high-precision, low-latency playback controller synchronizer for local networks written in Rust.
+Synkrophase synchronizes media playback across multiple computers on the same local network.
 
-Instead of streaming, decoding, or transmitting heavy audio/video media files over the network, Synkrophase operates exclusively as an external **control plane synchronizer**:
-- **Primary Player Support**: Native **Spotify** and **Apple Music** integration with automatic active player detection and state prioritization (with cross-platform desktop controller architecture).
-- **"Zero-Queue" Automatic Track & Playback Mirroring**: Follows the leader's active desktop player as the sole source of truth; when the leader changes tracks, followers automatically load and align without manual playlist entry.
-- **Clock-Aligned Pre-Dispatch with TimelineTracer**: Pre-dispatches OS commands using local **actuation latency compensation** (accounting for local OS IPC / AppleScript delays), using synchronized reference-clock deadlines rather than arbitrary sleep timers.
-- **Hierarchical Role-Based Access Control**: Enforces `Leader > Moderator > Listener` permissions across playback controls, track skips, and queue management.
-- **Background Window Preservation**: Seamlessly controls Spotify and Apple Music without stealing window focus from active foreground terminal or editor windows.
-- Synchronizes LAN peer clocks using a high-precision **PTP-lite** UDP engine with sub-millisecond precision.
-- Features a full **interactive Ratatui terminal dashboard (TUI)** with an inline Unicode timeline slider, activity log, and room chat.
-- Offers **native track navigation** (next/previous), **one-shot room volume synchronization**, and automatic **clipboard room sharing**.
+Instead of streaming audio over the network, Synkrophase controls each computer's native media player directly. When one person plays, pauses, seeks, or changes a track, all connected computers follow along in sync.
 
 ---
 
-## Architecture Overview
+## Supported Platforms and Players
 
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Clock Synchronization Layer (PTP-lite UDP)               │
-│    - Hardware-accurate monotonic clock timestamping         │
-│    - Sub-millisecond offset calculation over UDP             │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ Synchronized Reference Time
-┌──────────────────────────────▼──────────────────────────────┐
-│ 2. Session & Discovery Layer                                │
-│    - mDNS LAN auto-discovery (_synkrophase._udp.local.)     │
-│    - Dynamic room formation, peer heartbeats & timeouts      │
-│    - Role succession and deterministic leader election       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ Postcard Binary Protocol
-┌──────────────────────────────▼──────────────────────────────┐
-│ 3. Intent Protocol & Fast-Lane Execution Plane              │
-│    - PlaybackIntent { action, target_ref_time, position_us }│
-│    - High-precision wait (Δ > 0)                            │
-│    - Exact Value Skip (Δ ≤ 0): seek_to(position + |Δ|)      │
-│    - Follower autonomous track title verification           │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ Commands OS Controllers
-┌──────────────────────────────▼──────────────────────────────┐
-│ 4. Platform Media Controller Abstraction                    │
-│    - macOS: AppleScript bridge (Spotify & Apple Music)      │
-│    - Play, Pause, Micro-seek, Next, Prev, Volume            │
-│    - Midpoint query timestamp compensation (~60-80ms)       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ Continuous Alignment
-┌──────────────────────────────▼──────────────────────────────┐
-│ 5. Dual-Trigger Drift Evaluator & Decider                   │
-│    - Zone 1 (<50ms): InSync (zero disruption)               │
-│    - Zone 2 (50–200ms): Fine rate adjustment (or seek)      │
-│    - Zone 3 (>200ms): Precision micro-seek with cooldown    │
-└─────────────────────────────────────────────────────────────┘
-```
+| Operating System | Supported Players | Control Mechanism |
+| :--- | :--- | :--- |
+| **macOS** | Spotify, Apple Music | AppleScript |
+| **Linux** | Spotify | MPRIS D-Bus |
+| **Windows** | Spotify | WinRT GSMTC |
 
 ---
 
-## Features
+## How It Works
 
-- **Zero Media Overhead**: Never transmits raw audio or video files. CPU, memory, and bandwidth footprints remain negligible.
-- **Primary Player Focus: Spotify & Apple Music**: Synkrophase focuses primarily on **Spotify** and **Apple Music**. It automatically detects whichever player is actively playing, prioritizes it dynamically, and maintains state memory across pauses without manual configuration.
-- **"Zero-Queue" Track Mirroring**: When the room leader switches songs in Spotify or Apple Music, Synkrophase automatically detects the new track, extracts native URIs / metadata, and synchronizes followers without requiring an in-app queue. If followers are already playing the track, it reconciles timeline position without re-triggering playback.
-- **Strict Role-Based Access Control**: Hierarchical permissions (`Leader > Moderator > Listener`). Listeners can view status, drift, and chat, while playback manipulation, skips, and volume synchronization are restricted to privileged roles.
-- **Actuation Latency Compensation & Pre-Dispatch**: Autonomously profiles local OS command overhead (~150ms for AppleScript IPC, ~15ms for D-Bus) using exponential moving averages and pre-dispatches actions early, ensuring audio commands take physical effect right at the synchronized network timestamp.
-- **Background Window Focus Preservation**: Track changes and playback controls run seamlessly without pulling Spotify or Apple Music to the foreground over active user windows.
-- **Interactive TUI Dashboard**: Full Ratatui terminal UI with live progress bar, peer status table with live clock offset telemetry, drift indicators, activity log, and integrated chat.
-- **Sub-Millisecond Clock Sync**: Built-in PTP-lite UDP engine measures round-trip time and clock offset across LAN peers.
-- **Exact Value-Skip Compensation**: If a command arrives late due to network delay or a peer connects mid-track, Synkrophase calculates temporal overshoot ($\Delta_{\text{late}} = \text{now} - T_{\text{target}}$) and seeks forward seamlessly.
-- **Native Track Controls**: Seamless next track (`n`) and previous track (`p`) navigation across room peers.
-- **One-Shot Room Volume Sync**: Broadcast host volume across all connected devices in one touch (`v` or `/vol`).
-- **Autonomous Follower Filtering**: Followers verify their active player track against incoming intents; if playing another track, followers gracefully skip execution without interrupting peers.
-- **Dynamic Leadership Transfer**: Hand off room host duties on the fly via `/transfer <peer|uuid>` in the TUI or `synkro transfer <peer>` via CLI.
-- **Adaptive Rolling Drift Smoothing**: Outlier-resistant rolling median window filter eliminates jitter from AppleScript polling spikes while guaranteeing drift stays within ±50ms.
-- **Automatic Host Failover**: Deterministic leader succession ensures playback synchronization continues uninterrupted if the room host leaves or disconnects.
+1. **Host and Followers**: One computer hosts a room (`synkro host ROOM`), and others join (`synkro join ROOM`).
+2. **Clock Sync**: Devices measure network latency and clock differences over UDP, keeping them aligned within milliseconds.
+3. **Automatic Track Sync**: When the host changes a track, followers automatically load that track in their own player and seek to the correct position.
+4. **Drift Correction**: If a follower's playback drifts out of alignment, Synkrophase nudges the position back into sync.
 
 ---
 
@@ -82,20 +32,20 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 
 ### Homebrew (macOS & Linux)
 
-Install the pre-built binary via Homebrew:
-
 ```bash
 brew tap landxcape/tap
 brew install landxcape/tap/synkrophase
 ```
 
-### Pre-built GitHub Releases
+### Pre-built Binaries (Windows, macOS, Linux)
 
-Download pre-compiled binaries for macOS (Apple Silicon / Intel), Linux, and Windows directly from [GitHub Releases](https://github.com/landxcape/synkrophase/releases/latest).
+Download pre-compiled binaries from [GitHub Releases](https://github.com/landxcape/synkrophase/releases/latest).
+
+On Windows, extract `synkrophase-windows-x86_64.zip` and run `synkro.exe` from PowerShell or Command Prompt.
 
 ### Build from Source
 
-Ensure you have a recent Rust toolchain installed (Rust 1.85+, 2024 edition):
+Requires Rust 1.85+ (2024 edition):
 
 ```bash
 git clone https://github.com/landxcape/synkrophase.git
@@ -103,14 +53,14 @@ cd synkrophase/synkrophase
 cargo build --release
 ```
 
-The compiled binary will be located at `target/release/synkro`.
+The compiled binary will be at `target/release/synkro`.
 
 ---
 
-## Quick Start & Usage
+## Quick Start
 
-### 1. Check Local Player Status
-Inspect the media player currently active on your system:
+### 1. Check Player Status
+Make sure your media player is running, then check its current status:
 
 ```bash
 synkro status
@@ -127,178 +77,125 @@ Output:
   Duration: 187.00s
 ```
 
-### 2. Host a Synchronization Room (Leader)
-Start a new room. Synkrophase launches an interactive dashboard and advertises via mDNS:
+### 2. Start a Room (Host)
 
 ```bash
 synkro host MYROOM
 ```
 
-### 3. Join an Existing Room (Follower)
-Discover and connect to a room on your LAN:
+This starts the room and opens the interactive dashboard. The join command is automatically copied to your clipboard.
+
+### 3. Join a Room (Follower)
+
+On another machine on the same network:
 
 ```bash
-# Auto-discover via mDNS:
 synkro join MYROOM
-
-# Or specify leader address directly:
-synkro join MYROOM --leader-addr 192.168.1.100:5871
 ```
 
-Followers lock their reference clocks to the leader, listen for playback intents, and adjust their local players automatically.
-
-### 4. Background "Zero-Touch" Sync Daemon (v0.5.0)
-Run Synkrophase headlessly in the background without keeping a terminal window open:
+If local network discovery (mDNS) is blocked by a firewall, specify the host's IP address directly:
 
 ```bash
-# Start a room host daemon in the background:
-synkro daemon start host MYROOM
-
-# Or join a room in the background:
-synkro daemon start join MYROOM
-
-# Query live status over the local IPC socket:
-synkro daemon status
-synkro daemon status --json  # Format as JSON for Waybar, SketchyBar, or scripts
-
-# Tail real-time background logs:
-synkro daemon logs -f
-
-# Cleanly stop the background daemon:
-synkro daemon stop
-```
-
-When running in daemon mode:
-- **Zero-Touch Local Interactivity**: Moderator followers who press physical keyboard media keys or headphone buttons automatically propagate their playback intentions to the room.
-- **Fast-Lane One-Shot CLI Integration**: Commands like `synkro play`, `synkro pause`, `synkro next`, and `synkro volume` automatically detect the running daemon via the local domain socket (`~/.synkrophase/synkro.sock`) and dispatch instantly without ad-hoc UDP reconnection overhead.
-
----
-
-## Local IPC Specification (`~/.synkrophase/synkro.sock`)
-
-Synkrophase exposes a local Unix Domain Socket at `~/.synkrophase/synkro.sock` accepting line-delimited JSON (NDJSON). Any third-party application, desktop status bar, or GUI can connect and exchange messages:
-
-### Request Format
-```json
-{"id": 1, "method": "status"}
-{"id": 2, "method": "pause"}
-{"id": 3, "method": "seek", "params": {"position_sec": 45.0}}
-{"id": 4, "method": "subscribe"}
-```
-
-### Real-Time Event Streaming
-Sending `{"method": "subscribe"}` streams real-time asynchronous sync events:
-```json
-{"event": "drift_update", "data": {"offset_us": 12, "zone": 1, "status": "Locked (<50ms)"}}
-{"event": "track_change", "data": {"title": "Numb", "artist": "Linkin Park", "album": "Meteora"}}
+synkro join MYROOM --leader-addr 192.168.1.100:5871
 ```
 
 ---
 
 ## Interactive Dashboard (TUI)
 
-When hosting or joining a room, Synkrophase launches an interactive dashboard:
+When hosting or joining, Synkrophase opens a terminal interface:
 
 ```text
-╭ Synkrophase • Room: TESTROOM • Role:  [LEADER]  • Device: Host ─────────────────────────────────────────────────────╮
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ Now Playing ────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ▶ Numb   Linkin Park • Meteora  [Playing]                                                                           │
-│ 01:05 [━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●─────────────────────────────────────────────────] 03:07   (+12µs sync)        │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ Room Members ──────────────────────────────────────╮╭ Activity & Room Chat ─────────────────────────────────────────╮
-│ID       Peer            Role          Offset       ││[21:14:03] [System] Session started. Ready.                    │
-│e8a15b3a Host (You)      Leader        Reference    ││[21:14:03] [System] Room: TESTROOM | Session: 5871             │
-│a3f290d1 Follower        Moderator     +12µs        ││[21:14:09] [Follower] Hey everyone!                            │
-│                                                    ││[21:14:12] [Host] Sync locked.                                 │
-╰────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
-[?] Help • [Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] VolSync • [c] Copy • [/] Chat/Cmd • [q] Quit
+╭ Synkrophase • Room: TESTROOM • Role: [LEADER] • Device: Host ────────────────╮
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ Now Playing ─────────────────────────────────────────────────────────────────╮
+│ ▶ Numb   Linkin Park • Meteora  [Playing]                                    │
+│ 01:05 [━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────] 03:07  (+12µs)│
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ Room Members ──────────────────────╮╭ Activity & Chat ───────────────────────╮
+│ID       Peer            Role Offset││[21:14:03] Session started. Ready.      │
+│e8a15b3a Host (You)    Leader    Ref││[21:14:03] Room: TESTROOM               │
+│a3f290d1 Follower   Moderator  +12µs││[21:14:09] [Follower] Connected.        │
+╰────────────────────────────────────╯╰────────────────────────────────────────╯
+[Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] Vol • [/] Chat • [q] Quit
 ```
 
-### Hotkeys (Normal Mode)
-- **`[Space]`** — Toggle Play / Pause
-- **`[← / →]`** — Micro-seek backward / forward ±5 seconds
-- **`[n]`** — Next track (Spotify / Apple Music)
-- **`[p]`** — Previous track (Spotify / Apple Music)
-- **`[v]`** — One-shot volume sync (broadcasts host volume to room)
-- **`[c]`** — Copy room invitation / join command to clipboard
-- **`[/]`** or **`[i]`** — Open Chat & Command input prompt
-- **`[?]`** or **`[h]`** — Open interactive Quick Reference help modal
-- **`[q]`** — Disconnect and quit
+### Keyboard Shortcuts
 
-### Slash Commands (Input Mode)
-- **`/play`**, **`/pause`** — Control playback across all peers
-- **`/next`**, **`/prev`** — Skip to next or previous track
-- **`/seek <seconds>`** — Jump to absolute timeline position (e.g. `/seek 90`)
-- **`/vol [0-100]`** — Sync room volume (e.g. `/vol 80`, or `/vol` to mirror self)
-- **`/transfer <peer>`** — Transfer room leadership by peer name or 8-char short UUID (Leader only)
-- **`/copy`**, **`/share`** — Copy room invitation / join command to clipboard
-- **`/help`** — Toggle help popup
-- **`/quit`** — Leave the room
+| Key | Action |
+| :--- | :--- |
+| `Space` | Play / Pause |
+| `←` / `→` | Seek backward / forward 5 seconds |
+| `n` | Next track |
+| `p` | Previous track |
+| `v` | Sync host volume to all peers |
+| `c` | Copy join command to clipboard |
+| `/` or `i` | Open chat and command prompt |
+| `?` or `h` | Show help |
+| `q` | Leave and exit |
+
+### Chat Commands
+
+Type `/` in the dashboard to access commands:
+- `/play` / `/pause` — Control playback
+- `/next` / `/prev` — Change tracks
+- `/seek <seconds>` — Jump to position (e.g. `/seek 90`)
+- `/vol <0-100>` — Set volume for all peers
+- `/transfer <peer>` — Transfer room host to another member
+- `/role <peer> <moderator|listener>` — Change permissions for a member
+- `/quit` — Leave the room
 
 ---
 
-## CLI Controls (Fast-Lane IPC Integration)
+## Background Daemon Mode
 
-When a Synkrophase session is active (either via `synkro host`, `synkro join`, or `synkro daemon`), one-shot CLI commands automatically connect to the local session via IPC:
+You can run Synkrophase in the background without keeping a terminal open:
 
 ```bash
-# Playback commands (no room code needed)
+# Start in the background
+synkro daemon start host MYROOM
+# or
+synkro daemon start join MYROOM
+
+# Check status
+synkro daemon status
+
+# View logs
+synkro daemon logs -f
+
+# Stop
+synkro daemon stop
+```
+
+When the daemon is running, control playback from any terminal:
+
+```bash
 synkro play
 synkro pause
-synkro resume
 synkro next
 synkro prev
-synkro seek 120.5
-
-# Volume control
-synkro volume 80      # Set volume across all peers
-synkro volume         # Mirror local volume across all peers
-
-# Room administration & telemetry
-synkro sync           # Inspect room clock offsets and drift zones
-synkro share          # Copy room join command to clipboard
-synkro chat "Starting now!" # Send a chat message
-synkro transfer <PEER>     # Hand off room leadership by peer name or UUID
-synkro role <PEER> <ROLE>  # Assign role ('moderator' or 'listener')
+synkro seek 45
+synkro volume 70
 ```
 
 ---
 
-## Configuration
+## Configuration Options
 
-Synkrophase comes configured for low latency out of the box, with options customizable via CLI flags:
+Pass these flags to `synkro host` or `synkro join`:
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--lead-time-ms` | `350` | Scheduled future execution window for intent delivery & pre-dispatch |
-| `--threshold-ms` | `50` | Maximum acceptable media drift before triggering micro-seeks |
-| `--heartbeat-ms` | `3000` | Peer health ping cadence |
-| `--heartbeat-timeout-ms`| `10000` | Timeout before declaring a peer dead and triggering succession |
-| `--no-copy` | `false` | Disable automatic copying of the join command to system clipboard on host start |
-
----
-
-## Testing & Quality
-
-Run the full automated test suite:
-
-```bash
-cargo test
-```
-
-Run static analysis with zero warnings:
-
-```bash
-cargo clippy --all-targets --all-features -- -D warnings
-```
+| `--lead-time-ms` | `350` | Buffer time (in ms) allowed for network delivery before an action executes |
+| `--threshold-ms` | `50` | Maximum acceptable playback drift (in ms) before seeking |
+| `--heartbeat-ms` | `3000` | Interval between peer health pings |
+| `--heartbeat-timeout-ms` | `10000` | Time before an unresponsive peer is considered disconnected |
+| `--no-copy` | `false` | Do not copy join command to clipboard on start |
 
 ---
 
 ## License
 
-Dual-licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+Dual-licensed under either:
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
