@@ -46,9 +46,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Interactive Terminal UI**: Ratatui dashboard displaying playback progress, member list, clock offset, drift state, and room chat.
 - **Drift Decider**: Three-zone drift management (In-Sync `<50ms`, Rate Adjustment `50–200ms`, Micro-seek `>200ms`).
 
+## [0.2.0] - 2026-10-08
+
+### Added
+- **External Media Controller Pivot**: Scrapped the raw audio streaming and in-app decoding engine (`rodio`, `cpal`, `tiny_http`).
+- Re-architected Synkrophase as an external control plane synchronizer interfacing directly with desktop players (Spotify, Apple Music).
+- macOS AppleScript controller bridge.
+- Intent scheduler with exact value-skip compensation.
+
 ## [0.1.0] - 2026-10-08
 
 ### Added
-- Initial release with macOS AppleScript controller (Spotify and Apple Music).
+- Initial prototype exploring raw LAN audio streaming via internal HTTP server and local audio sink decoding.
 - PTP-lite UDP clock synchronization engine.
 - mDNS local network room discovery.
