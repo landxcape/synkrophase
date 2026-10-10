@@ -121,7 +121,9 @@ Output:
 synkro host MYROOM
 ```
 
-This starts the room, opens the interactive dashboard, and copies the join command to your clipboard.
+This starts the room, opens the interactive dashboard, and **automatically copies the join command (`synkro join MYROOM`) to your clipboard** so you can paste and send it to your friends.
+
+> **Tip**: You can copy the join command again at any time by pressing **`c`** inside the dashboard, typing **`/copy`** in chat, or running **`synkro share`** from another terminal. If you don't want the command copied automatically on launch, pass `--no-copy`.
 
 ### 3. Join a Room (Follower)
 
