@@ -30,6 +30,7 @@ pub enum Message {
         queue_state: QueueState,
         assigned_role: Role,
         current_anchor: Option<SyncAnchor>,
+        current_track: Option<TrackIdentity>,
     },
     PeerJoined(PeerInfo),
     PeerLeft(Uuid),
@@ -230,6 +231,7 @@ mod tests {
                 queue_state: QueueState::default(),
                 assigned_role: Role::Listener,
                 current_anchor: None,
+                current_track: None,
             },
         };
 

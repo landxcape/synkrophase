@@ -240,6 +240,11 @@ impl SessionMessageRuntime {
                 }
 
                 let current_anchor = self.session.current_anchor.read().unwrap().clone();
+                let current_track = if let Some(ref controller) = self.controller {
+                    controller.get_track_identity().await.ok().flatten()
+                } else {
+                    None
+                };
 
                 let mut peer_list = self.session.snapshot().peer_list;
                 peer_list.push(self.self_peer_info());
@@ -255,6 +260,7 @@ impl SessionMessageRuntime {
                         queue_state: queue_state.clone(),
                         assigned_role,
                         current_anchor,
+                        current_track,
                     },
                 )
                 .await?;
@@ -294,6 +300,7 @@ impl SessionMessageRuntime {
                 queue_state,
                 assigned_role,
                 current_anchor,
+                current_track,
             } => {
                 self.log_system("Joined room successfully.");
                 self.session.accept_join_accepted(
@@ -303,11 +310,39 @@ impl SessionMessageRuntime {
                     queue_state,
                     assigned_role,
                 );
-                if let Some(anchor) = current_anchor {
+                if let Some(anchor) = current_anchor.clone() {
                     self.session.accept_sync_anchor(anchor.clone());
                     if let Some(follower_sync) = &self.follower_sync {
                         follower_sync.ingest_message(&self.session, &Message::SyncAnchor(anchor));
                     }
+                }
+
+                // Initial Playback Reconciliation: if room has a current track, reconcile local playback
+                if let Some(track) = current_track
+                    && let Some(controller) = self.controller.as_ref().map(Arc::clone)
+                {
+                    let anchor_opt = current_anchor;
+                    let clock_opt = self.clock.as_ref().map(Arc::clone);
+                    tokio::spawn(async move {
+                        let _ = controller.load_track(&track).await;
+                        if let Some(anchor) = anchor_opt {
+                            if anchor.is_playing {
+                                let _ = controller.play().await;
+                                if let Some(clock) = clock_opt {
+                                    let now = clock.reference_now();
+                                    let elapsed_us = (now.saturating_sub(anchor.reference_time) as f64
+                                        * anchor.playback_rate as f64) as i64;
+                                    let target_pos = anchor.media_position_us + elapsed_us;
+                                    let _ = controller.seek_to(target_pos).await;
+                                } else {
+                                    let _ = controller.seek_to(anchor.media_position_us).await;
+                                }
+                            } else {
+                                let _ = controller.pause().await;
+                                let _ = controller.seek_to(anchor.media_position_us).await;
+                            }
+                        }
+                    });
                 }
                 Ok(())
             }

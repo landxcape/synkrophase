@@ -203,21 +203,39 @@ impl MediaController for WindowsMediaController {
         if let Some(ref uri) = track.spotify_uri {
             let uri_clone = uri.clone();
             let this = self.clone();
-            tokio::task::spawn_blocking(move || {
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let start = Instant::now();
                 let _ = std::process::Command::new("cmd")
                     .args(["/C", "start", &uri_clone])
                     .output();
-                // Brief pause for Spotify to accept the URI, then trigger Play via GSMTC
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                if let Ok(manager) = Self::get_manager()
-                    && let Ok(session) = this.find_active_session(&manager)
-                    && let Ok(async_op) = session.TryPlayAsync()
-                {
-                    let _ = async_op.get();
+
+                // Adaptive convergence loop: poll up to 2.0s with 100ms intervals
+                // until Spotify is actively playing
+                let max_deadline = Instant::now() + std::time::Duration::from_millis(2000);
+                while Instant::now() < max_deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if let Ok(manager) = Self::get_manager()
+                        && let Ok(session) = this.find_active_session(&manager)
+                    {
+                        if let Ok(info) = session.GetPlaybackInfo()
+                            && let Ok(status) = info.PlaybackStatus()
+                            && status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
+                        {
+                            this.record_actuation_time(start.elapsed().as_micros() as u64);
+                            return Ok(());
+                        }
+
+                        // If not yet playing, nudge with TryPlayAsync
+                        if let Ok(async_op) = session.TryPlayAsync() {
+                            let _ = async_op.get();
+                        }
+                    }
                 }
+                this.record_actuation_time(start.elapsed().as_micros() as u64);
+                Ok(())
             })
             .await
-            .map_err(|e| SynkroError::MediaControl(e.to_string()))?;
+            .map_err(|e| SynkroError::MediaControl(e.to_string()))??;
         }
         Ok(())
     }
