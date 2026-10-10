@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use uuid::Uuid;
@@ -503,6 +504,10 @@ impl SessionMessageRuntime {
                     let title = track.title.clone();
                     let artist = track.artist.clone().unwrap_or_default();
                     self.log_system(format!("Leader changed track to: {} - {}", title, artist));
+
+                    if let Some(drift) = &self.drift_evaluator {
+                        drift.enter_buffering(Duration::from_millis(800));
+                    }
 
                     if let Some(controller) = &self.controller {
                         let _ = controller.load_track(&track).await;

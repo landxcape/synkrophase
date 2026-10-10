@@ -34,6 +34,7 @@ pub struct DriftEvaluator {
     drift_history: Mutex<VecDeque<i64>>,
     last_zone: Mutex<u8>,
     consecutive_outliers: Mutex<u32>,
+    buffering_until: Mutex<Option<std::time::Instant>>,
 }
 
 impl DriftEvaluator {
@@ -52,7 +53,15 @@ impl DriftEvaluator {
             drift_history: Mutex::new(VecDeque::with_capacity(5)),
             last_zone: Mutex::new(1),
             consecutive_outliers: Mutex::new(0),
+            buffering_until: Mutex::new(None),
         }
+    }
+
+    pub fn enter_buffering(&self, duration: Duration) {
+        let deadline = std::time::Instant::now() + duration;
+        *self.buffering_until.lock().unwrap() = Some(deadline);
+        *self.last_zone.lock().unwrap() = 1;
+        self.trigger_immediate();
     }
 
     pub fn notify_handle(&self) -> Arc<Notify> {
@@ -81,8 +90,16 @@ impl DriftEvaluator {
             return Ok((0, 1, "Paused".to_string()));
         }
 
-        // Settling grace period check (1500ms post-seek)
         let now = std::time::Instant::now();
+        if let Some(buf_until) = *self.buffering_until.lock().unwrap() {
+            if now < buf_until {
+                return Ok((0, 1, "Buffering...".to_string()));
+            } else {
+                *self.buffering_until.lock().unwrap() = None;
+            }
+        }
+
+        // Settling grace period check (1500ms post-seek)
         if let Some(prev_seek) = *self.last_seek.lock().unwrap()
             && now.duration_since(prev_seek) < Duration::from_millis(1500)
         {
