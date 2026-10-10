@@ -137,20 +137,7 @@ impl MediaController for WindowsMediaController {
                 Ok(timeline) => {
                     // Position in WinRT is TimeSpan (100-nanosecond intervals)
                     let pos_100ns = timeline.Position().map(|ts| ts.Duration).unwrap_or(0);
-                    let mut pos_us = pos_100ns / 10;
-
-                    // Windows GSMTC position is a static snapshot that updates every ~1s.
-                    // If the session is currently playing, project position forward using LastUpdatedTime:
-                    if is_playing && let Ok(last_updated) = timeline.LastUpdatedTime() {
-                        // Unix epoch (1970-01-01) is 116444736000000000 100ns units after Windows epoch (1601-01-01)
-                        const WINDOWS_TICK_EPOCH_DIFF: i64 = 116_444_736_000_000_000;
-                        if let Ok(now_system) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-                            let now_100ns = (now_system.as_micros() as i64 * 10) + WINDOWS_TICK_EPOCH_DIFF;
-                            let elapsed_100ns = (now_100ns - last_updated.UniversalTime).max(0);
-                            let elapsed_us = (elapsed_100ns / 10) as f64 * (rate as f64);
-                            pos_us += elapsed_us as i64;
-                        }
-                    }
+                    let pos_us = pos_100ns / 10;
 
                     let end_100ns = timeline.EndTime().map(|ts| ts.Duration).unwrap_or(0);
                     let dur_us = if end_100ns > 0 { Some((end_100ns / 10) as u64) } else { None };
@@ -215,10 +202,19 @@ impl MediaController for WindowsMediaController {
     async fn load_track(&self, track: &TrackIdentity) -> Result<()> {
         if let Some(ref uri) = track.spotify_uri {
             let uri_clone = uri.clone();
+            let this = self.clone();
             tokio::task::spawn_blocking(move || {
                 let _ = std::process::Command::new("cmd")
                     .args(["/C", "start", &uri_clone])
                     .output();
+                // Brief pause for Spotify to accept the URI, then trigger Play via GSMTC
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if let Ok(manager) = Self::get_manager()
+                    && let Ok(session) = this.find_active_session(&manager)
+                    && let Ok(async_op) = session.TryPlayAsync()
+                {
+                    let _ = async_op.get();
+                }
             })
             .await
             .map_err(|e| SynkroError::MediaControl(e.to_string()))?;
