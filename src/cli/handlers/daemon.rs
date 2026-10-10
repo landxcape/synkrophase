@@ -549,8 +549,8 @@ async fn setup_join_daemon(
         async move {
             loop {
                 sleep(Duration::from_secs(10)).await;
-                if let Ok(offset) = clk.measure_offset(leader_clock_addr).await {
-                    sess.set_clock_offset(offset);
+                if let Ok(_offset) = clk.measure_offset(leader_clock_addr).await {
+                    sess.set_clock_offset(clk.residual_offset());
                 }
             }
         }

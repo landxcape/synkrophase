@@ -100,7 +100,7 @@ pub async fn run_heartbeat_loop(
     loop {
         sleep(Duration::from_millis(config.heartbeat_interval_ms)).await;
         if let Some(c) = &clock {
-            session.set_clock_offset(c.offset());
+            session.set_clock_offset(c.residual_offset());
         }
         let envelope = Envelope {
             sender,

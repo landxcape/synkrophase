@@ -19,6 +19,8 @@ pub fn local_now() -> u64 {
 
 pub struct ClockSync {
     offset_us: AtomicI64,
+    residual_offset_us: AtomicI64,
+    is_synchronized: std::sync::atomic::AtomicBool,
     socket: Arc<UdpSocket>,
     config: SyncConfig,
     self_id: uuid::Uuid,
@@ -28,6 +30,8 @@ impl ClockSync {
     pub fn new(socket: UdpSocket, config: SyncConfig, self_id: uuid::Uuid) -> Self {
         Self {
             offset_us: AtomicI64::new(0),
+            residual_offset_us: AtomicI64::new(0),
+            is_synchronized: std::sync::atomic::AtomicBool::new(false),
             socket: Arc::new(socket),
             config,
             self_id,
@@ -36,6 +40,10 @@ impl ClockSync {
 
     pub fn offset(&self) -> i64 {
         self.offset_us.load(Ordering::Acquire)
+    }
+
+    pub fn residual_offset(&self) -> i64 {
+        self.residual_offset_us.load(Ordering::Acquire)
     }
 
     pub fn reference_now(&self) -> u64 {
@@ -107,7 +115,15 @@ impl ClockSync {
             samples[..best_count].iter().map(|&(off, _)| off).collect();
         best_offsets.sort_unstable();
         let median = best_offsets[best_offsets.len() / 2];
-        self.set_offset(median);
+        if self.is_synchronized.swap(true, Ordering::AcqRel) {
+            let prev_offset = self.offset();
+            let residual = median - prev_offset;
+            self.residual_offset_us.store(residual, Ordering::Release);
+            self.set_offset(median);
+        } else {
+            self.residual_offset_us.store(0, Ordering::Release);
+            self.set_offset(median);
+        }
 
         Ok(median)
     }
@@ -187,5 +203,13 @@ mod tests {
             .expect("should measure successfully");
         // Because they run on the same machine/clock, offset should be effectively 0 (within <1ms / 1000us)
         assert!(offset.abs() < 1000, "offset {} is not < 1ms", offset);
+        assert_eq!(clock.residual_offset(), 0, "first residual offset should be 0");
+
+        // Second measurement should track residual offset relative to first
+        let _ = clock
+            .measure_offset(server_addr)
+            .await
+            .expect("second measurement should succeed");
+        assert!(clock.residual_offset().abs() < 1000, "residual offset {} should be < 1ms", clock.residual_offset());
     }
 }

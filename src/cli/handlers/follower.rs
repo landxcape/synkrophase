@@ -57,8 +57,8 @@ pub async fn run_join(
 
     let leader_clock_addr = SocketAddr::new(resolved_leader_addr.ip(), leader_clock_port);
     match clock.measure_offset(leader_clock_addr).await {
-        Ok(offset) => {
-            session.set_clock_offset(offset);
+        Ok(_offset) => {
+            session.set_clock_offset(clock.residual_offset());
         }
         Err(err) => {
             eprintln!("clock offset measurement failed: {err}");
@@ -122,8 +122,8 @@ pub async fn run_join(
         async move {
             loop {
                 sleep(Duration::from_secs(10)).await;
-                if let Ok(offset) = clock.measure_offset(leader_clock_addr).await {
-                    session.set_clock_offset(offset);
+                if let Ok(_offset) = clock.measure_offset(leader_clock_addr).await {
+                    session.set_clock_offset(clock.residual_offset());
                 }
             }
         }
