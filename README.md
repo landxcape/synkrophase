@@ -82,8 +82,8 @@ Synkrophase uses UDP for low-latency communication on your local network:
 
 | Port | Protocol | Purpose |
 | :--- | :--- | :--- |
+| `5870` | UDP | PTP clock synchronization exchanges |
 | `5871` | UDP | Session messaging, heartbeats, playback intents, and chat |
-| `5872` | UDP | PTP clock synchronization exchanges |
 | `5353` | UDP | mDNS room discovery (`_synkrophase._udp.local.`) |
 
 If room discovery does not find your host (e.g., when your Wi-Fi router has **Client Isolation** enabled or blocks multicast):
@@ -291,8 +291,10 @@ When a session is active (interactive room or background daemon), these commands
 # Playback Controls
 synkro play                    # Resume playback across room
 synkro pause                   # Pause playback across room
+synkro resume                  # Resume playback across room (alias for play)
 synkro next                    # Skip to next track
 synkro prev                    # Skip to previous track
+synkro skip                    # Skip to next track (alias for next)
 synkro seek 45                 # Seek to 45 seconds
 synkro volume 75               # Set room volume to 75%
 synkro volume                  # Mirror current host volume to room
@@ -300,10 +302,15 @@ synkro volume                  # Mirror current host volume to room
 # Room Telemetry & Collaboration
 synkro status                  # Inspect local media player status
 synkro sync                    # View live room sync offsets and drift
+synkro debug                   # Output raw session JSON status
 synkro share                   # Copy room join command to clipboard
 synkro chat "Starting now!"    # Post a message to the room chat
 synkro transfer <PEER>         # Hand off host to a peer name or UUID
 synkro role <PEER> <ROLE>      # Set role ('moderator' or 'listener')
+
+# Global Options
+synkro --name "Alice" host ROOM   # Set custom display name
+synkro --ephemeral join ROOM      # Use temporary device ID (useful for multi-terminal testing)
 ```
 
 ---
