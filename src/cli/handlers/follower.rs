@@ -242,7 +242,7 @@ pub async fn run_join(
         .await;
 
         engine_cmd_worker.abort();
-        let _ = Arc::into_inner(engine).unwrap().shutdown().await;
+        let _ = engine.shutdown().await;
 
         return tui_res;
     }

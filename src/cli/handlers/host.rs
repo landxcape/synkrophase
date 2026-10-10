@@ -184,7 +184,7 @@ pub async fn run_host(
 
         let _ = discovery.unregister();
         engine_cmd_worker.abort();
-        let _ = Arc::into_inner(engine).unwrap().shutdown().await;
+        let _ = engine.shutdown().await;
 
         return tui_res;
     }

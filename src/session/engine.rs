@@ -31,7 +31,7 @@ pub struct SynkroEngine {
     scheduler: Arc<IntentScheduler>,
     command_tx: mpsc::UnboundedSender<EngineCommand>,
     event_tx: mpsc::UnboundedSender<AppEvent>,
-    abort_handles: Vec<tokio::task::AbortHandle>,
+    abort_handles: std::sync::Mutex<Vec<tokio::task::AbortHandle>>,
 }
 
 impl SynkroEngine {
@@ -56,7 +56,7 @@ impl SynkroEngine {
             scheduler,
             command_tx,
             event_tx,
-            abort_handles,
+            abort_handles: std::sync::Mutex::new(abort_handles),
         };
         (engine, command_rx)
     }
@@ -280,7 +280,7 @@ impl SynkroEngine {
         Ok(())
     }
 
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         // Send peer left notice if connected
         let leave_env = Envelope {
             sender: self.session.self_id(),
@@ -295,7 +295,8 @@ impl SynkroEngine {
             }
         }
 
-        for handle in self.abort_handles.drain(..) {
+        let mut handles = self.abort_handles.lock().unwrap();
+        for handle in handles.drain(..) {
             handle.abort();
         }
         Ok(())
