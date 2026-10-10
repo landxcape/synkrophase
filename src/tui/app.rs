@@ -61,6 +61,7 @@ pub struct TuiApp {
     pub input_buffer: String,
     pub show_help: bool,
     pub should_quit: bool,
+    pub last_esc_press: Option<std::time::Instant>,
     pub invitation: Option<crate::session::invitation::RoomInvitation>,
 
     pub session: Arc<SessionState>,
@@ -97,6 +98,7 @@ impl TuiApp {
             input_buffer: String::new(),
             show_help: false,
             should_quit: false,
+            last_esc_press: None,
             invitation: None,
             session,
             controller,

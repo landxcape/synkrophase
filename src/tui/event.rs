@@ -18,8 +18,26 @@ pub async fn handle_key_event(
             KeyCode::Esc => {
                 if app.show_help {
                     app.show_help = false;
+                    app.last_esc_press = None;
                 } else {
-                    app.should_quit = true;
+                    let now = std::time::Instant::now();
+                    if let Some(prev) = app.last_esc_press {
+                        if now.duration_since(prev) <= std::time::Duration::from_millis(1500) {
+                            app.should_quit = true;
+                        } else {
+                            app.last_esc_press = Some(now);
+                            app.add_log(
+                                "System".to_string(),
+                                "Press [Esc] again to exit (or press [q])".to_string(),
+                            );
+                        }
+                    } else {
+                        app.last_esc_press = Some(now);
+                        app.add_log(
+                            "System".to_string(),
+                            "Press [Esc] again to exit (or press [q])".to_string(),
+                        );
+                    }
                 }
             }
             KeyCode::Char(' ') => {
@@ -64,6 +82,7 @@ pub async fn handle_key_event(
             KeyCode::Char('/') | KeyCode::Char('i') => {
                 app.input_mode = InputMode::Editing;
                 app.input_buffer.clear();
+                app.last_esc_press = None;
             }
             _ => {}
         },
@@ -71,6 +90,7 @@ pub async fn handle_key_event(
             KeyCode::Esc => {
                 app.input_mode = InputMode::Normal;
                 app.input_buffer.clear();
+                app.last_esc_press = None;
             }
             KeyCode::Enter => {
                 let text = app.input_buffer.trim().to_string();
