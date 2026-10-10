@@ -19,6 +19,8 @@ pub async fn handle_key_event(
                 if app.show_help {
                     app.show_help = false;
                     app.last_esc_press = None;
+                } else if app.log_scroll_offset > 0 {
+                    app.reset_log_scroll();
                 } else {
                     let now = std::time::Instant::now();
                     if let Some(prev) = app.last_esc_press {
@@ -39,6 +41,24 @@ pub async fn handle_key_event(
                         );
                     }
                 }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.scroll_logs_up(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.scroll_logs_down(1);
+            }
+            KeyCode::PageUp => {
+                app.scroll_logs_up(5);
+            }
+            KeyCode::PageDown => {
+                app.scroll_logs_down(5);
+            }
+            KeyCode::Home => {
+                app.scroll_logs_up(app.logs.len());
+            }
+            KeyCode::End => {
+                app.reset_log_scroll();
             }
             KeyCode::Char(' ') => {
                 // Toggle play / pause

@@ -202,7 +202,7 @@ When hosting or joining a room interactively, Synkrophase launches a full termin
 │e8a15b3a Host (You)    Leader    Ref││[21:14:03] Room: TESTROOM               │
 │a3f290d1 Follower   Moderator  +12µs││[21:14:12] [Follower] Connected.        │
 ╰────────────────────────────────────╯╰────────────────────────────────────────╯
-[Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] Vol • [/] Chat • [q] Quit
+[Space] Play/Pause • [←/→] Seek ±5s • [↑/↓] Scroll • [n/p] Next/Prev • [v] Vol • [/] Chat • [q] Quit
 ```
 
 ### Keyboard Shortcuts
@@ -211,13 +211,16 @@ When hosting or joining a room interactively, Synkrophase launches a full termin
 | :--- | :--- |
 | `Space` | Toggle Play / Pause across the room |
 | `←` / `→` | Seek backward / forward 5 seconds |
+| `↑` / `↓` or `k` / `j` | Scroll activity log & chat history up / down |
+| `PgUp` / `PgDn` | Scroll activity log by page (`Home` / `End` jumps to start / latest) |
 | `n` | Next track in player |
 | `p` | Previous track in player |
 | `v` | Sync local volume to all room members |
 | `c` | Copy room join command to clipboard |
 | `/` or `i` | Open chat and command input bar |
 | `?` or `h` | Toggle keyboard help modal |
-| `q` | Disconnect and exit (requires double-tap `Esc` or `q`) |
+| `Esc` | Reset scroll to latest, close help dialog, or double-tap to exit |
+| `q` | Disconnect and exit |
 
 ### Chat Commands
 

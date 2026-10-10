@@ -368,12 +368,17 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
         left_layout[1],
     );
 
-    // Right Panel: Activity Log & Chat (Chronological with auto-scroll to latest)
+    // Right Panel: Activity Log & Chat (Chronological with scrollback and auto-scroll)
     let available_height = middle_layout[1].height.saturating_sub(2) as usize;
-    let visible_logs = if available_height > 0 && app.logs.len() > available_height {
-        &app.logs[app.logs.len() - available_height..]
+    let total_logs = app.logs.len();
+    let (visible_logs, clamped_offset) = if available_height > 0 && total_logs > available_height {
+        let max_scroll = total_logs.saturating_sub(available_height);
+        let offset = app.log_scroll_offset.min(max_scroll);
+        let end = total_logs.saturating_sub(offset);
+        let start = end.saturating_sub(available_height);
+        (&app.logs[start..end], offset)
     } else {
-        &app.logs[..]
+        (&app.logs[..], 0)
     };
 
     let log_items: Vec<ListItem> = visible_logs
@@ -398,17 +403,31 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
         })
         .collect();
 
+    let (title_str, title_style, border_color) = if clamped_offset > 0 {
+        (
+            format!(" Activity & Room Chat [↑ +{clamped_offset}] "),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            Color::Yellow,
+        )
+    } else {
+        (
+            " Activity & Room Chat ".to_string(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            Color::DarkGray,
+        )
+    };
+
     let logs_list = List::new(log_items).block(
         Block::default()
-            .title(" Activity & Room Chat ")
-            .title_style(
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .title(title_str)
+            .title_style(title_style)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(border_color)),
     );
 
     frame.render_widget(logs_list, middle_layout[1]);
@@ -439,6 +458,13 @@ fn render_command_bar(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Re
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("Seek ±5s  • "),
+                Span::styled(
+                    "[↑/↓] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Scroll  • "),
                 Span::styled(
                     "[n/p] ",
                     Style::default()
@@ -545,6 +571,14 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
         Line::from(vec![
             Span::styled("  [← / →]     ", Style::default().fg(Color::Cyan)),
             Span::raw("Micro-seek backward / forward ±5s"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [↑ / ↓]     ", Style::default().fg(Color::Cyan)),
+            Span::raw("Scroll activity & chat up / down (or [k / j])"),
+        ]),
+        Line::from(vec![
+            Span::styled("  [PgUp/PgDn] ", Style::default().fg(Color::Cyan)),
+            Span::raw("Scroll activity & chat page up / down ([Home/End])"),
         ]),
         Line::from(vec![
             Span::styled("  [n]         ", Style::default().fg(Color::Cyan)),
