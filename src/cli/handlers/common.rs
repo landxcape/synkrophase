@@ -10,7 +10,9 @@ use crate::config::SyncConfig;
 use crate::controller::MediaController;
 #[cfg(target_os = "macos")]
 use crate::controller::macos::MacOsMediaController;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+use crate::controller::linux::LinuxMediaController;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use crate::controller::mock::MockMediaController;
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{Envelope, Message, serialize};
@@ -22,7 +24,11 @@ pub fn create_media_controller() -> Arc<dyn MediaController> {
     {
         Arc::new(MacOsMediaController::new())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(LinuxMediaController::new())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Arc::new(MockMediaController::new())
     }
