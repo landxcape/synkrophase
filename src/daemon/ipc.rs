@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -49,37 +50,48 @@ impl IpcServer {
     }
 
     pub async fn run_server(self: Arc<Self>) -> Result<()> {
-        self.paths.ensure_dir_exists()?;
-        self.paths.clean_socket();
+        #[cfg(unix)]
+        {
+            self.paths.ensure_dir_exists()?;
+            self.paths.clean_socket();
 
-        let listener = UnixListener::bind(&self.paths.socket_path).map_err(|e| {
-            SynkroError::Network(std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                format!("Failed to bind domain socket {:?}: {e}", self.paths.socket_path),
-            ))
-        })?;
+            let listener = UnixListener::bind(&self.paths.socket_path).map_err(|e| {
+                SynkroError::Network(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("Failed to bind domain socket {:?}: {e}", self.paths.socket_path),
+                ))
+            })?;
 
-        tracing::info!(socket = ?self.paths.socket_path, "IPC domain socket listening");
+            tracing::info!(socket = ?self.paths.socket_path, "IPC domain socket listening");
 
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let server = Arc::clone(&self);
-                    tokio::spawn(async move {
-                        let _ = server.handle_client(stream).await;
-                    });
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "IPC accept error");
-                    break;
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        let server = Arc::clone(&self);
+                        tokio::spawn(async move {
+                            let _ = server.handle_client(stream).await;
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "IPC accept error");
+                        break;
+                    }
                 }
             }
+
+            self.paths.clean_socket();
         }
 
-        self.paths.clean_socket();
+        #[cfg(not(unix))]
+        {
+            tracing::info!("IPC domain socket is currently only supported on Unix systems");
+            std::future::pending::<()>().await;
+        }
+
         Ok(())
     }
 
+    #[cfg(unix)]
     async fn handle_client(&self, stream: UnixStream) -> Result<()> {
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();

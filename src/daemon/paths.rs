@@ -71,11 +71,11 @@ impl DaemonPaths {
     }
 
     pub fn is_running(&self) -> bool {
-        if let Ok(Some(pid)) = self.read_pid() {
+        if let Ok(Some(_pid)) = self.read_pid() {
             // Check process existence via kill(pid, 0)
             #[cfg(unix)]
             {
-                unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+                unsafe { libc::kill(_pid as libc::pid_t, 0) == 0 }
             }
             #[cfg(not(unix))]
             {

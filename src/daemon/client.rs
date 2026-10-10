@@ -1,6 +1,10 @@
+#[cfg(unix)]
 use std::time::Duration;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(unix)]
 use tokio::time::timeout;
 
 use crate::daemon::paths::DaemonPaths;
@@ -13,52 +17,60 @@ pub struct IpcClient;
 impl IpcClient {
     /// Attempts to send an IPC command to the daemon. Returns `None` if the daemon is not running.
     pub async fn send_command(
-        method: &str,
-        params: serde_json::Value,
+        _method: &str,
+        _params: serde_json::Value,
     ) -> Result<Option<serde_json::Value>> {
-        let paths = match DaemonPaths::default_paths() {
-            Ok(p) => p,
-            Err(_) => return Ok(None),
-        };
-
-        if !paths.is_running() || !paths.socket_path.exists() {
+        #[cfg(not(unix))]
+        {
             return Ok(None);
         }
 
-        let stream = match UnixStream::connect(&paths.socket_path).await {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
-        };
+        #[cfg(unix)]
+        {
+            let paths = match DaemonPaths::default_paths() {
+                Ok(p) => p,
+                Err(_) => return Ok(None),
+            };
 
-        let req = IpcRequest {
-            id: Some(1),
-            method: method.to_string(),
-            params,
-        };
+            if !paths.is_running() || !paths.socket_path.exists() {
+                return Ok(None);
+            }
 
-        let mut msg = serde_json::to_string(&req)
-            .map_err(|e| SynkroError::Serialization(e.to_string()))?;
-        msg.push('\n');
+            let stream = match UnixStream::connect(&paths.socket_path).await {
+                Ok(s) => s,
+                Err(_) => return Ok(None),
+            };
 
-        let (reader, mut writer) = stream.into_split();
-        writer
-            .write_all(msg.as_bytes())
-            .await
-            .map_err(|e| SynkroError::Network(std::io::Error::other(e.to_string())))?;
+            let req = IpcRequest {
+                id: Some(1),
+                method: _method.to_string(),
+                params: _params,
+            };
 
-        let mut lines = BufReader::new(reader).lines();
-        let line = match timeout(Duration::from_secs(2), lines.next_line()).await {
-            Ok(Ok(Some(l))) => l,
-            _ => return Ok(None),
-        };
+            let mut msg = serde_json::to_string(&req)
+                .map_err(|e| SynkroError::Serialization(e.to_string()))?;
+            msg.push('\n');
 
-        let resp: IpcResponse = serde_json::from_str(&line)
-            .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
+            let (reader, mut writer) = stream.into_split();
+            writer
+                .write_all(msg.as_bytes())
+                .await
+                .map_err(|e| SynkroError::Network(std::io::Error::other(e.to_string())))?;
 
-        if let Some(err) = resp.error {
-            return Err(SynkroError::PermissionDenied(err.message));
+            let mut lines = BufReader::new(reader).lines();
+            let line = match timeout(Duration::from_secs(2), lines.next_line()).await {
+                Ok(Ok(Some(l))) => l,
+                _ => return Ok(None),
+            };
+
+            let resp: IpcResponse = serde_json::from_str(&line)
+                .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
+
+            if let Some(err) = resp.error {
+                return Err(SynkroError::PermissionDenied(err.message));
+            }
+
+            Ok(resp.result)
         }
-
-        Ok(resp.result)
     }
 }
