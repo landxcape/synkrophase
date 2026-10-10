@@ -6,13 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [0.6.4] - 2026-10-10
 
 ### Added
-- **Join Track Reconciliation**: When joining a room, followers now receive the host's active track identity in `JoinAccepted` and automatically load the track, match the play/pause state, and seek to the current playback position.
+- **Join Track Reconciliation**: When joining a room, followers receive the host's active track in `JoinAccepted` and automatically load the track, mirror play/pause state, and seek to the current playback position.
 - **Windows GSMTC Adaptive Convergence**: Replaced fixed startup delays with an adaptive polling loop that repeatedly checks WinRT media state and calls `TryPlayAsync` until playback starts.
 
 ## [0.6.3] - 2026-10-10
 
 ### Changed
-- **Decoupled Internal Timeline Offset from Displayed Clock Difference**: The internal monotonic timeline offset is preserved for accurate playback calculations, while the peer table now displays the real-time residual clock difference (microseconds/milliseconds) rather than process startup deltas.
+- **Decoupled Internal Timeline Offset from Displayed Clock Difference**: Preserved the internal monotonic timeline offset for playback calculations, while reporting the real-time residual clock difference in microseconds/milliseconds in the peer table.
 
 ## [0.6.2] - 2026-10-10
 
@@ -43,18 +43,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [0.3.4] - 2026-10-09
 
 ### Added
+- **Drift Management**: Three-zone drift decider (In-Sync `<50ms`, Rate Adjustment `50–200ms`, Micro-seek `>200ms`).
+- **TimelineTracer**: Wait until reference deadlines using clock-aligned scheduling.
+
+## [0.3.0] - 2026-10-08
+
+### Added
 - **Interactive Terminal UI**: Ratatui dashboard displaying playback progress, member list, clock offset, drift state, and room chat.
-- **Drift Decider**: Three-zone drift management (In-Sync `<50ms`, Rate Adjustment `50–200ms`, Micro-seek `>200ms`).
+- **Track & Volume Controls**: Next/previous track navigation and room volume synchronization.
 
 ## [0.2.0] - 2026-10-08
 
 ### Added
-- **External Media Controller Pivot**: Scrapped the raw audio streaming and in-app decoding engine (`rodio`, `cpal`, `tiny_http`).
-- Re-architected Synkrophase as an external control plane synchronizer interfacing directly with desktop players (Spotify, Apple Music).
-- macOS AppleScript controller bridge.
+- **External Media Controller Architecture**: Scrapped the initial in-app audio streaming engine (`rodio`, `cpal`, `tiny_http`) and pivoted to an external control plane synchronizer.
+- macOS AppleScript controller bridge for Spotify and Apple Music.
 - Intent scheduler with exact value-skip compensation.
 
-## [0.1.0] - 2026-10-08
+## [0.1.0] - 2026-05-07
 
 ### Added
 - Initial prototype exploring raw LAN audio streaming via internal HTTP server and local audio sink decoding.
