@@ -111,9 +111,9 @@ fn render_playback(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect)
 
     // Row 1: Track Metadata & Status
     let (icon, state_text) = if app.playback.is_playing {
-        ("▶ ", "Playing")
+        ("[Playing] ", "Playing")
     } else {
-        ("⏸ ", "Paused")
+        ("[Paused] ", "Paused")
     };
 
     let title = app
@@ -602,6 +602,10 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
         Line::from(vec![
             Span::styled("  /transfer <p> ", Style::default().fg(Color::Green)),
             Span::raw("Transfer leadership to peer name or UUID prefix"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /role <p> <r> ", Style::default().fg(Color::Green)),
+            Span::raw("Assign role (leader, moderator, listener) to peer"),
         ]),
         Line::from(vec![
             Span::styled("  /help         ", Style::default().fg(Color::Green)),

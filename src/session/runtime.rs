@@ -440,6 +440,76 @@ impl SessionMessageRuntime {
                     .await?;
                 Ok(())
             }
+            Message::AssignRole { target, new_role } => {
+                if let Err(err) = self
+                    .session
+                    .can_assign_role(envelope.sender, target, new_role)
+                {
+                    tracing::warn!(
+                        actor = %envelope.sender,
+                        target = %target,
+                        new_role = ?new_role,
+                        error = %err,
+                        "Unauthorized role assignment rejected"
+                    );
+                    return Ok(());
+                }
+
+                if new_role == Role::Leader {
+                    // Leadership transfer
+                    if self.session.is_leader() {
+                        self.session.demote_from_leader(target);
+                        let name = self.session.display_name(&target);
+                        self.log_system(format!("Leadership transferred to {}", name));
+                        self.send_to_peers(socket, Message::LeaderElected(target))
+                            .await?;
+                    }
+                } else {
+                    self.session.apply_role_assignment(target, new_role);
+                    let target_name = self.session.display_name(&target);
+                    let actor_name = self.session.display_name(&envelope.sender);
+                    self.log_system(format!(
+                        "{} assigned role [{:?}] to {}",
+                        actor_name, new_role, target_name
+                    ));
+
+                    // Broadcast assignment to all peers
+                    let role_assigned = Message::RoleAssigned {
+                        target,
+                        new_role,
+                        actor: envelope.sender,
+                    };
+                    self.send_to_peers(socket, role_assigned).await?;
+                }
+                Ok(())
+            }
+            Message::RoleAssigned {
+                target,
+                new_role,
+                actor,
+            } => {
+                self.session.apply_role_assignment(target, new_role);
+                let target_name = self.session.display_name(&target);
+                let actor_name = self.session.display_name(&actor);
+                self.log_system(format!(
+                    "{} assigned role [{:?}] to {}",
+                    actor_name, new_role, target_name
+                ));
+                Ok(())
+            }
+            Message::TrackTransition(track) => {
+                // Followers accept track transition from current leader
+                if !self.session.is_leader() && envelope.sender == self.session.leader_id() {
+                    let title = track.title.clone();
+                    let artist = track.artist.clone().unwrap_or_default();
+                    self.log_system(format!("Leader changed track to: {} - {}", title, artist));
+
+                    if let Some(controller) = &self.controller {
+                        let _ = controller.load_track(&track).await;
+                    }
+                }
+                Ok(())
+            }
             Message::QueueProposal(command) => {
                 if !self.session.is_leader() {
                     return Ok(());

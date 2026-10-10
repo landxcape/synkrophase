@@ -11,6 +11,9 @@ pub enum SynkroError {
     #[error("operation requires leader role")]
     NotLeader,
 
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
     #[error("stale queue version: local={local}, received={received}")]
     StaleQueue { local: u64, received: u64 },
 

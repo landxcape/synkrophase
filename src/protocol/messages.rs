@@ -37,6 +37,16 @@ pub enum Message {
     TransferLeadership {
         to: Uuid,
     },
+    AssignRole {
+        target: Uuid,
+        new_role: Role,
+    },
+    RoleAssigned {
+        target: Uuid,
+        new_role: Role,
+        actor: Uuid,
+    },
+    TrackTransition(TrackIdentity),
     Play {
         actor: Uuid,
     },
@@ -78,6 +88,16 @@ pub enum Message {
         names: Vec<String>,
     },
     Intent(PlaybackIntent),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct TrackIdentity {
+    pub title: String,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub spotify_uri: Option<String>,
+    pub apple_music_id: Option<String>,
+    pub duration_us: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -282,5 +302,49 @@ mod tests {
         let bytes = serialize(&env).unwrap();
         let decoded = deserialize(&bytes).unwrap();
         assert_eq!(env, decoded);
+    }
+
+    #[test]
+    fn test_role_and_track_transition_roundtrip() {
+        let target = Uuid::new_v4();
+        let actor = Uuid::new_v4();
+
+        let assign_env = Envelope {
+            sender: actor,
+            payload: Message::AssignRole {
+                target,
+                new_role: Role::Moderator,
+            },
+        };
+        let bytes = serialize(&assign_env).unwrap();
+        let decoded: Envelope = deserialize(&bytes).unwrap();
+        assert_eq!(assign_env, decoded);
+
+        let assigned_env = Envelope {
+            sender: actor,
+            payload: Message::RoleAssigned {
+                target,
+                new_role: Role::Moderator,
+                actor,
+            },
+        };
+        let bytes = serialize(&assigned_env).unwrap();
+        let decoded: Envelope = deserialize(&bytes).unwrap();
+        assert_eq!(assigned_env, decoded);
+
+        let track_env = Envelope {
+            sender: actor,
+            payload: Message::TrackTransition(TrackIdentity {
+                title: "Bohemian Rhapsody".into(),
+                artist: Some("Queen".into()),
+                album: Some("A Night at the Opera".into()),
+                spotify_uri: Some("spotify:track:test1234".into()),
+                apple_music_id: None,
+                duration_us: Some(354_000_000),
+            }),
+        };
+        let bytes = serialize(&track_env).unwrap();
+        let decoded: Envelope = deserialize(&bytes).unwrap();
+        assert_eq!(track_env, decoded);
     }
 }

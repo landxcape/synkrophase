@@ -8,7 +8,9 @@ use crate::cli::args::DEFAULT_LEAD_TIME_US;
 use crate::clock::sync::ClockSync;
 use crate::controller::MediaController;
 use crate::error::Result;
-use crate::protocol::messages::{Envelope, Message, PlaybackAction, PlaybackIntent, serialize};
+use crate::protocol::messages::{
+    Envelope, Message, PlaybackAction, PlaybackIntent, Role, serialize,
+};
 use crate::session::SessionState;
 use crate::sync::scheduler::IntentScheduler;
 use crate::tui::AppEvent;
@@ -19,6 +21,7 @@ pub enum EngineCommand {
     SendChat(String),
     SyncVolume(Option<u8>),
     TransferLeadership(Uuid),
+    AssignRole { target: Uuid, new_role: Role },
     Shutdown,
 }
 
@@ -108,7 +111,45 @@ impl SynkroEngine {
             EngineCommand::TransferLeadership(target_id) => {
                 self.handle_transfer_leadership(target_id).await?;
             }
+            EngineCommand::AssignRole { target, new_role } => {
+                self.handle_assign_role(target, new_role).await?;
+            }
             EngineCommand::Shutdown => {}
+        }
+        Ok(())
+    }
+
+    async fn handle_assign_role(&self, target: Uuid, new_role: Role) -> Result<()> {
+        let envelope = Envelope {
+            sender: self.session.self_id(),
+            payload: Message::AssignRole { target, new_role },
+        };
+
+        if self.session.is_leader() {
+            if let Ok(bytes) = serialize(&envelope) {
+                for addr in self.session.peer_socket_addrs() {
+                    let _ = self.socket.send_to(&bytes, addr).await;
+                }
+            }
+            if new_role == Role::Leader {
+                self.session.demote_from_leader(target);
+            } else {
+                self.session.apply_role_assignment(target, new_role);
+            }
+            let target_name = self.session.display_name(&target);
+            let _ = self.event_tx.send(AppEvent::Log {
+                source: "System".to_string(),
+                text: format!("Assigned role [{:?}] to {}", new_role, target_name),
+            });
+        } else if let Some(addr) = self.leader_addr {
+            if let Ok(bytes) = serialize(&envelope) {
+                let _ = self.socket.send_to(&bytes, addr).await;
+            }
+            let target_name = self.session.display_name(&target);
+            let _ = self.event_tx.send(AppEvent::Log {
+                source: "System".to_string(),
+                text: format!("Requested role [{:?}] for {}", new_role, target_name),
+            });
         }
         Ok(())
     }

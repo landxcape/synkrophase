@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use super::{MediaController, PlaybackState, TrackMetadata};
 use crate::error::{Result, SynkroError};
+use crate::protocol::messages::TrackIdentity;
 
 const PLAYER_AUTO: u8 = 0;
 const PLAYER_SPOTIFY: u8 = 1;
@@ -241,6 +242,125 @@ impl MediaController for MacOsMediaController {
                 return Ok(state);
             }
             Ok(PlaybackState::default())
+        })
+        .await
+        .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
+
+    async fn get_track_identity(&self) -> Result<Option<TrackIdentity>> {
+        let last = self.last_player.load(Ordering::Acquire);
+        tokio::task::spawn_blocking(move || {
+            let script = format!(
+                r#"
+                if application "Spotify" is running and ({last} = 1 or {last} = 0) then
+                    try
+                        tell application "Spotify"
+                            set sId to id of current track
+                            set sName to name of current track
+                            set sArtist to artist of current track
+                            set sAlbum to album of current track
+                            set sDur to (duration of current track) / 1000
+                            return "spotify|||" & sId & "|||" & sName & "|||" & sArtist & "|||" & sAlbum & "|||" & (sDur as string)
+                        end tell
+                    end try
+                end if
+
+                if application "Music" is running then
+                    try
+                        tell application "Music"
+                            set mName to name of current track
+                            set mArtist to artist of current track
+                            set mAlbum to album of current track
+                            set mDur to duration of current track
+                            return "music||||||" & mName & "|||" & mArtist & "|||" & mAlbum & "|||" & (mDur as string)
+                        end tell
+                    end try
+                end if
+                return "none"
+                "#
+            );
+
+            let out = Self::run_osascript(&script).unwrap_or_default();
+            if out == "none" || out.is_empty() {
+                return Ok(None);
+            }
+
+            let parts: Vec<&str> = out.split("|||").collect();
+            if parts.len() < 6 {
+                return Ok(None);
+            }
+
+            let player = parts[0];
+            let id = parts[1];
+            let title = parts[2].to_string();
+            let artist = if parts[3].is_empty() { None } else { Some(parts[3].to_string()) };
+            let album = if parts[4].is_empty() { None } else { Some(parts[4].to_string()) };
+            let duration_sec: f64 = parts[5].parse().unwrap_or(0.0);
+            let duration_us = if duration_sec > 0.0 { Some((duration_sec * 1_000_000.0) as u64) } else { None };
+
+            let (spotify_uri, apple_music_id) = if player == "spotify" {
+                (if id.is_empty() { None } else { Some(id.to_string()) }, None)
+            } else {
+                (None, Some(title.clone()))
+            };
+
+            Ok(Some(TrackIdentity {
+                title,
+                artist,
+                album,
+                spotify_uri,
+                apple_music_id,
+                duration_us,
+            }))
+        })
+        .await
+        .map_err(|e| SynkroError::MediaControl(e.to_string()))?
+    }
+
+    async fn load_track(&self, track: &TrackIdentity) -> Result<()> {
+        let track = track.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Some(uri) = &track.spotify_uri {
+                let script = format!(
+                    r#"
+                    if application "Spotify" is running then
+                        tell application "Spotify" to play track "{uri}"
+                    end if
+                    "#
+                );
+                let _ = Self::run_osascript(&script);
+                return Ok(());
+            }
+
+            // Fallback: search and play in Apple Music or Spotify by title and artist
+            let title_escaped = track.title.replace('"', "\\\"");
+            let artist_query = track.artist.as_deref().unwrap_or("");
+            let script = format!(
+                r#"
+                if application "Music" is running then
+                    tell application "Music"
+                        try
+                            set matched to (every track whose name contains "{title_escaped}")
+                            if (count of matched) > 0 then
+                                play item 1 of matched
+                                return "ok"
+                            end if
+                        end try
+                    end tell
+                end if
+                if application "Spotify" is running then
+                    tell application "Spotify"
+                        -- Trigger search/play query via spotify URI
+                        -- Format: spotify:search:<query>
+                        set q to "{title_escaped} {artist_query}"
+                        -- Attempt to play
+                        play track "spotify:search:" & q
+                    end tell
+                end if
+                "#
+            );
+            let _ = Self::run_osascript(&script);
+            Ok(())
         })
         .await
         .map_err(|e| SynkroError::MediaControl(e.to_string()))?

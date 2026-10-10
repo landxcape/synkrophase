@@ -135,6 +135,53 @@ impl SessionState {
         self.peers.set_role(&new_leader_id, Role::Leader);
     }
 
+    pub fn can_assign_role(&self, actor_id: Uuid, target_id: Uuid, new_role: Role) -> Result<()> {
+        let actor_role = if actor_id == self.self_id {
+            self.role()
+        } else {
+            self.peers.get_role(&actor_id).unwrap_or(Role::Listener)
+        };
+
+        let target_role = if target_id == self.self_id {
+            self.role()
+        } else {
+            self.peers.get_role(&target_id).unwrap_or(Role::Listener)
+        };
+
+        // Rule 1: Listeners cannot assign any roles
+        if actor_role == Role::Listener {
+            return Err(SynkroError::PermissionDenied(
+                "Listeners cannot assign roles".to_string(),
+            ));
+        }
+
+        // Rule 2: Cannot assign a role strictly higher than actor's own role
+        if new_role > actor_role {
+            return Err(SynkroError::PermissionDenied(format!(
+                "Actor ({:?}) cannot assign higher role ({:?})",
+                actor_role, new_role
+            )));
+        }
+
+        // Rule 3: Target current role must be strictly less than actor role
+        // Exception: Leader transferring leadership to another peer (actor_role == Leader)
+        if actor_role != Role::Leader && target_role >= actor_role {
+            return Err(SynkroError::PermissionDenied(format!(
+                "Actor ({:?}) cannot modify equal or higher rank peer ({:?})",
+                actor_role, target_role
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub fn apply_role_assignment(&self, target_id: Uuid, new_role: Role) {
+        if target_id == self.self_id {
+            self.set_role(new_role);
+        }
+        self.peers.set_role(&target_id, new_role);
+    }
+
     pub fn room_code(&self) -> &str {
         &self.room_code
     }

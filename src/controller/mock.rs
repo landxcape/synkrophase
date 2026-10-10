@@ -41,6 +41,34 @@ impl MediaController for MockMediaController {
         Ok(self.state.read().await.clone())
     }
 
+    async fn get_track_identity(&self) -> Result<Option<crate::protocol::messages::TrackIdentity>> {
+        let state = self.state.read().await;
+        Ok(state
+            .metadata
+            .as_ref()
+            .map(|m| crate::protocol::messages::TrackIdentity {
+                title: m.title.clone(),
+                artist: m.artist.clone(),
+                album: m.album.clone(),
+                spotify_uri: Some(format!("spotify:track:{}", m.title)),
+                apple_music_id: None,
+                duration_us: m.duration_us,
+            }))
+    }
+
+    async fn load_track(&self, track: &crate::protocol::messages::TrackIdentity) -> Result<()> {
+        let mut state = self.state.write().await;
+        state.is_playing = true;
+        state.position_us = 0;
+        state.metadata = Some(TrackMetadata {
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            album: track.album.clone(),
+            duration_us: track.duration_us,
+        });
+        Ok(())
+    }
+
     async fn play(&self) -> Result<()> {
         let mut state = self.state.write().await;
         state.is_playing = true;

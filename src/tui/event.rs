@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::app::{InputMode, TuiApp};
 use crate::error::Result;
-use crate::protocol::messages::PlaybackAction;
+use crate::protocol::messages::{PlaybackAction, Role};
 use crate::session::engine::{EngineCommand, SynkroEngine};
 
 pub async fn handle_key_event(
@@ -204,6 +204,57 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
             match matched_peer {
                 Some(target) => {
                     engine.send_command(EngineCommand::TransferLeadership(target.device_id))?;
+                }
+                None => {
+                    app.add_log(
+                        "System".to_string(),
+                        format!("No peer matching '{}' found in room", query),
+                    );
+                }
+            }
+        }
+        "role" => {
+            if parts.len() < 3 {
+                app.add_log(
+                    "System".to_string(),
+                    "Usage: /role <peer_name_or_uuid> <leader|moderator|listener>".to_string(),
+                );
+                return Ok(());
+            }
+            let target_role_str = parts.last().unwrap().to_lowercase();
+            let new_role = match target_role_str.as_str() {
+                "leader" | "lead" | "host" => Role::Leader,
+                "moderator" | "mod" => Role::Moderator,
+                "listener" | "peer" | "user" => Role::Listener,
+                _ => {
+                    app.add_log(
+                        "System".to_string(),
+                        format!(
+                            "Invalid role '{}'. Choose leader, moderator, or listener.",
+                            target_role_str
+                        ),
+                    );
+                    return Ok(());
+                }
+            };
+
+            let query = parts[1..parts.len() - 1].join(" ").to_lowercase();
+            let matched_peer = app
+                .peers
+                .iter()
+                .filter(|p| p.device_id != app.self_id)
+                .find(|p| {
+                    p.device_id.to_string().to_lowercase().starts_with(&query)
+                        || p.name.to_lowercase().contains(&query)
+                })
+                .cloned();
+
+            match matched_peer {
+                Some(target) => {
+                    engine.send_command(EngineCommand::AssignRole {
+                        target: target.device_id,
+                        new_role,
+                    })?;
                 }
                 None => {
                     app.add_log(

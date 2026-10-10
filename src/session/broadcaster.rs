@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::clock::sync::ClockSync;
 use crate::config::SyncConfig;
 use crate::error::{Result, SynkroError};
-use crate::protocol::messages::{Envelope, serialize};
+use crate::protocol::messages::{Envelope, Message, serialize};
 use crate::session::SessionState;
 use crate::sync::controller::{ClockSource, PlaybackControl};
 
@@ -111,9 +111,22 @@ impl LeaderAnchorBroadcaster {
                     tracing::info!(
                         prev = ?last_track,
                         curr = ?current_track,
-                        "Leader track changed in player, broadcasting immediate anchor"
+                        "Leader track changed in player, broadcasting immediate anchor and track identity"
                     );
                     should_broadcast = true;
+
+                    // Extract and broadcast full TrackIdentity to all room followers
+                    if let Ok(Some(track_ident)) = controller.get_track_identity().await {
+                        let transition_env = Envelope {
+                            sender,
+                            payload: Message::TrackTransition(track_ident),
+                        };
+                        if let Ok(bytes) = serialize(&transition_env) {
+                            for addr in self.session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
+                        }
+                    }
                 }
 
                 // Condition 2: Timeline scrubbed (>1.5s position jump from continuous trajectory)

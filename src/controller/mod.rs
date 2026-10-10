@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::protocol::messages::TrackIdentity;
 
 pub mod mock;
 
@@ -36,6 +37,16 @@ impl Default for PlaybackState {
 pub trait MediaController: Send + Sync {
     /// Read the active player's state, position, and metadata.
     async fn get_playback_state(&self) -> Result<PlaybackState>;
+
+    /// Extract full track identity (including Spotify URI or native IDs) if active.
+    async fn get_track_identity(&self) -> Result<Option<TrackIdentity>> {
+        Ok(None)
+    }
+
+    /// Command native player to load and begin playing the target track identity.
+    async fn load_track(&self, _track: &TrackIdentity) -> Result<()> {
+        Ok(())
+    }
 
     /// Resume or start playback.
     async fn play(&self) -> Result<()>;

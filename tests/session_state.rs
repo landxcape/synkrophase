@@ -307,3 +307,90 @@ async fn test_dual_leader_demotes_higher_uuid() {
     );
     assert_eq!(session.leader_id(), lower_leader);
 }
+
+#[test]
+fn test_role_rbac_hierarchy_rules() {
+    let leader_id = Uuid::new_v4();
+    let mod_id = Uuid::new_v4();
+    let listener_id = Uuid::new_v4();
+
+    let session = SessionState::new_leader("ROOM42".into(), leader_id, "Leader".into());
+    session.record_peer_heartbeat(peer_info(mod_id), "127.0.0.1:8001".parse().unwrap());
+    session.apply_role_assignment(mod_id, synkrophase::protocol::messages::Role::Moderator);
+
+    session.record_peer_heartbeat(peer_info(listener_id), "127.0.0.1:8002".parse().unwrap());
+    session.apply_role_assignment(listener_id, synkrophase::protocol::messages::Role::Listener);
+
+    // Rule 1: Leader can assign Moderator, Listener, or Leader
+    assert!(
+        session
+            .can_assign_role(
+                leader_id,
+                listener_id,
+                synkrophase::protocol::messages::Role::Moderator
+            )
+            .is_ok()
+    );
+    assert!(
+        session
+            .can_assign_role(
+                leader_id,
+                listener_id,
+                synkrophase::protocol::messages::Role::Leader
+            )
+            .is_ok()
+    );
+
+    // Rule 2: Moderator can promote Listener to Moderator
+    assert!(
+        session
+            .can_assign_role(
+                mod_id,
+                listener_id,
+                synkrophase::protocol::messages::Role::Moderator
+            )
+            .is_ok()
+    );
+
+    // Rule 3: Moderator cannot assign Leader role
+    assert!(
+        session
+            .can_assign_role(
+                mod_id,
+                listener_id,
+                synkrophase::protocol::messages::Role::Leader
+            )
+            .is_err()
+    );
+
+    // Rule 4: Moderator cannot touch or demote the Leader
+    assert!(
+        session
+            .can_assign_role(
+                mod_id,
+                leader_id,
+                synkrophase::protocol::messages::Role::Listener
+            )
+            .is_err()
+    );
+
+    // Rule 5: Listener cannot assign any roles
+    assert!(
+        session
+            .can_assign_role(
+                listener_id,
+                mod_id,
+                synkrophase::protocol::messages::Role::Listener
+            )
+            .is_err()
+    );
+    assert!(
+        session
+            .can_assign_role(
+                listener_id,
+                listener_id,
+                synkrophase::protocol::messages::Role::Moderator
+            )
+            .is_err()
+    );
+}
