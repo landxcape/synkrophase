@@ -7,9 +7,11 @@
 
 Instead of streaming, decoding, or transmitting heavy audio/video media files over the network, Synkrophase operates exclusively as an external **control plane synchronizer**:
 - **Primary Player Support**: Native **Spotify** and **Apple Music** integration with automatic active player detection and state prioritization (with cross-platform desktop controller architecture).
+- **"Zero-Queue" Automatic Track & Playback Mirroring**: Follows the leader's active desktop player as the sole source of truth; when the leader changes tracks, followers automatically load and align without manual playlist entry.
+- **Clock-Aligned Pre-Dispatch with TimelineTracer**: Pre-dispatches OS commands using local **actuation latency compensation** (accounting for local OS IPC / AppleScript delays), using synchronized reference-clock deadlines rather than arbitrary sleep timers.
+- **Hierarchical Role-Based Access Control**: Enforces `Leader > Moderator > Listener` permissions across playback controls, track skips, and queue management.
+- **Background Window Preservation**: Seamlessly controls Spotify and Apple Music without stealing window focus from active foreground terminal or editor windows.
 - Synchronizes LAN peer clocks using a high-precision **PTP-lite** UDP engine with sub-millisecond precision.
-- Broadcasts lightweight binary **playback intents** stamped with synchronized reference clock trigger targets.
-- Pre-dispatches OS commands using local **actuation latency compensation** (accounting for local OS IPC / AppleScript delays) with exact **value-skip compensation** for network jitter or mid-track joins.
 - Features a full **interactive Ratatui terminal dashboard (TUI)** with an inline Unicode timeline slider, activity log, room chat, and a headless REPL mode fallback.
 - Offers **native track navigation** (next/previous), **one-shot room volume synchronization**, and automatic **clipboard room sharing**.
 
@@ -60,7 +62,10 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 
 - **Zero Media Overhead**: Never transmits raw audio or video files. CPU, memory, and bandwidth footprints remain negligible.
 - **Primary Player Focus: Spotify & Apple Music**: Synkrophase focuses primarily on **Spotify** and **Apple Music**. It automatically detects whichever player is actively playing, prioritizes it dynamically, and maintains state memory across pauses without manual configuration.
+- **"Zero-Queue" Track Mirroring**: When the room leader switches songs in Spotify or Apple Music, Synkrophase automatically detects the new track, extracts native URIs / metadata, and synchronizes followers without requiring an in-app queue. If followers are already playing the track, it reconciles timeline position without re-triggering playback.
+- **Strict Role-Based Access Control**: Hierarchical permissions (`Leader > Moderator > Listener`). Listeners can view status, drift, and chat, while playback manipulation, skips, and volume synchronization are restricted to privileged roles.
 - **Actuation Latency Compensation & Pre-Dispatch**: Autonomously profiles local OS command overhead (~150ms for AppleScript IPC, ~15ms for D-Bus) using exponential moving averages and pre-dispatches actions early, ensuring audio commands take physical effect right at the synchronized network timestamp.
+- **Background Window Focus Preservation**: Track changes and playback controls run seamlessly without pulling Spotify or Apple Music to the foreground over active user windows.
 - **Interactive TUI Dashboard**: Full Ratatui terminal UI with live progress bar, peer status table with live clock offset telemetry, drift indicators, activity log, and integrated chat.
 - **Sub-Millisecond Clock Sync**: Built-in PTP-lite UDP engine measures round-trip time and clock offset across LAN peers.
 - **Exact Value-Skip Compensation**: If a command arrives late due to network delay or a peer connects mid-track, Synkrophase calculates temporal overshoot ($\Delta_{\text{late}} = \text{now} - T_{\text{target}}$) and seeks forward seamlessly.
