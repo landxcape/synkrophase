@@ -11,20 +11,13 @@ Instead of streaming audio over the network, Synkrophase controls each computer'
 
 ## Supported Platforms and Players
 
-| Operating System | Supported Players | Control Mechanism |
-| :--- | :--- | :--- |
-| **macOS** | Spotify, Apple Music | AppleScript |
-| **Linux** | Spotify | MPRIS D-Bus |
-| **Windows** | Spotify | WinRT GSMTC |
+| Operating System | Supported Players | Control Mechanism | Notes |
+| :--- | :--- | :--- | :--- |
+| **macOS** | Spotify, Apple Music | AppleScript | Requires Automation permission |
+| **Linux** | Spotify | MPRIS D-Bus (`org.mpris.MediaPlayer2.spotify`) | Requires active D-Bus session |
+| **Windows** | Spotify | WinRT GSMTC | Requires native desktop Spotify app |
 
----
-
-## How It Works
-
-1. **Host and Followers**: One computer hosts a room (`synkro host ROOM`), and others join (`synkro join ROOM`).
-2. **Clock Sync**: Devices measure network latency and clock differences over UDP, keeping them aligned within milliseconds.
-3. **Automatic Track Sync**: When the host changes a track, followers automatically load that track in their own player and seek to the correct position.
-4. **Drift Correction**: If a follower's playback drifts out of alignment, Synkrophase nudges the position back into sync.
+> **Note on Web Players**: Synkrophase communicates with desktop media controllers. Web-browser tabs (like open.spotify.com) do not expose OS-level controller APIs and cannot be controlled. Always use the installed desktop app.
 
 ---
 
@@ -41,7 +34,10 @@ brew install landxcape/tap/synkrophase
 
 Download pre-compiled binaries from [GitHub Releases](https://github.com/landxcape/synkrophase/releases/latest).
 
-On Windows, extract `synkrophase-windows-x86_64.zip` and run `synkro.exe` from PowerShell or Command Prompt.
+- **Windows**: Extract `synkrophase-windows-x86_64.zip` and run `synkro.exe` from PowerShell or Command Prompt.
+- **macOS (Apple Silicon)**: `synkrophase-macos-aarch64.tar.gz`
+- **macOS (Intel)**: `synkrophase-macos-x86_64.tar.gz`
+- **Linux (x86_64)**: `synkrophase-linux-x86_64.tar.gz`
 
 ### Build from Source
 
@@ -53,14 +49,56 @@ cd synkrophase/synkrophase
 cargo build --release
 ```
 
-The compiled binary will be at `target/release/synkro`.
+The compiled binary will be placed at `target/release/synkro`.
+
+---
+
+## OS Permissions and Setup
+
+### macOS Setup
+When Synkrophase runs for the first time, macOS will ask for permission to control Spotify or Music:
+1. Open **System Settings > Privacy & Security > Automation**.
+2. Find your terminal emulator (Terminal, iTerm2, Alacritty, Ghostty, etc.).
+3. Ensure checkboxes for **Spotify** and/or **Music** are toggled **ON**.
+4. If permissions were previously denied, commands will fail silently. Reset them using:
+   ```bash
+   tccutil reset AppleEvents
+   ```
+
+### Linux Setup
+Synkrophase communicates over the user's session D-Bus.
+- Ensure `DBUS_SESSION_BUS_ADDRESS` is set in your environment (standard in modern desktop environments).
+- Native Spotify packages (`.deb`, `.tar.gz`, Snap, or Flatpak with D-Bus access) work out of the box.
+
+### Windows Setup
+- Requires the native Spotify desktop application installed from the Spotify website or Microsoft Store.
+- The app must be running before Synkrophase can discover and control it.
+
+---
+
+## Network and Port Requirements
+
+Synkrophase uses UDP for low-latency communication on your local network:
+
+| Port | Protocol | Purpose |
+| :--- | :--- | :--- |
+| `5871` | UDP | Session messaging, heartbeats, playback intents, and chat |
+| `5872` | UDP | PTP clock synchronization exchanges |
+| `5353` | UDP | mDNS room discovery (`_synkrophase._udp.local.`) |
+
+If room discovery does not find your host (e.g., when your Wi-Fi router has **Client Isolation** enabled or blocks multicast):
+1. Find the host's local IP address (`ipconfig` on Windows, `ifconfig` or `ip a` on macOS/Linux).
+2. Connect directly by passing the `--leader-addr` flag:
+   ```bash
+   synkro join MYROOM --leader-addr 192.168.1.50:5871
+   ```
 
 ---
 
 ## Quick Start
 
-### 1. Check Player Status
-Make sure your media player is running, then check its current status:
+### 1. Check Local Player
+Ensure your media player is running, then check its status:
 
 ```bash
 synkro status
@@ -83,27 +121,72 @@ Output:
 synkro host MYROOM
 ```
 
-This starts the room and opens the interactive dashboard. The join command is automatically copied to your clipboard.
+This starts the room, opens the interactive dashboard, and copies the join command to your clipboard.
 
 ### 3. Join a Room (Follower)
 
-On another machine on the same network:
+On another computer on the same network:
 
 ```bash
 synkro join MYROOM
 ```
 
-If local network discovery (mDNS) is blocked by a firewall, specify the host's IP address directly:
+When you join:
+- Synkrophase automatically synchronizes its reference clock with the host.
+- It queries the host's current track and loads it in your local player.
+- It matches the host's play/pause state and aligns playback to the exact position.
 
-```bash
-synkro join MYROOM --leader-addr 192.168.1.100:5871
-```
+---
+
+## How Synchronization Works
+
+### Clock Synchronization
+Devices do not rely on system wall clocks or time zones. When a follower joins:
+1. It runs a lightweight PTP (Precision Time Protocol) round-trip exchange with the host over UDP port 5872.
+2. It measures network latency and calculates the difference between its monotonic clock and the host's monotonic clock.
+3. Every 10 seconds, it performs a background measurement to track oscillator drift and network jitter.
+4. The **Offset** displayed in the room table shows this live residual clock difference (e.g. `+14µs`, `-0.2ms`).
+
+### Drift Management
+While playing, followers periodically evaluate their local playback position against the host's reference timeline. Playback is classified into three zones:
+
+| Zone | Drift Range | Action Taken | Status Display |
+| :--- | :--- | :--- | :--- |
+| **Zone 1** | `< 50ms` | No action needed. Audio is in sync. | `Locked (<50ms)` |
+| **Zone 2** | `50ms – 200ms` | Fine rate adjustment or gentle alignment. | `Nudging (+85.0ms)` |
+| **Zone 3** | `> 200ms` | Corrective micro-seek directly to the target timestamp. | `Drifting (+240.0ms)` |
+
+A 1500ms post-seek grace window prevents repeated seeking while players buffer.
+
+### Automatic Host Failover
+If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room.
+
+---
+
+## Roles and Permissions
+
+Synkrophase supports three member roles:
+
+| Action / Capability | Leader (Host) | Moderator | Listener |
+| :--- | :---: | :---: | :---: |
+| Play / Pause | Yes | Yes | No |
+| Seek Timeline | Yes | Yes | No |
+| Skip Next / Previous | Yes | Yes | No |
+| Sync Room Volume | Yes | Yes | No |
+| Send Chat Messages | Yes | Yes | Yes |
+| View Progress and Peer Offsets | Yes | Yes | Yes |
+| Assign Member Roles (`/role`) | Yes | No | No |
+| Transfer Host (`/transfer`) | Yes | No | No |
+
+- When hosting, the host begins as **Leader**.
+- The first peer to join is assigned **Moderator**; subsequent peers join as **Listeners**.
+- The Leader can promote or demote any member using `/role <peer> <moderator|listener>`.
 
 ---
 
 ## Interactive Dashboard (TUI)
 
-When hosting or joining, Synkrophase opens a terminal interface:
+When hosting or joining a room interactively, Synkrophase launches a full terminal dashboard:
 
 ```text
 ╭ Synkrophase • Room: TESTROOM • Role: [LEADER] • Device: Host ────────────────╮
@@ -122,80 +205,149 @@ When hosting or joining, Synkrophase opens a terminal interface:
 
 ### Keyboard Shortcuts
 
-| Key | Action |
+| Shortcut | Description |
 | :--- | :--- |
-| `Space` | Play / Pause |
+| `Space` | Toggle Play / Pause across the room |
 | `←` / `→` | Seek backward / forward 5 seconds |
-| `n` | Next track |
-| `p` | Previous track |
-| `v` | Sync host volume to all peers |
-| `c` | Copy join command to clipboard |
-| `/` or `i` | Open chat and command prompt |
-| `?` or `h` | Show help |
-| `q` | Leave and exit |
+| `n` | Next track in player |
+| `p` | Previous track in player |
+| `v` | Sync local volume to all room members |
+| `c` | Copy room join command to clipboard |
+| `/` or `i` | Open chat and command input bar |
+| `?` or `h` | Toggle keyboard help modal |
+| `q` | Disconnect and exit (requires double-tap `Esc` or `q`) |
 
 ### Chat Commands
 
 Type `/` in the dashboard to access commands:
-- `/play` / `/pause` — Control playback
-- `/next` / `/prev` — Change tracks
-- `/seek <seconds>` — Jump to position (e.g. `/seek 90`)
-- `/vol <0-100>` — Set volume for all peers
-- `/transfer <peer>` — Transfer room host to another member
-- `/role <peer> <moderator|listener>` — Change permissions for a member
-- `/quit` — Leave the room
+
+| Command | Description |
+| :--- | :--- |
+| `/play` | Resume playback across all peers |
+| `/pause` | Pause playback across all peers |
+| `/next` | Skip to the next track |
+| `/prev` | Skip to the previous track |
+| `/seek <seconds>` | Seek to an absolute timeline position (e.g. `/seek 90`) |
+| `/vol <0-100>` | Set volume across all peers (e.g. `/vol 80`, or `/vol` to mirror local) |
+| `/transfer <peer>` | Transfer host to a peer by name or 8-character ID prefix |
+| `/role <peer> <role>` | Assign role (`leader`, `moderator`, `listener`) to a peer |
+| `/copy` or `/share` | Copy join command to clipboard |
+| `/quit` | Leave the room and exit |
 
 ---
 
 ## Background Daemon Mode
 
-You can run Synkrophase in the background without keeping a terminal open:
+Synkrophase can run as a background service without an open terminal window:
 
 ```bash
-# Start in the background
+# Start host daemon in the background
 synkro daemon start host MYROOM
-# or
+
+# Or join a room in the background
 synkro daemon start join MYROOM
 
-# Check status
+# Inspect live daemon status
 synkro daemon status
 
-# View logs
+# Stream daemon logs in real-time
 synkro daemon logs -f
 
-# Stop
+# Stop the daemon
 synkro daemon stop
 ```
 
-When the daemon is running, control playback from any terminal:
+### Status Output for Scripts and Status Bars
+Add `--json` to `synkro daemon status` to output structured JSON for integration with Waybar, SketchyBar, polybar, or custom shell scripts:
 
 ```bash
-synkro play
-synkro pause
-synkro next
-synkro prev
-synkro seek 45
-synkro volume 70
+synkro daemon status --json
+```
+
+Output:
+```json
+{
+  "running": true,
+  "room_code": "MYROOM",
+  "role": "Leader",
+  "is_playing": true,
+  "position_us": 65400000,
+  "clock_offset_us": 0,
+  "peers": [
+    {"device_id": "a3f290d1-...", "name": "Follower", "role": "Moderator", "clock_offset_us": 12}
+  ]
+}
+```
+
+---
+
+## Command-Line Interface (CLI) Reference
+
+When a session is active (interactive room or background daemon), these commands can be executed from any terminal window:
+
+```bash
+# Playback Controls
+synkro play                    # Resume playback across room
+synkro pause                   # Pause playback across room
+synkro next                    # Skip to next track
+synkro prev                    # Skip to previous track
+synkro seek 45                 # Seek to 45 seconds
+synkro volume 75               # Set room volume to 75%
+synkro volume                  # Mirror current host volume to room
+
+# Room Telemetry & Collaboration
+synkro status                  # Inspect local media player status
+synkro sync                    # View live room sync offsets and drift
+synkro share                   # Copy room join command to clipboard
+synkro chat "Starting now!"    # Post a message to the room chat
+synkro transfer <PEER>         # Hand off host to a peer name or UUID
+synkro role <PEER> <ROLE>      # Set role ('moderator' or 'listener')
 ```
 
 ---
 
 ## Configuration Options
 
-Pass these flags to `synkro host` or `synkro join`:
+These flags can be passed to `synkro host` or `synkro join`:
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--lead-time-ms` | `350` | Buffer time (in ms) allowed for network delivery before an action executes |
-| `--threshold-ms` | `50` | Maximum acceptable playback drift (in ms) before seeking |
-| `--heartbeat-ms` | `3000` | Interval between peer health pings |
-| `--heartbeat-timeout-ms` | `10000` | Time before an unresponsive peer is considered disconnected |
-| `--no-copy` | `false` | Do not copy join command to clipboard on start |
+| `--lead-time-ms` | `350` | Buffer time (in ms) allowed for network transmission before an intent executes |
+| `--threshold-ms` | `50` | Acceptable playback drift margin (in ms) before seeking |
+| `--heartbeat-ms` | `3000` | Cadence (in ms) of peer health pings |
+| `--heartbeat-timeout-ms` | `10000` | Duration of inactivity before a peer is considered disconnected |
+| `--no-copy` | `false` | Disable automatically copying the join command to clipboard on startup |
+| `--leader-addr` | None | Direct IP:port address of the host, bypassing mDNS discovery |
+
+---
+
+## Troubleshooting
+
+### "Different Track" Status on Follower
+- The follower's player displays the error `Different Track (<title>)` when the host changes songs, but the follower hasn't switched.
+- **Cause**: The follower does not have access to that song (e.g. track is regionally restricted or requires a Premium account).
+- **Resolution**: Ensure both users have access to the same library or track URI in Spotify / Apple Music.
+
+### Room Not Discovered (mDNS Failure)
+- If `synkro join MYROOM` hangs searching for the room:
+  1. Verify both machines are connected to the same Wi-Fi network or subnet.
+  2. Check if your router has **AP Isolation / Client Isolation** enabled (which blocks broadcast packets between devices).
+  3. Bypass discovery by providing the host's LAN IP directly:
+     ```bash
+     synkro join MYROOM --leader-addr 192.168.1.15:5871
+     ```
+
+### Commands Ignored on macOS
+- If playback does not react when hitting `Space` or `/play`:
+  1. Check **System Settings > Privacy & Security > Automation**.
+  2. Confirm your terminal emulator is allowed to control Spotify or Music.
 
 ---
 
 ## License
 
-Dual-licensed under either:
+Dual-licensed under either of:
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.
