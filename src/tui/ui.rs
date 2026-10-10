@@ -368,10 +368,11 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
         left_layout[1],
     );
 
-    // Right Panel: Activity Log & Chat
+    // Right Panel: Activity Log & Chat (Latest first)
     let log_items: Vec<ListItem> = app
         .logs
         .iter()
+        .rev()
         .map(|entry| {
             let src_color = match entry.source.as_str() {
                 "System" => Color::Magenta,

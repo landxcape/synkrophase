@@ -197,10 +197,10 @@ When hosting or joining a room interactively, Synkrophase launches a full termin
 │ ▶ Numb   Linkin Park • Meteora  [Playing]                                    │
 │ 01:05 [━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────] 03:07  (+12µs)│
 ╰──────────────────────────────────────────────────────────────────────────────╯
-╭ Room Members ──────────────────────╮╭ Activity & Chat ───────────────────────╮
-│ID       Peer            Role Offset││[21:14:03] Session started. Ready.      │
+╭ Room Members ──────────────────────╮╭ Activity & Chat (Latest First) ────────╮
+│ID       Peer            Role Offset││[21:14:12] [Follower] Connected.        │
 │e8a15b3a Host (You)    Leader    Ref││[21:14:03] Room: TESTROOM               │
-│a3f290d1 Follower   Moderator  +12µs││[21:14:09] [Follower] Connected.        │
+│a3f290d1 Follower   Moderator  +12µs││[21:14:00] Session started. Ready.      │
 ╰────────────────────────────────────╯╰────────────────────────────────────────╯
 [Space] Play/Pause • [←/→] Seek ±5s • [n/p] Next/Prev • [v] Vol • [/] Chat • [q] Quit
 ```
