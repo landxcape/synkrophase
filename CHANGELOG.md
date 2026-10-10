@@ -3,6 +3,13 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-10-11
+
+### Added
+- **TUI Activity & Chat Scrollback**: Added interactive history navigation using `↑`/`↓`, `k`/`j`, `PageUp`/`PageDown`, `Home`, and `End`, with a dynamic header badge (`Activity & Room Chat [↑ +N]`) and border highlight.
+- **TUI Auto-Scroll Boundary Management**: Chronological message ordering with bounded auto-scroll that docks recent messages inside panel borders.
+- **Documentation**: Expanded README with complete CLI command listings, port specifications (`5870/UDP`, `5871/UDP`), clipboard behavior, and OS permission requirements.
+
 ## [0.6.4] - 2026-10-10
 
 ### Added
