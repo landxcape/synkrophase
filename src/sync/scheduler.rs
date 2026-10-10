@@ -127,4 +127,66 @@ impl IntentScheduler {
 
         Ok(())
     }
+
+    /// Executes a clock-aligned track transition using TimelineTracer.
+    /// Follower computes delta against target_ref_time and dispatch_ref_time to determine:
+    /// - Ahead: pre-dispatches at (target_ref_time - actuation_delay) via TimelineTracer deadline wait.
+    /// - Behind/Late: loads immediately and micro-seeks to overshoot offset.
+    pub async fn execute_track_transition(
+        &self,
+        track: &crate::protocol::messages::TrackIdentity,
+        target_ref_time: u64,
+        _dispatch_ref_time: u64,
+    ) -> Result<()> {
+        let now = self.clock.reference_now();
+        let actuation_delay_us = self.controller.estimated_actuation_delay_us();
+        let fire_ref_time = target_ref_time.saturating_sub(actuation_delay_us);
+
+        // Check if follower is already playing this exact track
+        let already_playing = if let Ok(state) = self.controller.get_playback_state().await
+            && let Some(meta) = state.metadata
+        {
+            let target_title = track.title.to_lowercase();
+            let current_title = meta.title.to_lowercase();
+            !target_title.is_empty()
+                && !current_title.is_empty()
+                && (current_title.contains(&target_title) || target_title.contains(&current_title))
+        } else {
+            false
+        };
+
+        if already_playing {
+            // Already playing this song: only reconcile/seek timeline position
+            if now > target_ref_time {
+                let overshoot_us = (now - target_ref_time) as i64;
+                self.controller.seek_to(overshoot_us).await?;
+            } else {
+                // If scheduled in the future, wait until deadline to align to track start
+                if fire_ref_time > now {
+                    self.tracer.wait_until_deadline(fire_ref_time).await;
+                }
+                self.controller.seek_to(0).await?;
+            }
+            return Ok(());
+        }
+
+        if fire_ref_time > now {
+            // Ahead of deadline: wait until deadline using synced PTP clock
+            self.tracer.wait_until_deadline(fire_ref_time).await;
+            self.controller.load_track(track).await?;
+        } else if now <= target_ref_time {
+            // Right on time / within actuation window: fire immediately
+            self.controller.load_track(track).await?;
+        } else {
+            // Late / overshoot: load immediately and compensate position
+            let overshoot_us = (now - target_ref_time) as i64;
+            self.controller.load_track(track).await?;
+            if overshoot_us > 100_000 {
+                // Seek to compensated track position if overshoot exceeds 100ms
+                self.controller.seek_to(overshoot_us).await?;
+            }
+        }
+
+        Ok(())
+    }
 }

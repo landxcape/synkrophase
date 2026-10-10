@@ -42,6 +42,7 @@ pub fn resolve_join_target(
     let found = discovered
         .into_iter()
         .find(|info| info.room_code == room_code);
+    let _ = discovery.shutdown();
 
     if let Some(info) = found {
         let addr = leader_addr.unwrap_or(info.leader_addr);

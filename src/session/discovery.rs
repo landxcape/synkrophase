@@ -88,6 +88,12 @@ impl Discovery {
         Ok(())
     }
 
+    pub fn shutdown(self) -> Result<()> {
+        let _ = self.unregister();
+        let _ = self.daemon.shutdown().map_err(to_network_error);
+        Ok(())
+    }
+
     fn resolved_to_session(info: &ResolvedService) -> Option<SessionInfo> {
         let (room_code, leader_id) = Self::parse_fullname(info.get_fullname())?;
         let leader_ip = first_ip(info)?;

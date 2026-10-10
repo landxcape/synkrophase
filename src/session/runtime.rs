@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use uuid::Uuid;
@@ -498,18 +497,29 @@ impl SessionMessageRuntime {
                 ));
                 Ok(())
             }
-            Message::TrackTransition(track) => {
+            Message::TrackTransition {
+                track,
+                target_ref_time,
+                dispatch_ref_time,
+            } => {
                 // Followers accept track transition from current leader
                 if !self.session.is_leader() && envelope.sender == self.session.leader_id() {
                     let title = track.title.clone();
                     let artist = track.artist.clone().unwrap_or_default();
                     self.log_system(format!("Leader changed track to: {} - {}", title, artist));
 
-                    if let Some(drift) = &self.drift_evaluator {
-                        drift.enter_buffering(Duration::from_millis(1500));
-                    }
-
-                    if let Some(controller) = &self.controller {
+                    if let Some(scheduler) = &self.scheduler {
+                        let scheduler = Arc::clone(scheduler);
+                        tokio::spawn(async move {
+                            let _ = scheduler
+                                .execute_track_transition(
+                                    &track,
+                                    target_ref_time,
+                                    dispatch_ref_time,
+                                )
+                                .await;
+                        });
+                    } else if let Some(controller) = &self.controller {
                         let controller = Arc::clone(controller);
                         tokio::spawn(async move {
                             let _ = controller.load_track(&track).await;

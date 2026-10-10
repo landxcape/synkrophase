@@ -231,7 +231,9 @@ async fn main() -> Result<()> {
             };
             run_simple_command(device, room_code, leader_addr, envelope_msg).await
         }
-    }
+    }?;
+
+    std::process::exit(0);
 }
 
 #[cfg(test)]

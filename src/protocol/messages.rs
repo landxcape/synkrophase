@@ -46,7 +46,11 @@ pub enum Message {
         new_role: Role,
         actor: Uuid,
     },
-    TrackTransition(TrackIdentity),
+    TrackTransition {
+        track: TrackIdentity,
+        target_ref_time: u64,
+        dispatch_ref_time: u64,
+    },
     Play {
         actor: Uuid,
     },
@@ -334,14 +338,18 @@ mod tests {
 
         let track_env = Envelope {
             sender: actor,
-            payload: Message::TrackTransition(TrackIdentity {
-                title: "Bohemian Rhapsody".into(),
-                artist: Some("Queen".into()),
-                album: Some("A Night at the Opera".into()),
-                spotify_uri: Some("spotify:track:test1234".into()),
-                apple_music_id: None,
-                duration_us: Some(354_000_000),
-            }),
+            payload: Message::TrackTransition {
+                track: TrackIdentity {
+                    title: "Bohemian Rhapsody".into(),
+                    artist: Some("Queen".into()),
+                    album: Some("A Night at the Opera".into()),
+                    spotify_uri: Some("spotify:track:test1234".into()),
+                    apple_music_id: None,
+                    duration_us: Some(354_000_000),
+                },
+                target_ref_time: 1_234_567_890,
+                dispatch_ref_time: 1_234_167_890,
+            },
         };
         let bytes = serialize(&track_env).unwrap();
         let decoded: Envelope = deserialize(&bytes).unwrap();

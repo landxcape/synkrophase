@@ -224,6 +224,13 @@ impl MacOsMediaController {
         let last = self.last_player.load(Ordering::Acquire);
         format!(
             r#"
+            set prevProc to ""
+            tell application "System Events"
+                try
+                    set prevProc to name of first application process whose frontmost is true
+                end try
+            end tell
+
             set sPlaying to false
             set mPlaying to false
 
@@ -251,6 +258,13 @@ impl MacOsMediaController {
                 tell application "Spotify" to {action_cmd}
             else if application "Music" is running then
                 tell application "Music" to {action_cmd}
+            end if
+
+            if prevProc is not "" and prevProc is not "Spotify" and prevProc is not "Music" then
+                delay 0.05
+                try
+                    tell application "System Events" to set frontmost of process prevProc to true
+                end try
             end if
             "#
         )
@@ -349,7 +363,11 @@ impl MediaController for MacOsMediaController {
                     r#"
                     if application "Spotify" is running then
                         set prevProc to ""
+                        set sWasVis to true
                         tell application "System Events"
+                            try
+                                set sWasVis to visible of process "Spotify"
+                            end try
                             try
                                 set prevProc to name of first application process whose frontmost is true
                             end try
@@ -357,12 +375,19 @@ impl MediaController for MacOsMediaController {
 
                         tell application "Spotify" to play track "{uri}"
 
-                        if prevProc is not "" and prevProc is not "Spotify" then
-                            delay 0.05
-                            try
-                                tell application prevProc to activate
-                            end try
-                        end if
+                        tell application "System Events"
+                            if not sWasVis then
+                                try
+                                    set visible of process "Spotify" to false
+                                end try
+                            end if
+                            if prevProc is not "" and prevProc is not "Spotify" then
+                                delay 0.05
+                                try
+                                    set frontmost of process prevProc to true
+                                end try
+                            end if
+                        end tell
                     end if
                     "#
                 );
@@ -377,7 +402,11 @@ impl MediaController for MacOsMediaController {
                 r#"
                 if application "Spotify" is running then
                     set prevProc to ""
+                    set sWasVis to true
                     tell application "System Events"
+                        try
+                            set sWasVis to visible of process "Spotify"
+                        end try
                         try
                             set prevProc to name of first application process whose frontmost is true
                         end try
@@ -390,12 +419,19 @@ impl MediaController for MacOsMediaController {
                         end tell
                     end try
 
-                    if prevProc is not "" and prevProc is not "Spotify" then
-                        delay 0.05
-                        try
-                            tell application prevProc to activate
-                        end try
-                    end if
+                    tell application "System Events"
+                        if not sWasVis then
+                            try
+                                set visible of process "Spotify" to false
+                            end try
+                        end if
+                        if prevProc is not "" and prevProc is not "Spotify" then
+                            delay 0.05
+                            try
+                                set frontmost of process prevProc to true
+                            end try
+                        end if
+                    end tell
                 else if application "Music" is running then
                     try
                         tell application "Music"

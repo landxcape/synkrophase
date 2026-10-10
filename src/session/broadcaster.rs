@@ -117,9 +117,16 @@ impl LeaderAnchorBroadcaster {
 
                     // Extract and broadcast full TrackIdentity to all room followers
                     if let Ok(Some(track_ident)) = controller.get_track_identity().await {
+                        let dispatch_ref_time = now_ref;
+                        // Provide 400ms lead time for network transit and follower actuation
+                        let target_ref_time = now_ref + 400_000;
                         let transition_env = Envelope {
                             sender,
-                            payload: Message::TrackTransition(track_ident),
+                            payload: Message::TrackTransition {
+                                track: track_ident,
+                                target_ref_time,
+                                dispatch_ref_time,
+                            },
                         };
                         if let Ok(bytes) = serialize(&transition_env) {
                             for addr in self.session.peer_socket_addrs() {
