@@ -13,13 +13,12 @@ use super::common::{
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
 use crate::error::Result;
-use crate::protocol::messages::{Envelope, Message, QueueState, serialize};
+use crate::protocol::messages::QueueState;
 use crate::session::SessionState;
 use crate::session::runtime::SessionMessageRuntime;
 use crate::sync::evaluator::DriftEvaluator;
 use crate::sync::scheduler::IntentScheduler;
 
-#[allow(clippy::too_many_arguments)]
 pub async fn run_join(
     device: DeviceConfig,
     sync_config: SyncConfig,
@@ -28,7 +27,6 @@ pub async fn run_join(
     leader_id: Option<Uuid>,
     leader_clock_port: u16,
     session_port: u16,
-    headless: bool,
 ) -> Result<()> {
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;
@@ -160,151 +158,87 @@ pub async fn run_join(
         async move { run_role_manager_loop(session, socket, sender, cfg).await }
     });
 
-    if !headless {
-        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        // Feed drift updates to TUI
-        let drift_tui_task = tokio::spawn({
-            let evaluator = Arc::clone(&drift_evaluator);
-            let session = Arc::clone(&session);
-            let tx = event_tx.clone();
-            async move {
-                loop {
-                    sleep(Duration::from_millis(500)).await;
-                    if let Some(anchor) = session.latest_sync_anchor()
-                        && let Ok((offset_us, zone, status)) =
-                            evaluator.evaluate_drift(&anchor).await
-                    {
-                        let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
-                    }
+    // Feed drift updates to TUI
+    let drift_tui_task = tokio::spawn({
+        let evaluator = Arc::clone(&drift_evaluator);
+        let session = Arc::clone(&session);
+        let tx = event_tx.clone();
+        async move {
+            loop {
+                sleep(Duration::from_millis(500)).await;
+                if let Some(anchor) = session.latest_sync_anchor()
+                    && let Ok((offset_us, zone, status)) =
+                        evaluator.evaluate_drift(&anchor).await
+                {
+                    let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
                 }
             }
-        });
+        }
+    });
 
-        let runtime = SessionMessageRuntime::new(Arc::clone(&session), device.name.clone())
-            .with_event_tx(event_tx.clone())
-            .with_controller(Arc::clone(&controller))
-            .with_clock(Arc::clone(&clock))
-            .with_scheduler(Arc::clone(&scheduler))
-            .with_drift_evaluator(Arc::clone(&drift_evaluator));
-
-        let receive_task = tokio::spawn({
-            let socket = Arc::clone(&session_socket);
-            async move { runtime.run_receive_loop(socket).await }
-        });
-
-        let abort_handles = vec![
-            clock_task.abort_handle(),
-            drift_task.abort_handle(),
-            clock_refresh_task.abort_handle(),
-            heartbeat_task.abort_handle(),
-            role_manager_task.abort_handle(),
-            drift_tui_task.abort_handle(),
-            receive_task.abort_handle(),
-        ];
-
-        let (engine, mut command_rx) = crate::session::SynkroEngine::new(
-            Arc::clone(&session),
-            Arc::clone(&controller),
-            Arc::clone(&session_socket),
-            Some(resolved_leader_addr),
-            Arc::clone(&clock),
-            Arc::clone(&scheduler),
-            event_tx.clone(),
-            abort_handles,
-        );
-        let engine = Arc::new(engine);
-
-        // Command dispatcher task
-        let engine_cmd_worker = {
-            let engine = Arc::clone(&engine);
-            tokio::spawn(async move {
-                while let Some(cmd) = command_rx.recv().await {
-                    let _ = engine.execute_command(cmd).await;
-                }
-            })
-        };
-
-        let _ = event_tx.send(crate::tui::AppEvent::Log {
-            source: "System".into(),
-            text: format!("Joining room {room_code} via {resolved_leader_addr}"),
-        });
-
-        let tui_res = crate::tui::run_tui(
-            Arc::clone(&engine),
-            room_code,
-            device.name,
-            None,
-            event_rx,
-            event_tx,
-        )
-        .await;
-
-        engine_cmd_worker.abort();
-        let _ = engine.shutdown().await;
-
-        return tui_res;
-    }
-
-    // Headless mode
-    let runtime = SessionMessageRuntime::new(
-        Arc::clone(&session),
-        device.name.clone(),
-    )
-    .with_controller(Arc::clone(&controller))
-    .with_clock(Arc::clone(&clock))
-    .with_scheduler(Arc::clone(&scheduler))
-    .with_drift_evaluator(Arc::clone(&drift_evaluator));
-
-    println!(
-        "Joining room {room_code} as follower {} via leader {resolved_leader_addr}",
-        device.device_id
-    );
+    let runtime = SessionMessageRuntime::new(Arc::clone(&session), device.name.clone())
+        .with_event_tx(event_tx.clone())
+        .with_controller(Arc::clone(&controller))
+        .with_clock(Arc::clone(&clock))
+        .with_scheduler(Arc::clone(&scheduler))
+        .with_drift_evaluator(Arc::clone(&drift_evaluator));
 
     let receive_task = tokio::spawn({
         let socket = Arc::clone(&session_socket);
         async move { runtime.run_receive_loop(socket).await }
     });
 
-    tokio::select! {
-        res = receive_task => {
-            if let Err(err) = res {
-                eprintln!("receive task failed: {err}");
-            }
-        }
-        res = clock_task => {
-            if let Err(err) = res {
-                eprintln!("clock responder failed: {err}");
-            }
-        }
-        Err(err) = drift_task => {
-            eprintln!("drift task failed: {err}");
-        }
-        res = heartbeat_task => {
-            if let Err(err) = res {
-                eprintln!("heartbeat loop failed: {err}");
-            }
-        }
-        res = role_manager_task => {
-            if let Err(err) = res {
-                eprintln!("role manager loop failed: {err}");
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("Leaving room {room_code}.");
-        }
-    }
+    let abort_handles = vec![
+        clock_task.abort_handle(),
+        drift_task.abort_handle(),
+        clock_refresh_task.abort_handle(),
+        heartbeat_task.abort_handle(),
+        role_manager_task.abort_handle(),
+        drift_tui_task.abort_handle(),
+        receive_task.abort_handle(),
+    ];
 
-    // Graceful departure notification
-    let leave_env = Envelope {
-        sender: device.device_id,
-        payload: Message::PeerLeft(device.device_id),
+    let (engine, mut command_rx) = crate::session::SynkroEngine::new(
+        Arc::clone(&session),
+        Arc::clone(&controller),
+        Arc::clone(&session_socket),
+        Some(resolved_leader_addr),
+        Arc::clone(&clock),
+        Arc::clone(&scheduler),
+        event_tx.clone(),
+        abort_handles,
+    );
+    let engine = Arc::new(engine);
+
+    // Command dispatcher task
+    let engine_cmd_worker = {
+        let engine = Arc::clone(&engine);
+        tokio::spawn(async move {
+            while let Some(cmd) = command_rx.recv().await {
+                let _ = engine.execute_command(cmd).await;
+            }
+        })
     };
-    if let Ok(bytes) = serialize(&leave_env) {
-        for addr in session.peer_socket_addrs() {
-            let _ = session_socket.send_to(&bytes, addr).await;
-        }
-    }
 
-    Ok(())
+    let _ = event_tx.send(crate::tui::AppEvent::Log {
+        source: "System".into(),
+        text: format!("Joining room {room_code} via {resolved_leader_addr}"),
+    });
+
+    let tui_res = crate::tui::run_tui(
+        Arc::clone(&engine),
+        room_code,
+        device.name,
+        None,
+        event_rx,
+        event_tx,
+    )
+    .await;
+
+    engine_cmd_worker.abort();
+    let _ = engine.shutdown().await;
+
+    tui_res
 }

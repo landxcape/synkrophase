@@ -12,7 +12,7 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 - **Hierarchical Role-Based Access Control**: Enforces `Leader > Moderator > Listener` permissions across playback controls, track skips, and queue management.
 - **Background Window Preservation**: Seamlessly controls Spotify and Apple Music without stealing window focus from active foreground terminal or editor windows.
 - Synchronizes LAN peer clocks using a high-precision **PTP-lite** UDP engine with sub-millisecond precision.
-- Features a full **interactive Ratatui terminal dashboard (TUI)** with an inline Unicode timeline slider, activity log, room chat, and a headless REPL mode fallback.
+- Features a full **interactive Ratatui terminal dashboard (TUI)** with an inline Unicode timeline slider, activity log, and room chat.
 - Offers **native track navigation** (next/previous), **one-shot room volume synchronization**, and automatic **clipboard room sharing**.
 
 ---
@@ -72,7 +72,7 @@ Instead of streaming, decoding, or transmitting heavy audio/video media files ov
 - **Native Track Controls**: Seamless next track (`n`) and previous track (`p`) navigation across room peers.
 - **One-Shot Room Volume Sync**: Broadcast host volume across all connected devices in one touch (`v` or `/vol`).
 - **Autonomous Follower Filtering**: Followers verify their active player track against incoming intents; if playing another track, followers gracefully skip execution without interrupting peers.
-- **Dynamic Leadership Transfer**: Hand off room host duties on the fly via `/transfer <peer|uuid>` in the TUI, REPL, or `synkro transfer <room> <peer>` CLI.
+- **Dynamic Leadership Transfer**: Hand off room host duties on the fly via `/transfer <peer|uuid>` in the TUI or `synkro transfer <peer>` via CLI.
 - **Adaptive Rolling Drift Smoothing**: Outlier-resistant rolling median window filter eliminates jitter from AppleScript polling spikes while guaranteeing drift stays within ±50ms.
 - **Automatic Host Failover**: Deterministic leader succession ensures playback synchronization continues uninterrupted if the room host leaves or disconnects.
 
@@ -132,12 +132,6 @@ Start a new room. Synkrophase launches an interactive dashboard and advertises v
 
 ```bash
 synkro host MYROOM
-```
-
-Or run in headless REPL mode (useful for SSH sessions or scripts):
-
-```bash
-synkro host MYROOM --headless
 ```
 
 ### 3. Join an Existing Room (Follower)
@@ -281,7 +275,6 @@ Synkrophase comes configured for low latency out of the box, with options custom
 | `--threshold-ms` | `50` | Maximum acceptable media drift before triggering micro-seeks |
 | `--heartbeat-ms` | `3000` | Peer health ping cadence |
 | `--heartbeat-timeout-ms`| `10000` | Timeout before declaring a peer dead and triggering succession |
-| `--headless` | `false` | Run in headless REPL mode without terminal UI |
 | `--no-copy` | `false` | Disable automatic copying of the join command to system clipboard on host start |
 
 ---
