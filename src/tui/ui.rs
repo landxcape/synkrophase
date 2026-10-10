@@ -368,11 +368,16 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
         left_layout[1],
     );
 
-    // Right Panel: Activity Log & Chat (Latest first)
-    let log_items: Vec<ListItem> = app
-        .logs
+    // Right Panel: Activity Log & Chat (Chronological with auto-scroll to latest)
+    let available_height = middle_layout[1].height.saturating_sub(2) as usize;
+    let visible_logs = if available_height > 0 && app.logs.len() > available_height {
+        &app.logs[app.logs.len() - available_height..]
+    } else {
+        &app.logs[..]
+    };
+
+    let log_items: Vec<ListItem> = visible_logs
         .iter()
-        .rev()
         .map(|entry| {
             let src_color = match entry.source.as_str() {
                 "System" => Color::Magenta,
