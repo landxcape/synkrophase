@@ -26,7 +26,7 @@ impl IpcClient {
     ) -> Result<Option<serde_json::Value>> {
         #[cfg(not(unix))]
         {
-            return Ok(None);
+            Ok(None)
         }
 
         #[cfg(unix)]

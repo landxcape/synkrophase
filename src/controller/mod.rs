@@ -9,6 +9,9 @@ pub mod macos;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackMetadata {
     pub title: String,

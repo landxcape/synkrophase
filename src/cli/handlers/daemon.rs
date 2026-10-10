@@ -264,7 +264,7 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
         } else {
             println!("Synkrophase daemon is running (PID: {:?}). IPC socket inspection is only supported on Unix.", paths.read_pid()?);
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(unix)]
