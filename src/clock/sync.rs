@@ -24,17 +24,63 @@ pub struct ClockSync {
     socket: Arc<UdpSocket>,
     config: SyncConfig,
     self_id: uuid::Uuid,
+    response_tx: tokio::sync::broadcast::Sender<(u64, u64, u64, SocketAddr)>,
+    receiver_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for ClockSync {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.receiver_handle {
+            handle.abort();
+        }
+    }
 }
 
 impl ClockSync {
     pub fn new(socket: UdpSocket, config: SyncConfig, self_id: uuid::Uuid) -> Self {
+        let (response_tx, _) = tokio::sync::broadcast::channel(128);
+        let socket = Arc::new(socket);
+
+        let s_clone = Arc::clone(&socket);
+        let tx_clone = response_tx.clone();
+        let receiver_handle = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            Some(handle.spawn(async move {
+                let mut buf = [0u8; 1024];
+                while let Ok((len, src)) = s_clone.recv_from(&mut buf).await {
+                    let t2 = local_now();
+                    if let Ok(Envelope { payload, .. }) = deserialize(&buf[..len]) {
+                        match payload {
+                            Message::ClockRequest { t1 } => {
+                                let t3 = local_now();
+                                let resp = Envelope {
+                                    sender: self_id,
+                                    payload: Message::ClockResponse { t1, t2, t3 },
+                                };
+                                if let Ok(data) = serialize(&resp) {
+                                    let _ = s_clone.send_to(&data, src).await;
+                                }
+                            }
+                            Message::ClockResponse { t1, t2, t3 } => {
+                                let _ = tx_clone.send((t1, t2, t3, src));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
         Self {
             offset_us: AtomicI64::new(0),
             residual_offset_us: AtomicI64::new(0),
             is_synchronized: std::sync::atomic::AtomicBool::new(false),
-            socket: Arc::new(socket),
+            socket,
             config,
             self_id,
+            response_tx,
+            receiver_handle,
         }
     }
 
@@ -57,7 +103,7 @@ impl ClockSync {
 
     pub async fn measure_offset(&self, target_addr: SocketAddr) -> crate::error::Result<i64> {
         let mut samples = Vec::with_capacity(self.config.clock_sample_count);
-        let mut buf = [0u8; 1024];
+        let mut rx = self.response_tx.subscribe();
 
         for _ in 0..self.config.clock_sample_count {
             let t1 = local_now();
@@ -71,20 +117,13 @@ impl ClockSync {
 
             let recv_result = timeout(Duration::from_millis(500), async {
                 loop {
-                    let (len, addr) = self.socket.recv_from(&mut buf).await?;
-                    #[allow(clippy::collapsible_if)]
-                    if addr == target_addr {
-                        if let Ok(Envelope {
-                            payload: Message::ClockResponse { t1: rt1, t2, t3 },
-                            ..
-                        }) = deserialize(&buf[..len])
-                        {
-                            if rt1 == t1 {
-                                return Ok::<(u64, u64, u64), crate::error::SynkroError>((
-                                    rt1, t2, t3,
-                                ));
-                            }
+                    match rx.recv().await {
+                        Ok((rt1, t2, t3, src)) if src.port() == target_addr.port() && rt1 == t1 => {
+                            return Ok((rt1, t2, t3));
                         }
+                        Ok(_) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(e) => return Err(crate::error::SynkroError::ClockSync(e.to_string())),
                     }
                 }
             })
@@ -129,26 +168,10 @@ impl ClockSync {
     }
 
     pub async fn run_responder(&self) -> crate::error::Result<()> {
-        let mut buf = [0u8; 1024];
-        loop {
-            let (len, src) = self.socket.recv_from(&mut buf).await?;
-            let t2 = local_now();
-
-            if let Ok(Envelope {
-                payload: Message::ClockRequest { t1 },
-                ..
-            }) = deserialize(&buf[..len])
-            {
-                let t3 = local_now();
-                let resp = Envelope {
-                    sender: self.self_id,
-                    payload: Message::ClockResponse { t1, t2, t3 },
-                };
-                if let Ok(data) = serialize(&resp) {
-                    let _ = self.socket.send_to(&data, src).await;
-                }
-            }
-        }
+        // The single dedicated receiver and responder loop runs continuously in the background
+        // upon instantiation. Keep this future alive so existing handler task lifecycles remain valid.
+        std::future::pending::<()>().await;
+        Ok(())
     }
 }
 
@@ -211,5 +234,30 @@ mod tests {
             .await
             .expect("second measurement should succeed");
         assert!(clock.residual_offset().abs() < 1000, "residual offset {} should be < 1ms", clock.residual_offset());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_bidirectional_clock_sync() {
+        let socket_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr_a = socket_a.local_addr().unwrap();
+        let clock_a = Arc::new(ClockSync::new(socket_a, SyncConfig::default(), uuid::Uuid::new_v4()));
+
+        let socket_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr_b = socket_b.local_addr().unwrap();
+        let clock_b = Arc::new(ClockSync::new(socket_b, SyncConfig::default(), uuid::Uuid::new_v4()));
+
+        // Both nodes measure offset against each other concurrently
+        let c_a = Arc::clone(&clock_a);
+        let c_b = Arc::clone(&clock_b);
+
+        let (res_a, res_b) = tokio::join!(
+            async move { c_a.measure_offset(addr_b).await },
+            async move { c_b.measure_offset(addr_a).await }
+        );
+
+        assert!(res_a.is_ok(), "node A should measure successfully without contention");
+        assert!(res_b.is_ok(), "node B should measure successfully without contention");
+        assert!(res_a.unwrap().abs() < 2000);
+        assert!(res_b.unwrap().abs() < 2000);
     }
 }

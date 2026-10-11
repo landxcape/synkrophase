@@ -216,3 +216,75 @@ async fn test_drift_evaluator_independent_display_and_reconciliation_smoothing()
     let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
     assert!(matches!(action, DriftAction::InSync { drift_us: 0 }));
 }
+
+#[tokio::test]
+async fn test_continuous_anchors_respect_settling_grace_period() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.seek_to(0).await.unwrap();
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+
+    // Initial anchor at t=1.0s, pos=10s triggers micro-seek
+    let anchor1 = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song".into()),
+    };
+    let action1 = evaluator.evaluate_and_reconcile(&anchor1).await.unwrap();
+    assert!(matches!(action1, DriftAction::MicroSeek { target_position_us: 10_000_000, .. }));
+
+    // Follower seeks to 10s. Now simulate player lagging/buffering (e.g. at 5s)
+    controller.seek_to(5_000_000).await.unwrap();
+
+    // 1 second later, next routine periodic anchor arrives (continuous progression: ref=2.0s, pos=11s)
+    let anchor2 = SyncAnchor {
+        reference_time: 2_000_000,
+        media_position_us: 11_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song".into()),
+    };
+
+    // Because this is a continuous anchor (not a scrub/discontinuity) and within 1500ms post-seek cooldown,
+    // evaluator MUST NOT seek again; it must report InSync { 0 } to allow the player to settle.
+    let action2 = evaluator.evaluate_and_reconcile(&anchor2).await.unwrap();
+    assert!(matches!(action2, DriftAction::InSync { drift_us: 0 }));
+    // Position must not have been modified by a premature seek
+    assert_eq!(controller.get_playback_state().await.unwrap().position_us, 5_000_000);
+}
+
+#[tokio::test]
+async fn test_playback_rate_restored_when_drift_settles() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.seek_to(10_100_000).await.unwrap(); // 100ms ahead (Zone 2 fine-tune window)
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    // First evaluation should fine-tune rate to 0.99
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action, DriftAction::FineTuneRate { rate, .. } if (rate - 0.99).abs() < f32::EPSILON));
+    assert!((controller.get_playback_state().await.unwrap().rate - 0.99).abs() < f32::EPSILON);
+
+    // Now player position converges to 10_020_000 us (within 50ms threshold)
+    controller.seek_to(10_020_000).await.unwrap();
+
+    // Allow 5-sample median window to reflect the new position
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    let action2 = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action2, DriftAction::InSync { .. }));
+    assert!((controller.get_playback_state().await.unwrap().rate - 1.0).abs() < f32::EPSILON);
+}

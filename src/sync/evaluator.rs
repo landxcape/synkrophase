@@ -30,12 +30,35 @@ pub struct DriftEvaluator {
     threshold_us: u64,
     notify_event: Arc<Notify>,
     last_seek: Mutex<Option<std::time::Instant>>,
-    last_anchor_ref: Mutex<Option<u64>>,
+    last_anchor: Mutex<Option<SyncAnchor>>,
     drift_history: Mutex<VecDeque<i64>>,
     display_drift_history: Mutex<VecDeque<i64>>,
     last_zone: Mutex<u8>,
     consecutive_outliers: Mutex<u32>,
     buffering_until: Mutex<Option<std::time::Instant>>,
+    current_adjusted_rate: Mutex<Option<f32>>,
+}
+
+pub fn is_timeline_discontinuity(prev: &SyncAnchor, curr: &SyncAnchor) -> bool {
+    if prev.track_title != curr.track_title {
+        return true;
+    }
+    if prev.is_playing != curr.is_playing {
+        return true;
+    }
+    if (prev.playback_rate - curr.playback_rate).abs() > 0.01 {
+        return true;
+    }
+    if curr.reference_time < prev.reference_time {
+        return true;
+    }
+    let dt_us = curr.reference_time.saturating_sub(prev.reference_time);
+    let expected_pos_us = if prev.is_playing {
+        prev.media_position_us + (dt_us as f64 * prev.playback_rate as f64) as i64
+    } else {
+        prev.media_position_us
+    };
+    (curr.media_position_us - expected_pos_us).abs() > 500_000
 }
 
 impl DriftEvaluator {
@@ -50,12 +73,13 @@ impl DriftEvaluator {
             threshold_us,
             notify_event: Arc::new(Notify::new()),
             last_seek: Mutex::new(None),
-            last_anchor_ref: Mutex::new(None),
+            last_anchor: Mutex::new(None),
             drift_history: Mutex::new(VecDeque::with_capacity(5)),
             display_drift_history: Mutex::new(VecDeque::with_capacity(5)),
             last_zone: Mutex::new(1),
             consecutive_outliers: Mutex::new(0),
             buffering_until: Mutex::new(None),
+            current_adjusted_rate: Mutex::new(None),
         }
     }
 
@@ -215,16 +239,25 @@ impl DriftEvaluator {
             }
         }
 
+        let is_discontinuity = {
+            let mut last_guard = self.last_anchor.lock().unwrap();
+            match &*last_guard {
+                Some(prev) => {
+                    let disc = is_timeline_discontinuity(prev, anchor);
+                    *last_guard = Some(anchor.clone());
+                    disc
+                }
+                None => {
+                    *last_guard = Some(anchor.clone());
+                    true
+                }
+            }
+        };
+
         // Settling grace period check (1500ms post-seek)
-        {
+        if !is_discontinuity {
             let last_seek_guard = self.last_seek.lock().unwrap();
-            let last_ref_guard = self.last_anchor_ref.lock().unwrap();
-            let is_new_anchor = match *last_ref_guard {
-                Some(prev_ref) => prev_ref != anchor.reference_time,
-                None => true,
-            };
-            if !is_new_anchor
-                && let Some(prev_seek) = *last_seek_guard
+            if let Some(prev_seek) = *last_seek_guard
                 && now.duration_since(prev_seek) < Duration::from_millis(1500)
             {
                 return Ok(DriftAction::InSync { drift_us: 0 });
@@ -262,6 +295,10 @@ impl DriftEvaluator {
 
         if drift_abs <= self.threshold_us {
             *self.consecutive_outliers.lock().unwrap() = 0;
+            let should_restore = self.current_adjusted_rate.lock().unwrap().take().is_some();
+            if should_restore {
+                let _ = self.controller.set_rate(1.0).await;
+            }
             return Ok(DriftAction::InSync {
                 drift_us: smoothed_drift_us,
             });
@@ -276,6 +313,7 @@ impl DriftEvaluator {
                 let state_after = self.controller.get_playback_state().await?;
                 if (state_after.rate - target_rate).abs() < f32::EPSILON {
                     *self.consecutive_outliers.lock().unwrap() = 0;
+                    *self.current_adjusted_rate.lock().unwrap() = Some(target_rate);
                     return Ok(DriftAction::FineTuneRate {
                         rate: target_rate,
                         drift_us: smoothed_drift_us,
@@ -286,19 +324,12 @@ impl DriftEvaluator {
 
         // Stage 2: Micro-seek with cooldown & consecutive outlier confirmation
         let (should_seek, is_new_anchor) = {
-            let mut last_ref = self.last_anchor_ref.lock().unwrap();
-            let is_new = match *last_ref {
-                Some(prev_ref) => prev_ref != anchor.reference_time,
-                None => true,
-            };
-
             let mut outliers = self.consecutive_outliers.lock().unwrap();
             *outliers = outliers.saturating_add(1);
-            let confirmed = is_new || *outliers >= 2;
+            let confirmed = is_discontinuity || *outliers >= 2;
 
             let mut last = self.last_seek.lock().unwrap();
-            if is_new {
-                *last_ref = Some(anchor.reference_time);
+            if is_discontinuity {
                 *last = Some(now);
                 *outliers = 0;
                 (true, true)
@@ -323,6 +354,10 @@ impl DriftEvaluator {
 
         if should_seek {
             self.controller.seek_to(target_seek_position_us).await?;
+            let should_restore = self.current_adjusted_rate.lock().unwrap().take().is_some();
+            if should_restore {
+                let _ = self.controller.set_rate(1.0).await;
+            }
             if is_new_anchor {
                 self.drift_history.lock().unwrap().clear();
             }

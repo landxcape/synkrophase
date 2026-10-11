@@ -93,6 +93,8 @@ If room discovery does not find your host (e.g., when your Wi-Fi router has **Cl
    synkro join MYROOM --leader-addr 192.168.1.50:5871
    ```
 
+> **Security Model**: Synkrophase is designed strictly for trusted local networks (home/office LANs). All control packets and discovery messages are unencrypted UDP payloads. Do not expose Synkrophase ports to untrusted public networks or the open internet.
+
 ---
 
 ## Quick Start
@@ -144,7 +146,7 @@ When you join:
 
 ### Clock Synchronization
 Devices do not rely on system wall clocks or time zones. When a follower joins:
-1. It runs a lightweight PTP (Precision Time Protocol) round-trip exchange with the host over UDP port 5872.
+1. It runs a lightweight PTP (Precision Time Protocol) round-trip exchange with the host over UDP port 5870.
 2. It measures network latency and calculates the difference between its monotonic clock and the host's monotonic clock.
 3. Every 10 seconds, it performs a background measurement to track oscillator drift and network jitter.
 4. The **Offset** displayed in the room table shows this live residual clock difference (e.g. `+14µs`, `-0.2ms`).
