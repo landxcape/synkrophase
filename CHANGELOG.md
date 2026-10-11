@@ -3,6 +3,13 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-10-11
+
+### Fixed
+- **Resilient Playback-Rate Restoration**: The evaluator now retains adjusted-rate state and retries resetting the player's rate to 1.0 if the media controller encounters a transient failure, ensuring the player is never permanently stranded at $0.99\times$ or $1.01\times$.
+- **Clock UDP Receiver Error Resilience**: Converted the clock synchronization receiver task into an error-resilient loop that logs warnings and backs off on transient socket errors rather than terminating permanently.
+- **Rate-Aware Scrub Detection**: Multiplied elapsed reference time by the active playback rate when predicting expected leader media position, eliminating false scrub detection alarms during non-$1.0\times$ playback.
+
 ## [0.6.6] - 2026-10-11
 
 ### Fixed
