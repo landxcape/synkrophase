@@ -288,9 +288,15 @@ impl DriftEvaluator {
         // Zone 1: Locked / InSync
         if zone == 1 {
             *self.consecutive_outliers.lock().unwrap() = 0;
-            let should_restore = self.current_adjusted_rate.lock().unwrap().take().is_some();
-            if should_restore {
-                let _ = self.controller.set_rate(1.0).await;
+            let needs_restore = self.current_adjusted_rate.lock().unwrap().is_some();
+            if needs_restore {
+                if let Ok(()) = self.controller.set_rate(1.0).await {
+                    *self.current_adjusted_rate.lock().unwrap() = None;
+                } else {
+                    tracing::warn!(
+                        "Failed to restore playback rate to 1.0; will retry on next evaluation"
+                    );
+                }
             }
             return Ok(DriftAction::InSync {
                 drift_us: smoothed_drift_us,
@@ -347,9 +353,15 @@ impl DriftEvaluator {
 
         if should_seek {
             self.controller.seek_to(target_seek_position_us).await?;
-            let should_restore = self.current_adjusted_rate.lock().unwrap().take().is_some();
-            if should_restore {
-                let _ = self.controller.set_rate(1.0).await;
+            let needs_restore = self.current_adjusted_rate.lock().unwrap().is_some();
+            if needs_restore {
+                if let Ok(()) = self.controller.set_rate(1.0).await {
+                    *self.current_adjusted_rate.lock().unwrap() = None;
+                } else {
+                    tracing::warn!(
+                        "Failed to restore playback rate to 1.0 during seek; will retry on next evaluation"
+                    );
+                }
             }
             if is_new_anchor {
                 self.drift_history.lock().unwrap().clear();

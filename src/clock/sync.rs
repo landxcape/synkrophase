@@ -46,24 +46,32 @@ impl ClockSync {
         let receiver_handle = if let Ok(handle) = tokio::runtime::Handle::try_current() {
             Some(handle.spawn(async move {
                 let mut buf = [0u8; 1024];
-                while let Ok((len, src)) = s_clone.recv_from(&mut buf).await {
-                    let t2 = local_now();
-                    if let Ok(Envelope { payload, .. }) = deserialize(&buf[..len]) {
-                        match payload {
-                            Message::ClockRequest { t1 } => {
-                                let t3 = local_now();
-                                let resp = Envelope {
-                                    sender: self_id,
-                                    payload: Message::ClockResponse { t1, t2, t3 },
-                                };
-                                if let Ok(data) = serialize(&resp) {
-                                    let _ = s_clone.send_to(&data, src).await;
+                loop {
+                    match s_clone.recv_from(&mut buf).await {
+                        Ok((len, src)) => {
+                            let t2 = local_now();
+                            if let Ok(Envelope { payload, .. }) = deserialize(&buf[..len]) {
+                                match payload {
+                                    Message::ClockRequest { t1 } => {
+                                        let t3 = local_now();
+                                        let resp = Envelope {
+                                            sender: self_id,
+                                            payload: Message::ClockResponse { t1, t2, t3 },
+                                        };
+                                        if let Ok(data) = serialize(&resp) {
+                                            let _ = s_clone.send_to(&data, src).await;
+                                        }
+                                    }
+                                    Message::ClockResponse { t1, t2, t3 } => {
+                                        let _ = tx_clone.send((t1, t2, t3, src));
+                                    }
+                                    _ => {}
                                 }
                             }
-                            Message::ClockResponse { t1, t2, t3 } => {
-                                let _ = tx_clone.send((t1, t2, t3, src));
-                            }
-                            _ => {}
+                        }
+                        Err(err) => {
+                            tracing::warn!("Clock UDP receive error: {err}; backing off 10ms");
+                            tokio::time::sleep(Duration::from_millis(10)).await;
                         }
                     }
                 }

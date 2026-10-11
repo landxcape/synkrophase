@@ -153,7 +153,8 @@ impl LeaderAnchorBroadcaster {
 
                 // Condition 3: Timeline scrubbed (>1.5s position jump from continuous trajectory)
                 if state.is_playing && last_is_playing == Some(true) && last_sample_pos_us > 0 {
-                    let elapsed_ref_us = now_ref.saturating_sub(last_sample_ref_time) as i64;
+                    let elapsed_ref_us = (now_ref.saturating_sub(last_sample_ref_time) as f64
+                        * state.rate as f64) as i64;
                     let expected_pos_us = last_sample_pos_us + elapsed_ref_us;
                     let diff_us = (state.position_us - expected_pos_us).abs();
 
