@@ -32,7 +32,6 @@ pub struct DriftEvaluator {
     last_seek: Mutex<Option<std::time::Instant>>,
     last_anchor: Mutex<Option<SyncAnchor>>,
     drift_history: Mutex<VecDeque<i64>>,
-    display_drift_history: Mutex<VecDeque<i64>>,
     last_zone: Mutex<u8>,
     consecutive_outliers: Mutex<u32>,
     buffering_until: Mutex<Option<std::time::Instant>>,
@@ -75,7 +74,6 @@ impl DriftEvaluator {
             last_seek: Mutex::new(None),
             last_anchor: Mutex::new(None),
             drift_history: Mutex::new(VecDeque::with_capacity(5)),
-            display_drift_history: Mutex::new(VecDeque::with_capacity(5)),
             last_zone: Mutex::new(1),
             consecutive_outliers: Mutex::new(0),
             buffering_until: Mutex::new(None),
@@ -88,7 +86,6 @@ impl DriftEvaluator {
         *self.buffering_until.lock().unwrap() = Some(deadline);
         *self.last_zone.lock().unwrap() = 1;
         self.drift_history.lock().unwrap().clear();
-        self.display_drift_history.lock().unwrap().clear();
         self.trigger_immediate();
     }
 
@@ -100,7 +97,7 @@ impl DriftEvaluator {
         self.notify_event.notify_one();
     }
 
-    fn push_and_median_drift(&self, raw_drift: i64) -> i64 {
+    fn push_and_median(&self, raw_drift: i64) -> i64 {
         let mut history = self.drift_history.lock().unwrap();
         if history.len() >= 5 {
             history.pop_front();
@@ -112,16 +109,44 @@ impl DriftEvaluator {
         sorted[sorted.len() / 2]
     }
 
-    fn push_and_median_display(&self, raw_drift: i64) -> i64 {
-        let mut history = self.display_drift_history.lock().unwrap();
-        if history.len() >= 5 {
-            history.pop_front();
-        }
-        history.push_back(raw_drift);
-
-        let mut sorted: Vec<i64> = history.iter().copied().collect();
-        sorted.sort_unstable();
-        sorted[sorted.len() / 2]
+    /// Evaluates the target drift zone with hysteresis.
+    /// Zone 1: Locked (< threshold_us + 25ms release margin)
+    /// Zone 2: Nudging (50ms - 200/225ms margin)
+    /// Zone 3: Micro-seeking / Drifting (> 200ms)
+    pub fn compute_zone(&self, drift_abs: u64) -> u8 {
+        let mut current_zone = self.last_zone.lock().unwrap();
+        let exit_zone1_threshold = self.threshold_us + 25_000;
+        let zone = match *current_zone {
+            1 => {
+                if drift_abs <= exit_zone1_threshold {
+                    1
+                } else if drift_abs < 200_000 {
+                    2
+                } else {
+                    3
+                }
+            }
+            2 => {
+                if drift_abs <= self.threshold_us {
+                    1
+                } else if drift_abs < 225_000 {
+                    2
+                } else {
+                    3
+                }
+            }
+            _ => {
+                if drift_abs <= self.threshold_us {
+                    1
+                } else if drift_abs < 200_000 {
+                    2
+                } else {
+                    3
+                }
+            }
+        };
+        *current_zone = zone;
+        zone
     }
 
     pub async fn evaluate_drift(&self, anchor: &SyncAnchor) -> Result<(i64, u8, String)> {
@@ -171,43 +196,9 @@ impl DriftEvaluator {
         let expected_position_us = anchor.media_position_us + elapsed_us;
 
         let raw_drift_us = local_state.position_us - expected_position_us;
-        let smoothed_drift_us = self.push_and_median_display(raw_drift_us);
+        let smoothed_drift_us = self.push_and_median(raw_drift_us);
         let drift_abs = smoothed_drift_us.unsigned_abs();
-
-        let mut current_zone = self.last_zone.lock().unwrap();
-        // Hysteresis Banding:
-        // Zone 1 (Locked): threshold_us (typically 50ms) with +25ms release margin
-        let exit_zone1_threshold = self.threshold_us + 25_000;
-        let zone = match *current_zone {
-            1 => {
-                if drift_abs <= exit_zone1_threshold {
-                    1
-                } else if drift_abs < 200_000 {
-                    2
-                } else {
-                    3
-                }
-            }
-            2 => {
-                if drift_abs <= self.threshold_us {
-                    1
-                } else if drift_abs < 225_000 {
-                    2
-                } else {
-                    3
-                }
-            }
-            _ => {
-                if drift_abs <= self.threshold_us {
-                    1
-                } else if drift_abs < 200_000 {
-                    2
-                } else {
-                    3
-                }
-            }
-        };
-        *current_zone = zone;
+        let zone = self.compute_zone(drift_abs);
 
         match zone {
             1 => Ok((smoothed_drift_us, 1, "Locked (<50ms)".to_string())),
@@ -290,10 +281,12 @@ impl DriftEvaluator {
         let expected_position_us = anchor.media_position_us + elapsed_us;
 
         let raw_drift_us = local_state.position_us - expected_position_us;
-        let smoothed_drift_us = self.push_and_median_drift(raw_drift_us);
+        let smoothed_drift_us = self.push_and_median(raw_drift_us);
         let drift_abs = smoothed_drift_us.unsigned_abs();
+        let zone = self.compute_zone(drift_abs);
 
-        if drift_abs <= self.threshold_us {
+        // Zone 1: Locked / InSync
+        if zone == 1 {
             *self.consecutive_outliers.lock().unwrap() = 0;
             let should_restore = self.current_adjusted_rate.lock().unwrap().take().is_some();
             if should_restore {
@@ -305,8 +298,8 @@ impl DriftEvaluator {
         }
 
         // Two-stage correction:
-        // Stage 1: Fine-tune rate if drift is moderate (50ms - 200ms)
-        if drift_abs < 200_000 {
+        // Stage 1: Fine-tune rate if in Zone 2 (Nudging: 50ms - 200/225ms)
+        if zone == 2 {
             let target_rate = if smoothed_drift_us > 0 { 0.99 } else { 1.01 };
             if let Ok(()) = self.controller.set_rate(target_rate).await {
                 // If player actually changed rate, return FineTuneRate
@@ -322,7 +315,7 @@ impl DriftEvaluator {
             }
         }
 
-        // Stage 2: Micro-seek with cooldown & consecutive outlier confirmation
+        // Stage 2: Zone 3 Micro-seek with cooldown & consecutive outlier confirmation
         let (should_seek, is_new_anchor) = {
             let mut outliers = self.consecutive_outliers.lock().unwrap();
             *outliers = outliers.saturating_add(1);

@@ -94,7 +94,7 @@ impl ClockSync {
 
     pub fn reference_now(&self) -> u64 {
         let now = local_now() as i64;
-        (now + self.offset()) as u64
+        now.saturating_add(self.offset()).max(0) as u64
     }
 
     pub fn set_offset(&self, offset: i64) {
@@ -118,7 +118,7 @@ impl ClockSync {
             let recv_result = timeout(Duration::from_millis(500), async {
                 loop {
                     match rx.recv().await {
-                        Ok((rt1, t2, t3, src)) if src.port() == target_addr.port() && rt1 == t1 => {
+                        Ok((rt1, t2, t3, src)) if src == target_addr && rt1 == t1 => {
                             return Ok((rt1, t2, t3));
                         }
                         Ok(_) => continue,
@@ -226,25 +226,41 @@ mod tests {
             .expect("should measure successfully");
         // Because they run on the same machine/clock, offset should be effectively 0 (within <1ms / 1000us)
         assert!(offset.abs() < 1000, "offset {} is not < 1ms", offset);
-        assert_eq!(clock.residual_offset(), 0, "first residual offset should be 0");
+        assert_eq!(
+            clock.residual_offset(),
+            0,
+            "first residual offset should be 0"
+        );
 
         // Second measurement should track residual offset relative to first
         let _ = clock
             .measure_offset(server_addr)
             .await
             .expect("second measurement should succeed");
-        assert!(clock.residual_offset().abs() < 1000, "residual offset {} should be < 1ms", clock.residual_offset());
+        assert!(
+            clock.residual_offset().abs() < 1000,
+            "residual offset {} should be < 1ms",
+            clock.residual_offset()
+        );
     }
 
     #[tokio::test]
     async fn test_concurrent_bidirectional_clock_sync() {
         let socket_a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr_a = socket_a.local_addr().unwrap();
-        let clock_a = Arc::new(ClockSync::new(socket_a, SyncConfig::default(), uuid::Uuid::new_v4()));
+        let clock_a = Arc::new(ClockSync::new(
+            socket_a,
+            SyncConfig::default(),
+            uuid::Uuid::new_v4(),
+        ));
 
         let socket_b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr_b = socket_b.local_addr().unwrap();
-        let clock_b = Arc::new(ClockSync::new(socket_b, SyncConfig::default(), uuid::Uuid::new_v4()));
+        let clock_b = Arc::new(ClockSync::new(
+            socket_b,
+            SyncConfig::default(),
+            uuid::Uuid::new_v4(),
+        ));
 
         // Both nodes measure offset against each other concurrently
         let c_a = Arc::clone(&clock_a);
@@ -255,9 +271,25 @@ mod tests {
             async move { c_b.measure_offset(addr_a).await }
         );
 
-        assert!(res_a.is_ok(), "node A should measure successfully without contention");
-        assert!(res_b.is_ok(), "node B should measure successfully without contention");
+        assert!(
+            res_a.is_ok(),
+            "node A should measure successfully without contention"
+        );
+        assert!(
+            res_b.is_ok(),
+            "node B should measure successfully without contention"
+        );
         assert!(res_a.unwrap().abs() < 2000);
         assert!(res_b.unwrap().abs() < 2000);
+    }
+
+    #[tokio::test]
+    async fn test_reference_now_negative_offset_clamp() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let clock = ClockSync::new(socket, SyncConfig::default(), uuid::Uuid::new_v4());
+        // Set a massive negative offset (e.g. -1,000,000,000,000 us)
+        clock.set_offset(-1_000_000_000_000);
+        // reference_now should clamp cleanly to 0 rather than overflowing/wrapping to u64::MAX
+        assert_eq!(clock.reference_now(), 0);
     }
 }

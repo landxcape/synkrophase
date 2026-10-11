@@ -4,8 +4,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 
 use windows::Media::Control::{
-    GlobalSystemMediaTransportControlsSession,
-    GlobalSystemMediaTransportControlsSessionManager,
+    GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 
@@ -42,21 +41,27 @@ impl WindowsMediaController {
     }
 
     fn get_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager> {
-        let async_op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-            .map_err(|e| SynkroError::MediaControl(format!("Failed to request GSMTC manager: {e}")))?;
+        let async_op =
+            GlobalSystemMediaTransportControlsSessionManager::RequestAsync().map_err(|e| {
+                SynkroError::MediaControl(format!("Failed to request GSMTC manager: {e}"))
+            })?;
         async_op
             .get()
             .map_err(|e| SynkroError::MediaControl(format!("Failed to get GSMTC manager: {e}")))
     }
 
-    fn find_active_session(&self, manager: &GlobalSystemMediaTransportControlsSessionManager) -> Result<GlobalSystemMediaTransportControlsSession> {
+    fn find_active_session(
+        &self,
+        manager: &GlobalSystemMediaTransportControlsSessionManager,
+    ) -> Result<GlobalSystemMediaTransportControlsSession> {
         // Try GetCurrentSession first
         if let Ok(current) = manager.GetCurrentSession() {
             return Ok(current);
         }
 
         // Iterate all active sessions
-        let sessions = manager.GetSessions()
+        let sessions = manager
+            .GetSessions()
             .map_err(|e| SynkroError::MediaControl(format!("Failed to get GSMTC sessions: {e}")))?;
 
         let mut playing_session = None;
@@ -68,7 +73,8 @@ impl WindowsMediaController {
                 any_session = Some(session.clone());
             }
 
-            let app_id = session.SourceAppUserModelId()
+            let app_id = session
+                .SourceAppUserModelId()
                 .map(|s| s.to_string())
                 .unwrap_or_default();
 
@@ -95,7 +101,9 @@ impl WindowsMediaController {
             return Ok(s);
         }
 
-        Err(SynkroError::MediaControl("No active media sessions found on Windows GSMTC".into()))
+        Err(SynkroError::MediaControl(
+            "No active media sessions found on Windows GSMTC".into(),
+        ))
     }
 }
 
@@ -140,7 +148,11 @@ impl MediaController for WindowsMediaController {
                     let pos_us = pos_100ns / 10;
 
                     let end_100ns = timeline.EndTime().map(|ts| ts.Duration).unwrap_or(0);
-                    let dur_us = if end_100ns > 0 { Some((end_100ns / 10) as u64) } else { None };
+                    let dur_us = if end_100ns > 0 {
+                        Some((end_100ns / 10) as u64)
+                    } else {
+                        None
+                    };
 
                     (pos_us, dur_us)
                 }
@@ -152,8 +164,16 @@ impl MediaController for WindowsMediaController {
                 Ok(async_op) => match async_op.get() {
                     Ok(props) => {
                         let title = props.Title().map(|s| s.to_string()).unwrap_or_default();
-                        let artist = props.Artist().map(|s| s.to_string()).ok().filter(|s| !s.is_empty());
-                        let album = props.AlbumTitle().map(|s| s.to_string()).ok().filter(|s| !s.is_empty());
+                        let artist = props
+                            .Artist()
+                            .map(|s| s.to_string())
+                            .ok()
+                            .filter(|s| !s.is_empty());
+                        let album = props
+                            .AlbumTitle()
+                            .map(|s| s.to_string())
+                            .ok()
+                            .filter(|s| !s.is_empty());
 
                         if title.is_empty() && artist.is_none() {
                             None
@@ -219,7 +239,8 @@ impl MediaController for WindowsMediaController {
                     {
                         if let Ok(info) = session.GetPlaybackInfo()
                             && let Ok(status) = info.PlaybackStatus()
-                            && status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
+                            && status
+                                == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
                         {
                             this.record_actuation_time(start.elapsed().as_micros() as u64);
                             return Ok(());
@@ -246,7 +267,8 @@ impl MediaController for WindowsMediaController {
             let start = Instant::now();
             let manager = Self::get_manager()?;
             let session = this.find_active_session(&manager)?;
-            let async_op = session.TryPlayAsync()
+            let async_op = session
+                .TryPlayAsync()
                 .map_err(|e| SynkroError::MediaControl(format!("Failed to play: {e}")))?;
             let _ = async_op.get();
             this.record_actuation_time(start.elapsed().as_micros() as u64);
@@ -262,7 +284,8 @@ impl MediaController for WindowsMediaController {
             let start = Instant::now();
             let manager = Self::get_manager()?;
             let session = this.find_active_session(&manager)?;
-            let async_op = session.TryPauseAsync()
+            let async_op = session
+                .TryPauseAsync()
                 .map_err(|e| SynkroError::MediaControl(format!("Failed to pause: {e}")))?;
             let _ = async_op.get();
             this.record_actuation_time(start.elapsed().as_micros() as u64);
@@ -282,7 +305,8 @@ impl MediaController for WindowsMediaController {
             // TryChangePlaybackPositionAsync takes requestedplaybackposition as i64 (in 100ns units)
             let pos_100ns = position_us * 10;
 
-            let async_op = session.TryChangePlaybackPositionAsync(pos_100ns)
+            let async_op = session
+                .TryChangePlaybackPositionAsync(pos_100ns)
                 .map_err(|e| SynkroError::MediaControl(format!("Failed to seek: {e}")))?;
             let _ = async_op.get();
             this.record_actuation_time(start.elapsed().as_micros() as u64);
@@ -303,7 +327,8 @@ impl MediaController for WindowsMediaController {
             let start = Instant::now();
             let manager = Self::get_manager()?;
             let session = this.find_active_session(&manager)?;
-            let async_op = session.TrySkipNextAsync()
+            let async_op = session
+                .TrySkipNextAsync()
                 .map_err(|e| SynkroError::MediaControl(format!("Failed to skip next: {e}")))?;
             let _ = async_op.get();
             this.record_actuation_time(start.elapsed().as_micros() as u64);
@@ -319,7 +344,8 @@ impl MediaController for WindowsMediaController {
             let start = Instant::now();
             let manager = Self::get_manager()?;
             let session = this.find_active_session(&manager)?;
-            let async_op = session.TrySkipPreviousAsync()
+            let async_op = session
+                .TrySkipPreviousAsync()
                 .map_err(|e| SynkroError::MediaControl(format!("Failed to skip previous: {e}")))?;
             let _ = async_op.get();
             this.record_actuation_time(start.elapsed().as_micros() as u64);

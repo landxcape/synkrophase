@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
+use zbus::Connection;
 use zbus::names::BusName;
 use zbus::zvariant::{ObjectPath, Value};
-use zbus::Connection;
 
 use super::{MediaController, PlaybackState, TrackMetadata};
 use crate::error::{Result, SynkroError};
@@ -41,9 +41,9 @@ impl LinuxMediaController {
     }
 
     async fn get_connection() -> Result<Connection> {
-        Connection::session()
-            .await
-            .map_err(|e| SynkroError::MediaControl(format!("Failed to connect to D-Bus session: {e}")))
+        Connection::session().await.map_err(|e| {
+            SynkroError::MediaControl(format!("Failed to connect to D-Bus session: {e}"))
+        })
     }
 
     /// List all running MPRIS media players on the session bus.
@@ -79,7 +79,9 @@ impl LinuxMediaController {
     async fn find_target_player(&self, conn: &Connection) -> Result<String> {
         let players = Self::list_mpris_players(conn).await?;
         if players.is_empty() {
-            return Err(SynkroError::MediaControl("No MPRIS media players running".into()));
+            return Err(SynkroError::MediaControl(
+                "No MPRIS media players running".into(),
+            ));
         }
 
         let mut playing_players = Vec::new();
@@ -127,9 +129,9 @@ impl LinuxMediaController {
     }
 
     async fn get_playback_status(conn: &Connection, player_service: &str) -> Result<String> {
-        let dest: BusName<'_> = player_service
-            .try_into()
-            .map_err(|e| SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}")))?;
+        let dest: BusName<'_> = player_service.try_into().map_err(|e| {
+            SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}"))
+        })?;
 
         let reply = conn
             .call_method(
@@ -142,10 +144,9 @@ impl LinuxMediaController {
             .await
             .map_err(|e| SynkroError::MediaControl(format!("Failed to get PlaybackStatus: {e}")))?;
 
-        let value: zbus::zvariant::OwnedValue = reply
-            .body()
-            .deserialize()
-            .map_err(|e| SynkroError::MediaControl(format!("Failed to parse PlaybackStatus variant: {e}")))?;
+        let value: zbus::zvariant::OwnedValue = reply.body().deserialize().map_err(|e| {
+            SynkroError::MediaControl(format!("Failed to parse PlaybackStatus variant: {e}"))
+        })?;
 
         let val: Value<'_> = value.into();
         match val {
@@ -154,10 +155,14 @@ impl LinuxMediaController {
         }
     }
 
-    async fn get_property_value(conn: &Connection, player_service: &str, property: &str) -> Result<Value<'static>> {
-        let dest: BusName<'_> = player_service
-            .try_into()
-            .map_err(|e| SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}")))?;
+    async fn get_property_value(
+        conn: &Connection,
+        player_service: &str,
+        property: &str,
+    ) -> Result<Value<'static>> {
+        let dest: BusName<'_> = player_service.try_into().map_err(|e| {
+            SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}"))
+        })?;
 
         let reply = conn
             .call_method(
@@ -178,10 +183,15 @@ impl LinuxMediaController {
         Ok(value.into())
     }
 
-    async fn set_property_value(conn: &Connection, player_service: &str, property: &str, val: Value<'_>) -> Result<()> {
-        let dest: BusName<'_> = player_service
-            .try_into()
-            .map_err(|e| SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}")))?;
+    async fn set_property_value(
+        conn: &Connection,
+        player_service: &str,
+        property: &str,
+        val: Value<'_>,
+    ) -> Result<()> {
+        let dest: BusName<'_> = player_service.try_into().map_err(|e| {
+            SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}"))
+        })?;
 
         conn.call_method(
             Some(dest),
@@ -196,10 +206,14 @@ impl LinuxMediaController {
         Ok(())
     }
 
-    async fn call_player_method(conn: &Connection, player_service: &str, method: &str) -> Result<()> {
-        let dest: BusName<'_> = player_service
-            .try_into()
-            .map_err(|e| SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}")))?;
+    async fn call_player_method(
+        conn: &Connection,
+        player_service: &str,
+        method: &str,
+    ) -> Result<()> {
+        let dest: BusName<'_> = player_service.try_into().map_err(|e| {
+            SynkroError::MediaControl(format!("Invalid bus name {player_service}: {e}"))
+        })?;
 
         conn.call_method(
             Some(dest),
@@ -222,7 +236,9 @@ impl MediaController for LinuxMediaController {
         let target = self.find_target_player(&conn).await?;
 
         // 1. PlaybackStatus
-        let status = Self::get_playback_status(&conn, &target).await.unwrap_or_else(|_| "Stopped".into());
+        let status = Self::get_playback_status(&conn, &target)
+            .await
+            .unwrap_or_else(|_| "Stopped".into());
         let is_playing = status == "Playing";
 
         // 2. Position (in microseconds for MPRIS)
@@ -325,7 +341,8 @@ impl MediaController for LinuxMediaController {
                 if let Value::Str(ref key_str) = k
                     && (key_str == "xesam:url" || key_str == "mpris:trackid")
                     && let Value::Str(val_str) = v
-                    && (val_str.contains("spotify:track:") || val_str.starts_with("https://open.spotify.com/track/"))
+                    && (val_str.contains("spotify:track:")
+                        || val_str.starts_with("https://open.spotify.com/track/"))
                 {
                     spotify_uri = Some(val_str.to_string());
                     break;
@@ -349,9 +366,9 @@ impl MediaController for LinuxMediaController {
 
         if let Some(ref uri) = track.spotify_uri {
             let start = Instant::now();
-            let dest: BusName<'_> = target.as_str()
-                .try_into()
-                .map_err(|e| SynkroError::MediaControl(format!("Invalid bus name {target}: {e}")))?;
+            let dest: BusName<'_> = target.as_str().try_into().map_err(|e| {
+                SynkroError::MediaControl(format!("Invalid bus name {target}: {e}"))
+            })?;
 
             let _ = conn
                 .call_method(
@@ -414,7 +431,8 @@ impl MediaController for LinuxMediaController {
             Err(_) => ObjectPath::try_from("/org/mpris/MediaPlayer2/CurrentTrack").unwrap(),
         };
 
-        let dest: BusName<'_> = target.as_str()
+        let dest: BusName<'_> = target
+            .as_str()
             .try_into()
             .map_err(|e| SynkroError::MediaControl(format!("Invalid bus name {target}: {e}")))?;
 

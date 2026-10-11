@@ -26,11 +26,11 @@ use crate::daemon::protocol::{DaemonStatusSnapshot, IpcRequest, IpcResponse};
 use crate::daemon::{FollowerZeroTouchMonitor, IpcServer};
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{QueueState, Role};
+use crate::session::SessionState;
 use crate::session::broadcaster::LeaderAnchorBroadcaster;
 use crate::session::discovery::Discovery;
 use crate::session::engine::SynkroEngine;
 use crate::session::runtime::SessionMessageRuntime;
-use crate::session::SessionState;
 use crate::sync::evaluator::DriftEvaluator;
 use crate::sync::scheduler::IntentScheduler;
 
@@ -42,7 +42,9 @@ pub async fn handle_daemon_command(
     let paths = DaemonPaths::default_paths()?;
 
     match cmd {
-        DaemonCommands::Run { mode } => run_daemon_foreground(mode, device, sync_config, paths).await,
+        DaemonCommands::Run { mode } => {
+            run_daemon_foreground(mode, device, sync_config, paths).await
+        }
         DaemonCommands::Start { mode } => start_daemon_background(mode, &paths),
         DaemonCommands::Stop => stop_daemon(&paths).await,
         DaemonCommands::Status { json } => status_daemon(&paths, json).await,
@@ -58,12 +60,16 @@ async fn run_daemon_foreground(
 ) -> Result<()> {
     if paths.is_running() {
         return Err(SynkroError::Config(
-            "Another Synkrophase daemon is already running. Run 'synkro daemon stop' first.".to_string(),
+            "Another Synkrophase daemon is already running. Run 'synkro daemon stop' first."
+                .to_string(),
         ));
     }
 
     paths.write_pid(std::process::id())?;
-    tracing::info!(pid = std::process::id(), "Starting Synkrophase daemon in foreground");
+    tracing::info!(
+        pid = std::process::id(),
+        "Starting Synkrophase daemon in foreground"
+    );
 
     let (engine, ipc_server, abort_handles) = match mode {
         DaemonRunMode::Host {
@@ -71,7 +77,15 @@ async fn run_daemon_foreground(
             clock_port,
             session_port,
         } => {
-            setup_host_daemon(device, sync_config, room_code, clock_port, session_port, paths.clone()).await?
+            setup_host_daemon(
+                device,
+                sync_config,
+                room_code,
+                clock_port,
+                session_port,
+                paths.clone(),
+            )
+            .await?
         }
         DaemonRunMode::Join {
             room_code,
@@ -138,7 +152,10 @@ async fn run_daemon_foreground(
 
 fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<()> {
     if paths.is_running() {
-        println!("Synkrophase daemon is already running (PID: {}).", paths.read_pid()?.unwrap_or_default());
+        println!(
+            "Synkrophase daemon is already running (PID: {}).",
+            paths.read_pid()?.unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -199,7 +216,10 @@ fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<(
         .spawn()
         .map_err(|e| SynkroError::Config(format!("Failed to spawn daemon process: {e}")))?;
 
-    println!("Synkrophase daemon started in background (PID: {}).", child.id());
+    println!(
+        "Synkrophase daemon started in background (PID: {}).",
+        child.id()
+    );
     println!("Logs: {:?}", paths.log_path);
     println!("Socket: {:?}", paths.socket_path);
     Ok(())
@@ -260,9 +280,15 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
     #[cfg(not(unix))]
     {
         if json {
-            println!("{}", serde_json::json!({"running": true, "note": "IPC status inspection is only supported on Unix systems"}));
+            println!(
+                "{}",
+                serde_json::json!({"running": true, "note": "IPC status inspection is only supported on Unix systems"})
+            );
         } else {
-            println!("Synkrophase daemon is running (PID: {:?}). IPC socket inspection is only supported on Unix.", paths.read_pid()?);
+            println!(
+                "Synkrophase daemon is running (PID: {:?}). IPC socket inspection is only supported on Unix.",
+                paths.read_pid()?
+            );
         }
         Ok(())
     }
@@ -271,9 +297,15 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
     {
         let Ok(mut stream) = UnixStream::connect(&paths.socket_path).await else {
             if json {
-                println!("{}", serde_json::json!({"running": false, "error": "Cannot connect to IPC socket"}));
+                println!(
+                    "{}",
+                    serde_json::json!({"running": false, "error": "Cannot connect to IPC socket"})
+                );
             } else {
-                println!("Synkrophase daemon is running (PID: {:?}), but IPC socket is unresponsive.", paths.read_pid()?);
+                println!(
+                    "Synkrophase daemon is running (PID: {:?}), but IPC socket is unresponsive.",
+                    paths.read_pid()?
+                );
             }
             return Ok(());
         };
@@ -283,43 +315,58 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
             method: "status".to_string(),
             params: serde_json::Value::Null,
         };
-    let mut msg = serde_json::to_string(&req).unwrap_or_default();
-    msg.push('\n');
-    stream.write_all(msg.as_bytes()).await?;
+        let mut msg = serde_json::to_string(&req).unwrap_or_default();
+        msg.push('\n');
+        stream.write_all(msg.as_bytes()).await?;
 
-    let (reader, _) = stream.into_split();
-    let mut lines = TokioBufReader::new(reader).lines();
-    if let Some(line) = lines.next_line().await? {
-        let resp: IpcResponse = serde_json::from_str(&line)
-            .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
-        if let Some(res) = resp.result {
-            if json {
-                println!("{}", serde_json::to_string_pretty(&res).unwrap_or_default());
-            } else {
-                let snapshot: DaemonStatusSnapshot = serde_json::from_value(res)
-                    .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
-                println!("\n=== Synkrophase Daemon Status ===");
-                println!("  Room Code:      {}", snapshot.room_code);
-                println!("  Role:           {:?}", snapshot.role);
-                println!("  Device Name:    {}", snapshot.device_name);
-                println!("  Is Playing:     {}", if snapshot.is_playing { "Yes" } else { "No" });
-                if let Some(title) = snapshot.track_title {
-                    let artist = snapshot.track_artist.unwrap_or_else(|| "Unknown".into());
-                    println!("  Track:          {} - {}", title, artist);
+        let (reader, _) = stream.into_split();
+        let mut lines = TokioBufReader::new(reader).lines();
+        if let Some(line) = lines.next_line().await? {
+            let resp: IpcResponse = serde_json::from_str(&line)
+                .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
+            if let Some(res) = resp.result {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&res).unwrap_or_default());
+                } else {
+                    let snapshot: DaemonStatusSnapshot = serde_json::from_value(res)
+                        .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
+                    println!("\n=== Synkrophase Daemon Status ===");
+                    println!("  Room Code:      {}", snapshot.room_code);
+                    println!("  Role:           {:?}", snapshot.role);
+                    println!("  Device Name:    {}", snapshot.device_name);
+                    println!(
+                        "  Is Playing:     {}",
+                        if snapshot.is_playing { "Yes" } else { "No" }
+                    );
+                    if let Some(title) = snapshot.track_title {
+                        let artist = snapshot.track_artist.unwrap_or_else(|| "Unknown".into());
+                        println!("  Track:          {} - {}", title, artist);
+                    }
+                    println!("  Position:       {:.2}s", snapshot.position_sec);
+                    println!(
+                        "  Clock Offset:   {:+0.2}ms",
+                        (snapshot.clock_offset_us as f64) / 1000.0
+                    );
+                    println!(
+                        "  Drift Status:   {} ({:+0.2}ms)",
+                        snapshot.drift_status,
+                        (snapshot.drift_offset_us as f64) / 1000.0
+                    );
+                    println!("  Peers Online:   {}", snapshot.peers.len());
+                    for peer in snapshot.peers {
+                        println!(
+                            "    - {} ({:?}) offset: {:+0.2}ms",
+                            peer.name,
+                            peer.role,
+                            (peer.clock_offset_us as f64) / 1000.0
+                        );
+                    }
+                    println!();
                 }
-                println!("  Position:       {:.2}s", snapshot.position_sec);
-                println!("  Clock Offset:   {:+0.2}ms", (snapshot.clock_offset_us as f64) / 1000.0);
-                println!("  Drift Status:   {} ({:+0.2}ms)", snapshot.drift_status, (snapshot.drift_offset_us as f64) / 1000.0);
-                println!("  Peers Online:   {}", snapshot.peers.len());
-                for peer in snapshot.peers {
-                    println!("    - {} ({:?}) offset: {:+0.2}ms", peer.name, peer.role, (peer.clock_offset_us as f64) / 1000.0);
-                }
-                println!();
             }
         }
-    }
 
-    Ok(())
+        Ok(())
     }
 }
 
@@ -332,10 +379,7 @@ fn view_daemon_logs(paths: &DaemonPaths, follow: bool) -> Result<()> {
     if follow {
         #[cfg(unix)]
         {
-            let _ = Command::new("tail")
-                .arg("-f")
-                .arg(&paths.log_path)
-                .status();
+            let _ = Command::new("tail").arg("-f").arg(&paths.log_path).status();
         }
     } else {
         let file = File::open(&paths.log_path).map_err(|e| SynkroError::Config(e.to_string()))?;
@@ -356,20 +400,45 @@ async fn setup_host_daemon(
     clock_port: u16,
     session_port: u16,
     paths: DaemonPaths,
-) -> Result<(Arc<SynkroEngine>, Arc<IpcServer>, Vec<tokio::task::AbortHandle>)> {
-    let room = room_code.unwrap_or_else(|| format!("ROOM{}", device.device_id.to_string()[..4].to_uppercase()));
-    let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, clock_port))).await?;
+) -> Result<(
+    Arc<SynkroEngine>,
+    Arc<IpcServer>,
+    Vec<tokio::task::AbortHandle>,
+)> {
+    let room = room_code
+        .unwrap_or_else(|| format!("ROOM{}", device.device_id.to_string()[..4].to_uppercase()));
+    let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::UNSPECIFIED,
+        clock_port,
+    )))
+    .await?;
     let session_socket = Arc::new({
-        let s = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, session_port))).await?;
+        let s = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::UNSPECIFIED,
+            session_port,
+        )))
+        .await?;
         s.set_broadcast(true)?;
         s
     });
 
-    let clock = Arc::new(ClockSync::new(clock_socket, sync_config.clone(), device.device_id));
-    let session = Arc::new(SessionState::new_leader(room.clone(), device.device_id, device.name.clone()));
+    let clock = Arc::new(ClockSync::new(
+        clock_socket,
+        sync_config.clone(),
+        device.device_id,
+    ));
+    let session = Arc::new(SessionState::new_leader(
+        room.clone(),
+        device.device_id,
+        device.name.clone(),
+    ));
     let controller = create_media_controller();
-    let scheduler = Arc::new(IntentScheduler::new(Arc::clone(&clock) as _, Arc::clone(&controller)));
-    let playback: Arc<dyn crate::sync::controller::PlaybackControl> = Arc::new(crate::sync::controller::NoopPlaybackControl::default());
+    let scheduler = Arc::new(IntentScheduler::new(
+        Arc::clone(&clock) as _,
+        Arc::clone(&controller),
+    ));
+    let playback: Arc<dyn crate::sync::controller::PlaybackControl> =
+        Arc::new(crate::sync::controller::NoopPlaybackControl::default());
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let broadcaster = Arc::new(
@@ -484,12 +553,21 @@ async fn setup_join_daemon(
     leader_clock_port: u16,
     session_port: u16,
     paths: DaemonPaths,
-) -> Result<(Arc<SynkroEngine>, Arc<IpcServer>, Vec<tokio::task::AbortHandle>)> {
+) -> Result<(
+    Arc<SynkroEngine>,
+    Arc<IpcServer>,
+    Vec<tokio::task::AbortHandle>,
+)> {
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;
 
-    let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
-    let clock = Arc::new(ClockSync::new(clock_socket, sync_config.clone(), device.device_id));
+    let clock_socket =
+        UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))).await?;
+    let clock = Arc::new(ClockSync::new(
+        clock_socket,
+        sync_config.clone(),
+        device.device_id,
+    ));
 
     let session = Arc::new(SessionState::from_join(
         room_code.clone(),
@@ -513,17 +591,35 @@ async fn setup_join_daemon(
     }
 
     let session_socket = Arc::new({
-        let s = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, session_port))).await?;
+        let s = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::UNSPECIFIED,
+            session_port,
+        )))
+        .await?;
         s.set_broadcast(true)?;
         s
     });
 
     let controller = create_media_controller();
-    let scheduler = Arc::new(IntentScheduler::new(Arc::clone(&clock) as _, Arc::clone(&controller)));
-    let drift_evaluator = Arc::new(DriftEvaluator::new(Arc::clone(&clock) as _, Arc::clone(&controller), 50_000));
+    let scheduler = Arc::new(IntentScheduler::new(
+        Arc::clone(&clock) as _,
+        Arc::clone(&controller),
+    ));
+    let drift_evaluator = Arc::new(DriftEvaluator::new(
+        Arc::clone(&clock) as _,
+        Arc::clone(&controller),
+        50_000,
+    ));
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    send_join_request(&session_socket, device.device_id, resolved_leader_addr, room_code.clone(), device.name.clone()).await?;
+    send_join_request(
+        &session_socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+        device.name.clone(),
+    )
+    .await?;
 
     let clock_task = tokio::spawn({
         let c = Arc::clone(&clock);
@@ -533,9 +629,13 @@ async fn setup_join_daemon(
     let drift_task = tokio::spawn({
         let eval = Arc::clone(&drift_evaluator);
         let sess = Arc::clone(&session);
+        let notify = eval.notify_handle();
         async move {
             loop {
-                sleep(Duration::from_millis(1000)).await;
+                tokio::select! {
+                    _ = sleep(Duration::from_millis(1000)) => {}
+                    _ = notify.notified() => {}
+                }
                 if let Some(anchor) = sess.latest_sync_anchor() {
                     let _ = eval.evaluate_and_reconcile(&anchor).await;
                 }
@@ -563,7 +663,18 @@ async fn setup_join_daemon(
         let r = room_code.clone();
         let cfg = sync_config.clone();
         let clk = Arc::clone(&clock);
-        async move { run_heartbeat_loop(sess, sock, id, r, Some(resolved_leader_addr), cfg, Some(clk)).await }
+        async move {
+            run_heartbeat_loop(
+                sess,
+                sock,
+                id,
+                r,
+                Some(resolved_leader_addr),
+                cfg,
+                Some(clk),
+            )
+            .await
+        }
     });
 
     let role_task = tokio::spawn({

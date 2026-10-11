@@ -25,13 +25,12 @@ pub struct IpcServer {
 
 #[allow(dead_code)]
 impl IpcServer {
-    pub fn new(paths: DaemonPaths, engine: Arc<SynkroEngine>) -> (Self, broadcast::Sender<IpcEvent>) {
+    pub fn new(
+        paths: DaemonPaths,
+        engine: Arc<SynkroEngine>,
+    ) -> (Self, broadcast::Sender<IpcEvent>) {
         let (event_tx, _) = broadcast::channel(128);
-        let latest_drift = Arc::new(std::sync::Mutex::new((
-            0,
-            1,
-            "Locked (<50ms)".to_string(),
-        )));
+        let latest_drift = Arc::new(std::sync::Mutex::new((0, 1, "Locked (<50ms)".to_string())));
         let server = Self {
             paths,
             engine,
@@ -64,7 +63,10 @@ impl IpcServer {
             let listener = UnixListener::bind(&self.paths.socket_path).map_err(|e| {
                 SynkroError::Network(std::io::Error::new(
                     std::io::ErrorKind::AddrInUse,
-                    format!("Failed to bind domain socket {:?}: {e}", self.paths.socket_path),
+                    format!(
+                        "Failed to bind domain socket {:?}: {e}",
+                        self.paths.socket_path
+                    ),
                 ))
             })?;
 
@@ -170,44 +172,75 @@ impl IpcServer {
                 IpcResponse::ok(req.id, serde_json::to_value(snapshot).unwrap_or_default())
             }
             "play" | "resume" => {
-                if let Err(e) = self.engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Play)) {
+                if let Err(e) = self
+                    .engine
+                    .send_command(EngineCommand::PlaybackAction(PlaybackAction::Play))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
             }
             "pause" => {
-                if let Err(e) = self.engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Pause)) {
+                if let Err(e) = self
+                    .engine
+                    .send_command(EngineCommand::PlaybackAction(PlaybackAction::Pause))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
             }
             "next" => {
-                if let Err(e) = self.engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::NextTrack)) {
+                if let Err(e) = self
+                    .engine
+                    .send_command(EngineCommand::PlaybackAction(PlaybackAction::NextTrack))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
             }
             "prev" => {
-                if let Err(e) = self.engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::PreviousTrack)) {
+                if let Err(e) = self
+                    .engine
+                    .send_command(EngineCommand::PlaybackAction(PlaybackAction::PreviousTrack))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
             }
             "seek" => {
-                let pos_sec = req.params.get("position_sec")
+                let pos_sec = req
+                    .params
+                    .get("position_sec")
                     .and_then(|v| v.as_f64())
-                    .or_else(|| req.params.get("position_ms").and_then(|v| v.as_f64()).map(|ms| ms / 1000.0));
+                    .or_else(|| {
+                        req.params
+                            .get("position_ms")
+                            .and_then(|v| v.as_f64())
+                            .map(|ms| ms / 1000.0)
+                    });
                 let Some(pos_sec) = pos_sec else {
                     return IpcResponse::err(req.id, 400, "Missing 'position_sec' parameter");
                 };
                 let pos_us = (pos_sec * 1_000_000.0) as i64;
-                if let Err(e) = self.engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Seek { target_position_us: pos_us })) {
+                if let Err(e) =
+                    self.engine
+                        .send_command(EngineCommand::PlaybackAction(PlaybackAction::Seek {
+                            target_position_us: pos_us,
+                        }))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
-                IpcResponse::ok(req.id, serde_json::json!({"success": true, "position_sec": pos_sec}))
+                IpcResponse::ok(
+                    req.id,
+                    serde_json::json!({"success": true, "position_sec": pos_sec}),
+                )
             }
             "volume" => {
-                let level = req.params.get("level").and_then(|v| v.as_u64()).map(|l| l as u8);
+                let level = req
+                    .params
+                    .get("level")
+                    .and_then(|v| v.as_u64())
+                    .map(|l| l as u8);
                 if let Err(e) = self.engine.send_command(EngineCommand::SyncVolume(level)) {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
@@ -217,7 +250,10 @@ impl IpcServer {
                 let Some(msg) = req.params.get("message").and_then(|v| v.as_str()) else {
                     return IpcResponse::err(req.id, 400, "Missing 'message' parameter");
                 };
-                if let Err(e) = self.engine.send_command(EngineCommand::SendChat(msg.to_string())) {
+                if let Err(e) = self
+                    .engine
+                    .send_command(EngineCommand::SendChat(msg.to_string()))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
@@ -230,7 +266,10 @@ impl IpcServer {
                     Ok(u) => u,
                     Err(e) => return IpcResponse::err(req.id, 400, format!("Invalid UUID: {e}")),
                 };
-                if let Err(e) = self.engine.send_command(EngineCommand::TransferLeadership(target_uuid)) {
+                if let Err(e) = self
+                    .engine
+                    .send_command(EngineCommand::TransferLeadership(target_uuid))
+                {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
@@ -248,9 +287,18 @@ impl IpcServer {
                 let new_role = match role_str.to_lowercase().as_str() {
                     "moderator" => Role::Moderator,
                     "listener" => Role::Listener,
-                    _ => return IpcResponse::err(req.id, 400, "Role must be 'Moderator' or 'Listener'"),
+                    _ => {
+                        return IpcResponse::err(
+                            req.id,
+                            400,
+                            "Role must be 'Moderator' or 'Listener'",
+                        );
+                    }
                 };
-                if let Err(e) = self.engine.send_command(EngineCommand::AssignRole { target: target_uuid, new_role }) {
+                if let Err(e) = self.engine.send_command(EngineCommand::AssignRole {
+                    target: target_uuid,
+                    new_role,
+                }) {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }
                 IpcResponse::ok(req.id, serde_json::json!({"success": true}))
@@ -260,7 +308,14 @@ impl IpcServer {
                 let is_leader = self.engine.session().is_leader();
                 let leader_addr = if is_leader {
                     if let Ok(ip) = local_ip_address::local_ip() {
-                        format!("{ip}:{}", self.engine.socket().local_addr().map(|a| a.port()).unwrap_or(0))
+                        format!(
+                            "{ip}:{}",
+                            self.engine
+                                .socket()
+                                .local_addr()
+                                .map(|a| a.port())
+                                .unwrap_or(0)
+                        )
                     } else {
                         "127.0.0.1".to_string()
                     }
@@ -270,11 +325,14 @@ impl IpcServer {
                     "unknown".to_string()
                 };
                 let join_command = format!("synkro join {room_code} --leader-addr {leader_addr}");
-                IpcResponse::ok(req.id, serde_json::json!({
-                    "room_code": room_code,
-                    "leader_addr": leader_addr,
-                    "join_command": join_command,
-                }))
+                IpcResponse::ok(
+                    req.id,
+                    serde_json::json!({
+                        "room_code": room_code,
+                        "leader_addr": leader_addr,
+                        "join_command": join_command,
+                    }),
+                )
             }
             "shutdown" => {
                 let _ = self.engine.send_command(EngineCommand::Shutdown);

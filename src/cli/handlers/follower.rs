@@ -101,13 +101,17 @@ pub async fn run_join(
         tokio::spawn(async move { clock.run_responder().await })
     };
 
-    // Active background drift check (every 1s)
+    // Active background drift check (every 1s or immediately on anchor arrival)
     let drift_task = tokio::spawn({
         let evaluator = Arc::clone(&drift_evaluator);
         let session = Arc::clone(&session);
+        let notify = evaluator.notify_handle();
         async move {
             loop {
-                sleep(Duration::from_millis(1000)).await;
+                tokio::select! {
+                    _ = sleep(Duration::from_millis(1000)) => {}
+                    _ = notify.notified() => {}
+                }
                 if let Some(anchor) = session.latest_sync_anchor() {
                     let _ = evaluator.evaluate_and_reconcile(&anchor).await;
                 }
@@ -169,8 +173,7 @@ pub async fn run_join(
             loop {
                 sleep(Duration::from_millis(500)).await;
                 if let Some(anchor) = session.latest_sync_anchor()
-                    && let Ok((offset_us, zone, status)) =
-                        evaluator.evaluate_drift(&anchor).await
+                    && let Ok((offset_us, zone, status)) = evaluator.evaluate_drift(&anchor).await
                 {
                     let _ = tx.send(crate::tui::AppEvent::DriftUpdate(offset_us, zone, status));
                 }

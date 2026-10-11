@@ -189,7 +189,7 @@ async fn test_drift_evaluator_hysteresis_and_settling_display() {
 }
 
 #[tokio::test]
-async fn test_drift_evaluator_independent_display_and_reconciliation_smoothing() {
+async fn test_drift_evaluator_unified_display_and_reconciliation_smoothing() {
     let clock = Arc::new(TestClock { now: 1_000_000 });
     let controller = Arc::new(MockMediaController::new());
     controller.play().await.unwrap();
@@ -205,16 +205,44 @@ async fn test_drift_evaluator_independent_display_and_reconciliation_smoothing()
         track_title: None,
     };
 
-    // Calling evaluate_drift for UI display should not contaminate reconciliation
+    // Calling evaluate_drift for UI display seeds the unified history
     for _ in 0..10 {
         let (drift, zone, _) = evaluator.evaluate_drift(&anchor).await.unwrap();
         assert_eq!(drift, 0);
         assert_eq!(zone, 1);
     }
 
-    // Now call evaluate_and_reconcile; it should evaluate independently without history starvation
+    // Now call evaluate_and_reconcile; it seamlessly uses the same consistent smoothed history
     let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
     assert!(matches!(action, DriftAction::InSync { drift_us: 0 }));
+}
+
+#[tokio::test]
+async fn test_reconcile_respects_hysteresis_zone1() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    // 1. Initial lock at 40ms drift (Zone 1)
+    controller.seek_to(10_040_000).await.unwrap();
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action, DriftAction::InSync { .. }));
+
+    // 2. Drift temporarily rises to 65ms (within 50ms + 25ms = 75ms release margin)
+    controller.seek_to(10_065_000).await.unwrap();
+    let action2 = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    // Thanks to hysteresis, remains in Zone 1 (InSync) rather than flapping to rate adjust!
+    assert!(matches!(action2, DriftAction::InSync { .. }));
 }
 
 #[tokio::test]
@@ -235,7 +263,13 @@ async fn test_continuous_anchors_respect_settling_grace_period() {
         track_title: Some("Song".into()),
     };
     let action1 = evaluator.evaluate_and_reconcile(&anchor1).await.unwrap();
-    assert!(matches!(action1, DriftAction::MicroSeek { target_position_us: 10_000_000, .. }));
+    assert!(matches!(
+        action1,
+        DriftAction::MicroSeek {
+            target_position_us: 10_000_000,
+            ..
+        }
+    ));
 
     // Follower seeks to 10s. Now simulate player lagging/buffering (e.g. at 5s)
     controller.seek_to(5_000_000).await.unwrap();
@@ -254,7 +288,10 @@ async fn test_continuous_anchors_respect_settling_grace_period() {
     let action2 = evaluator.evaluate_and_reconcile(&anchor2).await.unwrap();
     assert!(matches!(action2, DriftAction::InSync { drift_us: 0 }));
     // Position must not have been modified by a premature seek
-    assert_eq!(controller.get_playback_state().await.unwrap().position_us, 5_000_000);
+    assert_eq!(
+        controller.get_playback_state().await.unwrap().position_us,
+        5_000_000
+    );
 }
 
 #[tokio::test]
@@ -276,7 +313,9 @@ async fn test_playback_rate_restored_when_drift_settles() {
 
     // First evaluation should fine-tune rate to 0.99
     let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
-    assert!(matches!(action, DriftAction::FineTuneRate { rate, .. } if (rate - 0.99).abs() < f32::EPSILON));
+    assert!(
+        matches!(action, DriftAction::FineTuneRate { rate, .. } if (rate - 0.99).abs() < f32::EPSILON)
+    );
     assert!((controller.get_playback_state().await.unwrap().rate - 0.99).abs() < f32::EPSILON);
 
     // Now player position converges to 10_020_000 us (within 50ms threshold)

@@ -92,6 +92,7 @@ impl LeaderAnchorBroadcaster {
         let mut last_sample_ref_time: u64 = self.clock.reference_now();
         let mut last_sample_pos_us: i64 = 0;
         let mut last_track: Option<String> = None;
+        let mut last_is_playing: Option<bool> = None;
         let mut last_broadcast_ref_time: u64 = 0;
 
         loop {
@@ -136,8 +137,22 @@ impl LeaderAnchorBroadcaster {
                     }
                 }
 
-                // Condition 2: Timeline scrubbed (>1.5s position jump from continuous trajectory)
-                if state.is_playing && last_sample_pos_us > 0 {
+                // Condition 2: Play/pause state changed in player
+                if last_is_playing.is_some() && last_is_playing != Some(state.is_playing) {
+                    tracing::info!(
+                        is_playing = state.is_playing,
+                        "Leader play/pause state changed, broadcasting immediate anchor"
+                    );
+                    should_broadcast = true;
+                    // Reset trajectory baseline upon resuming from pause to prevent false scrub detection
+                    if state.is_playing {
+                        last_sample_ref_time = now_ref;
+                        last_sample_pos_us = state.position_us;
+                    }
+                }
+
+                // Condition 3: Timeline scrubbed (>1.5s position jump from continuous trajectory)
+                if state.is_playing && last_is_playing == Some(true) && last_sample_pos_us > 0 {
                     let elapsed_ref_us = now_ref.saturating_sub(last_sample_ref_time) as i64;
                     let expected_pos_us = last_sample_pos_us + elapsed_ref_us;
                     let diff_us = (state.position_us - expected_pos_us).abs();
@@ -154,6 +169,7 @@ impl LeaderAnchorBroadcaster {
                 last_sample_ref_time = now_ref;
                 last_sample_pos_us = state.position_us;
                 last_track = current_track;
+                last_is_playing = Some(state.is_playing);
             }
 
             // Condition 3: Periodic heartbeat anchor (every anchor_broadcast_secs, default 1s)

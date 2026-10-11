@@ -69,7 +69,9 @@ impl FollowerZeroTouchMonitor {
                     PlaybackAction::Pause
                 };
 
-                let _ = self.engine.send_command(EngineCommand::PlaybackAction(action));
+                let _ = self
+                    .engine
+                    .send_command(EngineCommand::PlaybackAction(action));
                 last_playing = state.is_playing;
             }
         }

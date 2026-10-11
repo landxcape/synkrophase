@@ -8,14 +8,14 @@ use uuid::Uuid;
 
 use crate::config::SyncConfig;
 use crate::controller::MediaController;
-#[cfg(target_os = "macos")]
-use crate::controller::macos::MacOsMediaController;
 #[cfg(target_os = "linux")]
 use crate::controller::linux::LinuxMediaController;
-#[cfg(target_os = "windows")]
-use crate::controller::windows::WindowsMediaController;
+#[cfg(target_os = "macos")]
+use crate::controller::macos::MacOsMediaController;
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 use crate::controller::mock::MockMediaController;
+#[cfg(target_os = "windows")]
+use crate::controller::windows::WindowsMediaController;
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{Envelope, Message, serialize};
 use crate::session::SessionState;

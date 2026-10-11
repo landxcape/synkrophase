@@ -330,8 +330,10 @@ impl SessionMessageRuntime {
                                 let _ = controller.play().await;
                                 if let Some(clock) = clock_opt {
                                     let now = clock.reference_now();
-                                    let elapsed_us = (now.saturating_sub(anchor.reference_time) as f64
-                                        * anchor.playback_rate as f64) as i64;
+                                    let elapsed_us = (now.saturating_sub(anchor.reference_time)
+                                        as f64
+                                        * anchor.playback_rate as f64)
+                                        as i64;
                                     let target_pos = anchor.media_position_us + elapsed_us;
                                     let _ = controller.seek_to(target_pos).await;
                                 } else {

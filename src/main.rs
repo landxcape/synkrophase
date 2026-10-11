@@ -47,15 +47,7 @@ async fn main() -> Result<()> {
             no_copy,
         } => {
             let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
-            run_host(
-                device,
-                sync_config,
-                room,
-                clock_port,
-                session_port,
-                no_copy,
-            )
-            .await
+            run_host(device, sync_config, room, clock_port, session_port, no_copy).await
         }
         Commands::Join {
             room_code,
@@ -76,19 +68,44 @@ async fn main() -> Result<()> {
             .await
         }
         Commands::Play => {
-            send_ipc_or_fail("play", serde_json::Value::Null, "Play intent sent to active session.").await
+            send_ipc_or_fail(
+                "play",
+                serde_json::Value::Null,
+                "Play intent sent to active session.",
+            )
+            .await
         }
         Commands::Pause => {
-            send_ipc_or_fail("pause", serde_json::Value::Null, "Pause intent sent to active session.").await
+            send_ipc_or_fail(
+                "pause",
+                serde_json::Value::Null,
+                "Pause intent sent to active session.",
+            )
+            .await
         }
         Commands::Resume => {
-            send_ipc_or_fail("resume", serde_json::Value::Null, "Resume intent sent to active session.").await
+            send_ipc_or_fail(
+                "resume",
+                serde_json::Value::Null,
+                "Resume intent sent to active session.",
+            )
+            .await
         }
         Commands::Next | Commands::Skip => {
-            send_ipc_or_fail("next", serde_json::Value::Null, "Next track intent sent to active session.").await
+            send_ipc_or_fail(
+                "next",
+                serde_json::Value::Null,
+                "Next track intent sent to active session.",
+            )
+            .await
         }
         Commands::Prev => {
-            send_ipc_or_fail("prev", serde_json::Value::Null, "Previous track intent sent to active session.").await
+            send_ipc_or_fail(
+                "prev",
+                serde_json::Value::Null,
+                "Previous track intent sent to active session.",
+            )
+            .await
         }
         Commands::Seek { position_sec } => {
             send_ipc_or_fail(
@@ -114,26 +131,46 @@ async fn main() -> Result<()> {
             .await
         }
         Commands::Sync => {
-            if let Ok(Some(res)) = synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null).await
-                && let Ok(snapshot) = serde_json::from_value::<synkrophase::daemon::DaemonStatusSnapshot>(res)
+            if let Ok(Some(res)) =
+                synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null)
+                    .await
+                && let Ok(snapshot) =
+                    serde_json::from_value::<synkrophase::daemon::DaemonStatusSnapshot>(res)
             {
                 println!("\n=== Synkrophase Session Sync Status ===");
                 println!("  Room Code:      {}", snapshot.room_code);
                 println!("  Role:           {:?}", snapshot.role);
-                println!("  Clock Offset:   {:+0.2}ms", (snapshot.clock_offset_us as f64) / 1000.0);
-                println!("  Drift Status:   {} ({:+0.2}ms)", snapshot.drift_status, (snapshot.drift_offset_us as f64) / 1000.0);
+                println!(
+                    "  Clock Offset:   {:+0.2}ms",
+                    (snapshot.clock_offset_us as f64) / 1000.0
+                );
+                println!(
+                    "  Drift Status:   {} ({:+0.2}ms)",
+                    snapshot.drift_status,
+                    (snapshot.drift_offset_us as f64) / 1000.0
+                );
                 println!("  Peers Online:   {}", snapshot.peers.len());
                 for peer in snapshot.peers {
-                    println!("    - {} ({:?}) offset: {:+0.2}ms", peer.name, peer.role, (peer.clock_offset_us as f64) / 1000.0);
+                    println!(
+                        "    - {} ({:?}) offset: {:+0.2}ms",
+                        peer.name,
+                        peer.role,
+                        (peer.clock_offset_us as f64) / 1000.0
+                    );
                 }
                 println!();
                 return Ok(());
             }
-            eprintln!("Error: Synkrophase session is not running. Start with 'synkro host' or 'synkro daemon start'.");
+            eprintln!(
+                "Error: Synkrophase session is not running. Start with 'synkro host' or 'synkro daemon start'."
+            );
             std::process::exit(1);
         }
         Commands::Debug => {
-            if let Ok(Some(res)) = synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null).await {
+            if let Ok(Some(res)) =
+                synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null)
+                    .await
+            {
                 println!("{}", serde_json::to_string_pretty(&res).unwrap_or_default());
                 return Ok(());
             }
@@ -141,7 +178,9 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
         Commands::Share => {
-            if let Ok(Some(res)) = synkrophase::daemon::IpcClient::send_command("invite", serde_json::Value::Null).await
+            if let Ok(Some(res)) =
+                synkrophase::daemon::IpcClient::send_command("invite", serde_json::Value::Null)
+                    .await
                 && let Some(cmd) = res.get("join_command").and_then(|v| v.as_str())
             {
                 let _ = synkrophase::session::invitation::copy_text_to_clipboard(cmd);
@@ -183,14 +222,20 @@ async fn main() -> Result<()> {
     std::process::exit(0);
 }
 
-async fn send_ipc_or_fail(method: &str, params: serde_json::Value, success_msg: &str) -> synkrophase::error::Result<()> {
+async fn send_ipc_or_fail(
+    method: &str,
+    params: serde_json::Value,
+    success_msg: &str,
+) -> synkrophase::error::Result<()> {
     match synkrophase::daemon::IpcClient::send_command(method, params).await {
         Ok(Some(_)) => {
             println!("{success_msg}");
             Ok(())
         }
         Ok(None) => {
-            eprintln!("Error: Synkrophase is not running. Start a session with 'synkro host' or 'synkro daemon start'.");
+            eprintln!(
+                "Error: Synkrophase is not running. Start a session with 'synkro host' or 'synkro daemon start'."
+            );
             std::process::exit(1);
         }
         Err(err) => {
@@ -236,12 +281,9 @@ mod tests {
         }
 
         // Test Transfer
-        let cli = Cli::try_parse_from([
-            "synkro",
-            "transfer",
-            "00000000-0000-0000-0000-000000000001",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["synkro", "transfer", "00000000-0000-0000-0000-000000000001"])
+                .unwrap();
         match cli.command {
             Commands::Transfer { peer } => {
                 assert_eq!(peer, "00000000-0000-0000-0000-000000000001");
@@ -252,7 +294,9 @@ mod tests {
         // Test Daemon Status
         let cli = Cli::try_parse_from(["synkro", "daemon", "status", "--json"]).unwrap();
         match cli.command {
-            Commands::Daemon { command: synkrophase::cli::args::DaemonCommands::Status { json } } => {
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Status { json },
+            } => {
                 assert!(json);
             }
             _ => panic!("Expected Daemon Status command"),
@@ -261,7 +305,9 @@ mod tests {
         // Test Daemon Stop
         let cli = Cli::try_parse_from(["synkro", "daemon", "stop"]).unwrap();
         match cli.command {
-            Commands::Daemon { command: synkrophase::cli::args::DaemonCommands::Stop } => {}
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Stop,
+            } => {}
             _ => panic!("Expected Daemon Stop command"),
         }
 
@@ -269,9 +315,10 @@ mod tests {
         let cli = Cli::try_parse_from(["synkro", "daemon", "start", "host", "DEMO1"]).unwrap();
         match cli.command {
             Commands::Daemon {
-                command: synkrophase::cli::args::DaemonCommands::Start {
-                    mode: synkrophase::cli::args::DaemonRunMode::Host { room_code, .. },
-                },
+                command:
+                    synkrophase::cli::args::DaemonCommands::Start {
+                        mode: synkrophase::cli::args::DaemonRunMode::Host { room_code, .. },
+                    },
             } => {
                 assert_eq!(room_code, Some("DEMO1".to_string()));
             }

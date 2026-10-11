@@ -41,10 +41,7 @@ impl DaemonPaths {
     pub fn write_pid(&self, pid: u32) -> Result<()> {
         self.ensure_dir_exists()?;
         fs::write(&self.pid_path, pid.to_string()).map_err(|e| {
-            SynkroError::Config(format!(
-                "Failed to write PID file {:?}: {e}",
-                self.pid_path
-            ))
+            SynkroError::Config(format!("Failed to write PID file {:?}: {e}", self.pid_path))
         })?;
         Ok(())
     }
