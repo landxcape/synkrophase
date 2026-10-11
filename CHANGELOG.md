@@ -3,6 +3,21 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - 2026-10-11
+
+### Fixed
+- **Clock Sync Socket Contention**: Replaced multiple concurrent `recv_from()` calls on the clock UDP socket with a single dedicated receiver loop in `ClockSync` that dispatches incoming requests and broadcasts responses to callers.
+- **Clock Sync Exact Target Matching**: Fixed `measure_offset` packet filtering to compare exact `SocketAddr` (`src == target_addr`) rather than port-only matching, eliminating response cross-contamination across peers.
+- **Clock Reference Underflow Guard**: Replaced raw casting in `reference_now()` with `now.saturating_add(self.offset()).max(0) as u64` to prevent negative offsets from overflowing to `u64::MAX`.
+- **Post-Seek Settling Grace Period**: Introduced `is_timeline_discontinuity()` to distinguish continuous periodic anchors from true player disruptions (scrubs, track switches, state changes), ensuring routine 1-second anchors honor the 1500ms post-seek settling window without re-seeking.
+- **Playback Rate Restoration**: Tracked active rate adjustments in `DriftEvaluator` and automatically restored the player rate to 1.0 upon returning to Zone 1 (`Locked`) or initiating a micro-seek.
+- **Unified Drift Smoothing & Reconciler Hysteresis**: Consolidated separate display and reconciliation history buffers into a single shared median window. Applied full hysteresis banding (+25ms release margin for Zone 1) to `evaluate_and_reconcile()`, preventing rate flapping around the 50ms boundary.
+- **Broadcaster Pause/Resume Trajectory Tracking**: Added `last_is_playing` tracking to immediately broadcast anchors on play/pause transitions and reset sample baselines on resume, eliminating false scrub detection alarms after pauses.
+- **Instant Anchor Notification Waking**: Updated follower and background daemon drift loops to listen to `notify_event`, executing drift evaluations immediately upon anchor arrival over UDP.
+
+### Added
+- **CI Quality Gate**: Added automated `cargo test --all-targets`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt --check` pre-requisite verification to the GitHub Actions release workflow.
+
 ## [0.6.5] - 2026-10-11
 
 ### Added
