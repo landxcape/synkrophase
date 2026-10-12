@@ -53,7 +53,7 @@ The compiled binary will be placed at `target/release/synkro`.
 
 ### Running the Simulation Test Suite
 
-Synkrophase includes a deterministic UDP network chaos proxy (`NetworkChaosProxy`) that simulates real-world degraded Wi-Fi, 1-second bufferbloat spikes, packet loss, and hardware crystal drift on localhost:
+Synkrophase includes a local UDP network simulation proxy (`NetworkChaosProxy`) that injects artificial delay, jitter, packet drops, and simulated hardware clock drift on localhost:
 
 ```bash
 cargo test --test simulation
@@ -152,11 +152,11 @@ When you join:
 
 ## How Synchronization Works
 
-### Clock Synchronization & Adaptive Network Resilience
+### Clock Synchronization & Network Handling
 Devices do not rely on system wall clocks or time zones. When a follower joins:
 1. It runs a lightweight PTP (Precision Time Protocol) round-trip exchange with the host over UDP port 5870.
-2. It tracks Smoothed Round-Trip Time (`SRTT`) and Round-Trip Variance (`RTTVAR`) using RFC-6298 Exponentially Weighted Moving Averages.
-3. Clock sample timeouts dynamically scale between a `50ms` floor (on low-latency LANs) and a `1,500ms` ceiling (under network congestion or bufferbloat), eliminating packet drop timeouts without adding latency overhead.
+2. It tracks Smoothed Round-Trip Time (`SRTT`) and Round-Trip Variance (`RTTVAR`) using an RFC-6298-based moving average.
+3. Probe timeouts scale dynamically between `50ms` and `1,500ms` based on observed latency and packet losses, reducing false probe drops under transient congestion.
 4. Every 10 seconds, it performs a background measurement to track oscillator drift and network jitter.
 5. The **Offset** displayed in the room table shows this live residual clock difference (e.g. `+14µs`, `-0.2ms`).
 
