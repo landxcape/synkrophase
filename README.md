@@ -144,23 +144,26 @@ When you join:
 
 ## How Synchronization Works
 
-### Clock Synchronization
+### Clock Synchronization & Adaptive Network Resilience
 Devices do not rely on system wall clocks or time zones. When a follower joins:
 1. It runs a lightweight PTP (Precision Time Protocol) round-trip exchange with the host over UDP port 5870.
-2. It measures network latency and calculates the difference between its monotonic clock and the host's monotonic clock.
-3. Every 10 seconds, it performs a background measurement to track oscillator drift and network jitter.
-4. The **Offset** displayed in the room table shows this live residual clock difference (e.g. `+14µs`, `-0.2ms`).
+2. It tracks Smoothed Round-Trip Time (`SRTT`) and Round-Trip Variance (`RTTVAR`) using RFC-6298 Exponentially Weighted Moving Averages.
+3. Clock sample timeouts dynamically scale between a `50ms` floor (on low-latency LANs) and a `1,500ms` ceiling (under network congestion or bufferbloat), eliminating packet drop timeouts without adding latency overhead.
+4. Every 10 seconds, it performs a background measurement to track oscillator drift and network jitter.
+5. The **Offset** displayed in the room table shows this live residual clock difference (e.g. `+14µs`, `-0.2ms`).
 
-### Drift Management
-While playing, followers periodically evaluate their local playback position against the host's reference timeline. Playback is classified into three zones:
+### Drift Management & Monotonic Sequencing
+While playing, followers continuously reconcile their local playback position against incoming host anchors:
+- **Monotonic Packet Filtering**: Stale or out-of-order anchor packets delayed by network jitter are discarded before processing, preventing playback state corruption.
+- **Adaptive Drift Bands**:
 
 | Zone | Drift Range | Action Taken | Status Display |
 | :--- | :--- | :--- | :--- |
 | **Zone 1** | `< 50ms` | No action needed. Audio is in sync. | `Locked (<50ms)` |
-| **Zone 2** | `50ms – 200ms` | Fine rate adjustment or gentle alignment. | `Nudging (+85.0ms)` |
-| **Zone 3** | `> 200ms` | Corrective micro-seek directly to the target timestamp. | `Drifting (+240.0ms)` |
+| **Zone 2** | `50ms – Adaptive Threshold` | Fine rate adjustment ($0.99\times$ or $1.01\times$) to correct gradual hardware crystal skew. | `Nudging (+85.0ms)` |
+| **Zone 3** | `> Adaptive Threshold (200ms–600ms)` | Corrective micro-seek directly to target timestamp. | `Drifting (+240.0ms)` |
 
-A 1500ms post-seek grace window prevents repeated seeking while players buffer.
+A 1500ms post-seek grace window and a 2-pass confirmation gate prevent repeated seeking while players buffer.
 
 ### Automatic Host Failover
 If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room.
@@ -203,6 +206,9 @@ When hosting or joining a room interactively, Synkrophase launches a full termin
 │ID       Peer            Role Offset││[21:14:00] Session started. Ready.      │
 │e8a15b3a Host (You)    Leader    Ref││[21:14:03] Room: TESTROOM               │
 │a3f290d1 Follower   Moderator  +12µs││[21:14:12] [Follower] Connected.        │
+├─ Clock & Network Health ───────────┤│                                        │
+│Sync: Locked (<50ms) | Offset: +12µs││                                        │
+│RTT: 3.4ms | Jitter: 0.8ms | RTO: 50││                                        │
 ╰────────────────────────────────────╯╰────────────────────────────────────────╯
 [Space] Play/Pause • [←/→] Seek ±5s • [↑/↓] Scroll • [n/p] Next/Prev • [v] Vol • [/] Chat • [q] Quit
 ```

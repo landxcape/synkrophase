@@ -3,6 +3,15 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **RFC-6298 Adaptive Clock Timeout**: Dynamic retransmission and probe timeouts (`RTO`) based on smoothed round-trip time (`SRTT`) and variance (`RTTVAR`), scaling between a 50ms baseline floor on low-latency LANs and 1,500ms on congested networks.
+- **Monotonic Packet Sequencing**: Reference-time watermark checking in `SessionState` to discard stale, out-of-order anchor packets delayed in transit.
+- **Adaptive Drift Thresholding**: Dynamic Zone 3 micro-seek boundaries scaled with measured network variance to prevent false seek cuts during transient jitter bursts.
+- **Live Network Telemetry**: Integrated real-time tracking of `RTT`, `Jitter`, `RTO`, and discarded stale packet counts into `NetworkStats`, displayed in the TUI health panel and `synkro status`.
+- **Sustained Simulation Benchmark Suite**: Added 11 automated real-world chaos benchmarks in `tests/simulation.rs`, including 40-cycle sustained hardware crystal PPM drift and 30-anchor continuous noisy Wi-Fi streaming.
+
 ## [0.6.7] - 2026-10-11
 
 ### Fixed
