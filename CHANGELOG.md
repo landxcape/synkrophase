@@ -3,6 +3,15 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9] - 2026-10-12
+
+### Fixed
+- **Timeline Synchronization Across Leader Transitions**: Fixed an issue where followers could stop synchronizing after a host departed or leadership changed, caused by stale packet filters rejecting valid timestamps from the new leader.
+- **Drift Recovery Responsiveness**: Capped the adaptive seek threshold under noisy network conditions to prevent prolonged recovery delays during high jitter.
+
+### Added
+- **Failover Simulation Coverage**: Extended the chaos simulation suite to verify seamless re-synchronization across dynamic host transitions.
+
 ## [0.6.8] - 2026-10-12
 
 ### Added

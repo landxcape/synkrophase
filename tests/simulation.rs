@@ -1437,3 +1437,125 @@ async fn test_simulation_sustained_noisy_wifi_stream() {
     let state = follower_controller.get_playback_state().await.unwrap();
     assert!(state.is_playing, "Follower must remain playing");
 }
+
+#[tokio::test]
+async fn test_simulation_leader_failover_lower_timestamp_reanchoring() {
+    // Scenario 12: Dynamic Leader Failover with Non-Monotonic Cross-Leader Timestamps
+    //
+    // Leader A broadcasts anchors on a high monotonic timeline (e.g. system uptime T = 500,000,000 us).
+    // Leader A leaves the room.
+    // Leader B is promoted / elected with a fresh, lower timeline baseline (e.g. T = 50,000,000 us).
+    // Follower must automatically reset its anchor watermark on leader change and seamlessly accept
+    // Leader B's anchors without discarding them as stale out-of-order packets.
+
+    let leader_a_id = Uuid::new_v4();
+    let leader_b_id = Uuid::new_v4();
+    let follower_id = Uuid::new_v4();
+
+    let follower_session = Arc::new(SessionState::from_join(
+        "FAILOVER-ROOM".to_string(),
+        follower_id,
+        "Follower Node".to_string(),
+        leader_a_id,
+        "127.0.0.1:9001".parse().unwrap(),
+        vec![],
+        Default::default(),
+    ));
+
+    // Phase 1: Ingest high timestamp anchors from Leader A
+    let high_anchor_1 = SyncAnchor {
+        reference_time: 500_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Failover Symphony".into()),
+    };
+    let high_anchor_2 = SyncAnchor {
+        reference_time: 500_500_000,
+        media_position_us: 10_500_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Failover Symphony".into()),
+    };
+
+    assert!(
+        follower_session.accept_sync_anchor(high_anchor_1),
+        "Follower must accept initial anchor from Leader A"
+    );
+    assert!(
+        follower_session.accept_sync_anchor(high_anchor_2),
+        "Follower must accept progressive anchor from Leader A"
+    );
+    assert_eq!(
+        follower_session.last_anchor_ref_time(),
+        500_500_000,
+        "Anchor watermark must reflect Leader A's high reference time"
+    );
+
+    // Stale anchor from Leader A arriving out of order must be rejected
+    let stale_anchor_a = SyncAnchor {
+        reference_time: 500_200_000,
+        media_position_us: 10_200_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Failover Symphony".into()),
+    };
+    assert!(
+        !follower_session.accept_sync_anchor(stale_anchor_a),
+        "Stale anchor from Leader A must be rejected by monotonic filter"
+    );
+
+    // Phase 2: Leader Failover occurs — Leader B takes over
+    follower_session.set_leader_id(leader_b_id);
+    assert_eq!(follower_session.leader_id(), leader_b_id);
+    assert_eq!(
+        follower_session.last_anchor_ref_time(),
+        0,
+        "Anchor watermark must reset to 0 upon leader transfer"
+    );
+
+    // Phase 3: Leader B sends anchors with a much lower reference time (T = 50,000,000 us)
+    let low_anchor_b1 = SyncAnchor {
+        reference_time: 50_000_000,
+        media_position_us: 11_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Failover Symphony".into()),
+    };
+    assert!(
+        follower_session.accept_sync_anchor(low_anchor_b1),
+        "Follower must accept Leader B's anchor despite having lower reference timestamp"
+    );
+    assert_eq!(
+        follower_session.last_anchor_ref_time(),
+        50_000_000,
+        "Watermark must re-anchor to Leader B's timeline"
+    );
+
+    // Progressive anchor from Leader B is accepted
+    let low_anchor_b2 = SyncAnchor {
+        reference_time: 50_250_000,
+        media_position_us: 11_250_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Failover Symphony".into()),
+    };
+    assert!(
+        follower_session.accept_sync_anchor(low_anchor_b2),
+        "Subsequent progressive anchor from Leader B must be accepted"
+    );
+    assert_eq!(follower_session.last_anchor_ref_time(), 50_250_000);
+
+    // Delayed anchor from Leader B with lower timestamp is still properly rejected
+    let stale_anchor_b = SyncAnchor {
+        reference_time: 50_100_000,
+        media_position_us: 11_100_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Failover Symphony".into()),
+    };
+    assert!(
+        !follower_session.accept_sync_anchor(stale_anchor_b),
+        "Stale anchor within Leader B's own timeline must still be rejected"
+    );
+}

@@ -126,11 +126,12 @@ impl DriftEvaluator {
         let exit_zone1_threshold = self.threshold_us + 25_000;
 
         // Base Zone 3 entry threshold is 200ms. If network has high RTT or jitter,
-        // expand Zone 3 threshold up to 600ms so rate-nudging absorbs jitter before cutting audio.
+        // expand Zone 3 threshold up to 350ms so rate-nudging absorbs transient network jitter
+        // without causing prolonged ~40s drift recovery periods.
         let base_zone3 = 200_000u64;
         let adaptive_zone3 = if let Some(stats) = self.clock.network_stats() {
             let network_padding = (stats.srtt_us / 2).saturating_add(stats.rttvar_us * 2);
-            base_zone3.max(network_padding).min(600_000)
+            base_zone3.max(network_padding).min(350_000)
         } else {
             base_zone3
         };

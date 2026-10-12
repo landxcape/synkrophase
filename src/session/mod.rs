@@ -129,6 +129,7 @@ impl SessionState {
         self.set_role(Role::Leader);
         self.set_leader_id(self.self_id);
         self.peers.set_role(&self.self_id, Role::Leader);
+        self.reset_anchor_watermark();
     }
 
     pub fn demote_from_leader(&self, new_leader_id: Uuid) {
@@ -136,6 +137,7 @@ impl SessionState {
         self.set_leader_id(new_leader_id);
         self.peers.set_role(&self.self_id, Role::Moderator);
         self.peers.set_role(&new_leader_id, Role::Leader);
+        self.reset_anchor_watermark();
     }
 
     pub fn can_assign_role(&self, actor_id: Uuid, target_id: Uuid, new_role: Role) -> Result<()> {
@@ -194,7 +196,11 @@ impl SessionState {
     }
 
     pub fn set_leader_id(&self, leader_id: Uuid) {
-        *self.leader_id.write().unwrap() = leader_id;
+        let mut current = self.leader_id.write().unwrap();
+        if *current != leader_id {
+            *current = leader_id;
+            self.reset_anchor_watermark();
+        }
     }
 
     pub fn clock_offset(&self) -> i64 {
