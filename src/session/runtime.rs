@@ -323,6 +323,7 @@ impl SessionMessageRuntime {
                 {
                     let anchor_opt = current_anchor;
                     let clock_opt = self.clock.as_ref().map(Arc::clone);
+                    let evaluator_opt = self.drift_evaluator.as_ref().map(Arc::clone);
                     tokio::spawn(async move {
                         let _ = controller.load_track(&track).await;
                         if let Some(anchor) = anchor_opt {
@@ -342,6 +343,9 @@ impl SessionMessageRuntime {
                             } else {
                                 let _ = controller.pause().await;
                                 let _ = controller.seek_to(anchor.media_position_us).await;
+                            }
+                            if let Some(evaluator) = evaluator_opt {
+                                evaluator.record_seek(Some(anchor));
                             }
                         }
                     });

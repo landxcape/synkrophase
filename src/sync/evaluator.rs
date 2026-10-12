@@ -93,6 +93,14 @@ impl DriftEvaluator {
         Arc::clone(&self.notify_event)
     }
 
+    pub fn record_seek(&self, anchor: Option<SyncAnchor>) {
+        *self.last_seek.lock().unwrap() = Some(std::time::Instant::now());
+        self.drift_history.lock().unwrap().clear();
+        if let Some(a) = anchor {
+            *self.last_anchor.lock().unwrap() = Some(a);
+        }
+    }
+
     pub fn trigger_immediate(&self) {
         self.notify_event.notify_one();
     }
@@ -279,6 +287,10 @@ impl DriftEvaluator {
         let elapsed_us = (query_midpoint.saturating_sub(anchor.reference_time) as f64
             * anchor.playback_rate as f64) as i64;
         let expected_position_us = anchor.media_position_us + elapsed_us;
+
+        if is_discontinuity {
+            self.drift_history.lock().unwrap().clear();
+        }
 
         let raw_drift_us = local_state.position_us - expected_position_us;
         let smoothed_drift_us = self.push_and_median(raw_drift_us);
