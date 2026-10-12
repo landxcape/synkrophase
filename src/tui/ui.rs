@@ -361,32 +361,31 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
     let rtt_ms = (app.network.srtt_us as f64) / 1000.0;
     let jitter_ms = (app.network.rttvar_us as f64) / 1000.0;
     let rto_ms = (app.network.rto_us as f64) / 1000.0;
-    let net_mode = if app.network.rto_us <= 75_000 {
-        "Snappy LAN"
-    } else {
-        "Adaptive"
-    };
 
-    let net_line = Line::from(vec![
+    let mut net_spans = vec![
         Span::raw("RTT: "),
+        Span::styled(format!("{:.1}ms", rtt_ms), Style::default().fg(Color::Cyan)),
+        Span::raw(" | Jitter: "),
         Span::styled(
-            format!("{:.1}ms (±{:.1}ms)", rtt_ms, jitter_ms),
+            format!("{:.1}ms", jitter_ms),
             Style::default().fg(Color::Cyan),
         ),
         Span::raw(" | RTO: "),
         Span::styled(
-            format!("{:.0}ms ({})", rto_ms, net_mode),
+            format!("{:.0}ms", rto_ms),
             Style::default().fg(Color::Yellow),
         ),
-        if app.network.stale_anchors_dropped > 0 {
-            Span::styled(
-                format!(" | Drops: {}", app.network.stale_anchors_dropped),
-                Style::default().fg(Color::LightRed),
-            )
-        } else {
-            Span::styled(" | Drops: 0", Style::default().fg(Color::DarkGray))
-        },
-    ]);
+    ];
+
+    if app.network.stale_anchors_dropped > 0 {
+        net_spans.push(Span::raw(" | Stale Discarded: "));
+        net_spans.push(Span::styled(
+            format!("{}", app.network.stale_anchors_dropped),
+            Style::default().fg(Color::LightRed),
+        ));
+    }
+
+    let net_line = Line::from(net_spans);
 
     let drift_block = Block::default()
         .title(" Clock & Network Health ")

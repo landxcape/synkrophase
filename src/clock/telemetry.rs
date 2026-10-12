@@ -23,7 +23,7 @@ impl Default for NetworkStats {
             rtt_us: 0,
             srtt_us: 0,
             rttvar_us: 0,
-            rto_us: 50_000, // Default to snappy 50ms floor
+            rto_us: 50_000, // 50ms base floor
             stale_anchors_dropped: 0,
             clock_samples_lost: 0,
         }
@@ -31,8 +31,8 @@ impl Default for NetworkStats {
 }
 
 impl NetworkStats {
-    pub const MIN_RTO_US: u64 = 50_000; // 50ms snappy LAN floor
-    pub const MAX_RTO_US: u64 = 1_500_000; // 1,500ms congested network ceiling
+    pub const MIN_RTO_US: u64 = 50_000; // 50ms baseline floor
+    pub const MAX_RTO_US: u64 = 1_500_000; // 1,500ms ceiling
 
     /// Updates SRTT, RTTVAR, and RTO according to RFC 6298 given a new RTT measurement.
     pub fn update_rtt(&mut self, sample_rtt_us: u64) {

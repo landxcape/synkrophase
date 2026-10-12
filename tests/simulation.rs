@@ -1005,7 +1005,7 @@ async fn test_simulation_extreme_one_second_jitter_and_unsync() {
     assert_eq!(
         host_clock.network_stats().rto_us,
         synkrophase::clock::NetworkStats::MIN_RTO_US,
-        "Initial RTO must be snappy 50ms floor"
+        "Initial RTO must match baseline 50ms floor"
     );
 
     // Simulate high latency measurements updating EWMA
