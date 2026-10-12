@@ -84,7 +84,7 @@ impl SimpleRng {
 /// and injects latency jitter and random packet loss.
 pub struct NetworkChaosProxy {
     _socket: Arc<UdpSocket>,
-    profile: ChaosProfile,
+    profile: Arc<std::sync::RwLock<ChaosProfile>>,
     forward_count: Arc<AtomicU64>,
     drop_count: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
@@ -102,11 +102,13 @@ impl NetworkChaosProxy {
         let forward_count = Arc::new(AtomicU64::new(0));
         let drop_count = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(true));
+        let profile_lock = Arc::new(std::sync::RwLock::new(profile));
 
         let s_clone = Arc::clone(&socket);
         let f_count = Arc::clone(&forward_count);
         let d_count = Arc::clone(&drop_count);
         let is_running = Arc::clone(&running);
+        let p_clone = Arc::clone(&profile_lock);
         let rng_mutex = Arc::new(Mutex::new(SimpleRng::new(seed)));
 
         tokio::spawn(async move {
@@ -126,10 +128,11 @@ impl NetworkChaosProxy {
                     node_b_addr
                 };
 
+                let cur_profile = *p_clone.read().unwrap();
                 let (drop, delay_ms) = {
                     let mut rng = rng_mutex.lock().await;
-                    let drop = rng.should_drop(profile.packet_loss_pct);
-                    let delay = rng.range(profile.min_latency_ms, profile.max_latency_ms);
+                    let drop = rng.should_drop(cur_profile.packet_loss_pct);
+                    let delay = rng.range(cur_profile.min_latency_ms, cur_profile.max_latency_ms);
                     (drop, delay)
                 };
 
@@ -154,7 +157,7 @@ impl NetworkChaosProxy {
         (
             Self {
                 _socket: socket,
-                profile,
+                profile: profile_lock,
                 forward_count,
                 drop_count,
                 running,
@@ -172,7 +175,11 @@ impl NetworkChaosProxy {
     }
 
     pub fn profile(&self) -> ChaosProfile {
-        self.profile
+        *self.profile.read().unwrap()
+    }
+
+    pub fn set_profile(&self, profile: ChaosProfile) {
+        *self.profile.write().unwrap() = profile;
     }
 
     pub fn stop(&self) {
@@ -580,4 +587,396 @@ async fn test_simulation_rate_nudge_recovery() {
         (final_state.rate - 1.0).abs() < f32::EPSILON,
         "Player rate must be restored to 1.0x upon entering Zone 1"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4: Bufferbloat Spike Tolerance (Transient Outlier Rejection)
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn test_simulation_bufferbloat_spike_tolerance() {
+    let clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        Uuid::new_v4(),
+    ));
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Bufferbloat Test".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(180_000_000),
+        }))
+        .await;
+
+    // Follower is steady in Zone 1 at 30.010s (+10ms drift)
+    follower_controller.set_position(30_010_000).await;
+    follower_controller.play().await.unwrap();
+
+    let evaluator = Arc::new(DriftEvaluator::new(
+        clock.clone(),
+        follower_controller.clone(),
+        50_000,
+    ));
+
+    // Baseline: feed 4 normal anchors at 30.0s
+    for i in 0..4 {
+        let anchor = SyncAnchor {
+            reference_time: clock.reference_now(),
+            media_position_us: 30_000_000 + i * 250_000,
+            playback_rate: 1.0,
+            is_playing: true,
+            track_title: Some("Bufferbloat Test".into()),
+        };
+        follower_controller
+            .set_position(30_010_000 + i * 250_000)
+            .await;
+        let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+        assert!(matches!(action, DriftAction::InSync { .. }));
+    }
+
+    // Single bufferbloat spike: network congestion causes anchor arrival / timing
+    // to report an apparent +180ms drift for exactly one evaluation
+    let spike_anchor = SyncAnchor {
+        reference_time: clock.reference_now(),
+        media_position_us: 30_000_000 + 4 * 250_000 - 180_000, // Anchor appears 180ms behind
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Bufferbloat Test".into()),
+    };
+    follower_controller
+        .set_position(30_010_000 + 4 * 250_000)
+        .await;
+
+    // The median filter of 5 samples must suppress the single outlier
+    let spike_action = evaluator
+        .evaluate_and_reconcile(&spike_anchor)
+        .await
+        .unwrap();
+    assert!(
+        matches!(spike_action, DriftAction::InSync { .. }),
+        "A transient bufferbloat spike must be rejected by median filter and remain InSync"
+    );
+
+    // Player position and rate must remain unmodified
+    let state = follower_controller.get_playback_state().await.unwrap();
+    assert_eq!(state.rate, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 5: Wi-Fi Blackout & Reconnection Recovery
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn test_simulation_wifi_blackout_reconnection() {
+    let _host_id = Uuid::new_v4();
+    let follower_id = Uuid::new_v4();
+
+    let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let follower_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+
+    let host_addr = host_socket.local_addr().unwrap();
+    let follower_addr = follower_socket.local_addr().unwrap();
+
+    let (proxy, _proxy_addr) =
+        NetworkChaosProxy::bind(host_addr, follower_addr, ChaosProfile::CLEAN, 999).await;
+
+    let clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        follower_id,
+    ));
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Blackout Track".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(200_000_000),
+        }))
+        .await;
+    follower_controller.set_position(15_000_000).await;
+    follower_controller.play().await.unwrap();
+
+    let evaluator = Arc::new(DriftEvaluator::new(
+        clock.clone(),
+        follower_controller.clone(),
+        50_000,
+    ));
+
+    // 1. Initial lock at 15.0s
+    let anchor_initial = SyncAnchor {
+        reference_time: clock.reference_now(),
+        media_position_us: 15_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Blackout Track".into()),
+    };
+    let _ = evaluator
+        .evaluate_and_reconcile(&anchor_initial)
+        .await
+        .unwrap();
+
+    // 2. Blackout begins: proxy drops 100% of packets
+    proxy.set_profile(ChaosProfile {
+        min_latency_ms: 0,
+        max_latency_ms: 0,
+        packet_loss_pct: 100,
+    });
+
+    // Follower audio clock runs locally during blackout, but drifts by 350ms (Zone 3)
+    follower_controller.set_position(15_000_000 + 350_000).await;
+
+    // 3. Network reconnects: restore clean profile
+    proxy.set_profile(ChaosProfile::CLEAN);
+
+    // Host sends an updated anchor representing where playback actually should be
+    let anchor_reconnected = SyncAnchor {
+        reference_time: clock.reference_now(),
+        media_position_us: 15_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Blackout Track".into()),
+    };
+
+    // Need 2 evaluations to confirm non-discontinuous Zone 3 outlier
+    let _ = evaluator
+        .evaluate_and_reconcile(&anchor_reconnected)
+        .await
+        .unwrap();
+    let action_recon = evaluator
+        .evaluate_and_reconcile(&anchor_reconnected)
+        .await
+        .unwrap();
+
+    // Evaluator reconciles via MicroSeek
+    match action_recon {
+        DriftAction::MicroSeek {
+            target_position_us,
+            drift_us,
+        } => {
+            assert!(
+                (target_position_us - 15_000_000).abs() < 50_000,
+                "MicroSeek should restore position to ~15.0s, got {}",
+                target_position_us
+            );
+            assert!(
+                drift_us >= 200_000,
+                "Accumulated drift should be in Zone 3 (>200ms)"
+            );
+        }
+        other => panic!("Expected MicroSeek after blackout drift, got {:?}", other),
+    }
+
+    proxy.stop();
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 6: Leader Track Transition & Buffering Reset
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn test_simulation_track_transition_buffering_reset() {
+    let clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        Uuid::new_v4(),
+    ));
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Song A".into(),
+            artist: Some("Artist A".into()),
+            album: None,
+            duration_us: Some(180_000_000),
+        }))
+        .await;
+    follower_controller.set_position(175_000_000).await; // Near end of song A
+    follower_controller.play().await.unwrap();
+
+    let evaluator = Arc::new(DriftEvaluator::new(
+        clock.clone(),
+        follower_controller.clone(),
+        50_000,
+    ));
+
+    // Song A is in sync
+    let anchor_song_a = SyncAnchor {
+        reference_time: clock.reference_now(),
+        media_position_us: 175_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song A".into()),
+    };
+    let _ = evaluator
+        .evaluate_and_reconcile(&anchor_song_a)
+        .await
+        .unwrap();
+
+    // Leader skips to Song B (starts at 0.0s)
+    let anchor_song_b = SyncAnchor {
+        reference_time: clock.reference_now(),
+        media_position_us: 0,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song B".into()),
+    };
+
+    // Discontinuity guard check
+    assert!(
+        synkrophase::sync::evaluator::is_timeline_discontinuity(&anchor_song_a, &anchor_song_b),
+        "Song change must be detected as timeline discontinuity"
+    );
+
+    // Follower controller loads song B
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Song B".into(),
+            artist: Some("Artist B".into()),
+            album: None,
+            duration_us: Some(210_000_000),
+        }))
+        .await;
+    follower_controller.set_position(0).await;
+
+    // Follower enters buffering window (e.g. 500ms)
+    evaluator.enter_buffering(Duration::from_millis(500));
+
+    // Drift evaluation during buffering returns Buffering status, avoiding drift calculations
+    let (_, zone, status) = evaluator.evaluate_drift(&anchor_song_b).await.unwrap();
+    assert_eq!(zone, 1);
+    assert_eq!(status, "Buffering...");
+
+    let action = evaluator
+        .evaluate_and_reconcile(&anchor_song_b)
+        .await
+        .unwrap();
+    assert!(
+        matches!(action, DriftAction::InSync { drift_us: 0 }),
+        "During buffering, reconciliation must remain InSync"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 7: Multi-Peer Fan-Out Under Asymmetric Network Conditions
+// ---------------------------------------------------------------------------
+#[tokio::test]
+async fn test_simulation_multi_peer_asymmetric_fanout() {
+    let host_id = Uuid::new_v4();
+    let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let host_addr = host_socket.local_addr().unwrap();
+
+    let host_clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        host_id,
+    ));
+
+    let host_controller = Arc::new(MockMediaController::new());
+    host_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Multi-Room Anthem".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(240_000_000),
+        }))
+        .await;
+    host_controller.set_position(60_000_000).await;
+    host_controller.play().await.unwrap();
+
+    let host_session = Arc::new(SessionState::new_leader(
+        "MULTI-ROOM".into(),
+        host_id,
+        "HostMac".into(),
+    ));
+
+    let host_adapter = Arc::new(MediaControllerPlaybackAdapter::new(host_controller.clone()));
+    let broadcaster = LeaderAnchorBroadcaster::new(
+        host_session.clone(),
+        host_clock.clone(),
+        host_adapter,
+        SyncConfig::default(),
+    )
+    .with_controller(host_controller.clone());
+
+    // Setup 3 followers with different network profiles
+    let profiles = [
+        ("Clean-Ethernet", ChaosProfile::CLEAN),
+        ("Living-Room-WiFi", ChaosProfile::NOISY_WIFI),
+        ("Balcony-WiFi", ChaosProfile::BUFFERBLOAT_SPIKE),
+    ];
+
+    let mut follower_evaluators = Vec::new();
+    let mut follower_controllers = Vec::new();
+
+    for (name, profile) in profiles {
+        let peer_id = Uuid::new_v4();
+        let peer_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer_addr = peer_socket.local_addr().unwrap();
+
+        let (_proxy, _proxy_addr) =
+            NetworkChaosProxy::bind(host_addr, peer_addr, profile, 4242).await;
+
+        let peer_clock = Arc::new(ClockSync::new(
+            UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            SyncConfig::default(),
+            peer_id,
+        ));
+
+        let peer_controller = Arc::new(MockMediaController::new());
+        peer_controller
+            .set_track(Some(synkrophase::controller::TrackMetadata {
+                title: "Multi-Room Anthem".into(),
+                artist: None,
+                album: None,
+                duration_us: Some(240_000_000),
+            }))
+            .await;
+        // All peers join positioned at approximately 60.0s
+        peer_controller.set_position(60_000_000).await;
+        peer_controller.play().await.unwrap();
+
+        let peer_evaluator = Arc::new(DriftEvaluator::new(
+            peer_clock,
+            peer_controller.clone(),
+            50_000,
+        ));
+
+        follower_controllers.push((name, peer_controller));
+        follower_evaluators.push(peer_evaluator);
+    }
+
+    // Host builds single anchor broadcast envelope
+    let anchor_env = broadcaster.build_anchor_envelope(host_id).await.unwrap();
+    let anchor = match anchor_env.payload {
+        Message::SyncAnchor(a) => a,
+        _ => panic!("Expected SyncAnchor"),
+    };
+
+    // All 3 peers receive and reconcile the anchor independently
+    for evaluator in &follower_evaluators {
+        let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+        match action {
+            DriftAction::InSync { drift_us } => {
+                assert!(
+                    drift_us.unsigned_abs() <= 50_000,
+                    "Peer drift {}us should be within Zone 1 (<50ms)",
+                    drift_us
+                );
+            }
+            other => panic!("Expected InSync across all peers, got {:?}", other),
+        }
+    }
+
+    // Verify all 3 peer players remain playing at ~60s
+    for (name, controller) in follower_controllers {
+        let state = controller.get_playback_state().await.unwrap();
+        assert!(state.is_playing, "Peer {} must be playing", name);
+        assert!(
+            (state.position_us - 60_000_000).abs() < 50_000,
+            "Peer {} position must remain aligned at ~60s",
+            name
+        );
+    }
 }
