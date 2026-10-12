@@ -51,6 +51,14 @@ cargo build --release
 
 The compiled binary will be placed at `target/release/synkro`.
 
+### Running the Simulation Test Suite
+
+Synkrophase includes a deterministic UDP network chaos proxy (`NetworkChaosProxy`) that simulates real-world degraded Wi-Fi, 1-second bufferbloat spikes, packet loss, and hardware crystal drift on localhost:
+
+```bash
+cargo test --test simulation
+```
+
 ---
 
 ## OS Permissions and Setup

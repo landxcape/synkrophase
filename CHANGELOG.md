@@ -3,7 +3,7 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.8] - 2026-10-12
 
 ### Added
 - **RFC-6298 Adaptive Clock Timeout**: Dynamic retransmission and probe timeouts (`RTO`) based on smoothed round-trip time (`SRTT`) and variance (`RTTVAR`), scaling between a 50ms baseline floor on low-latency LANs and 1,500ms on congested networks.
