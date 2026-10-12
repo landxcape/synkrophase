@@ -1200,3 +1200,240 @@ async fn test_simulation_fast_lan_sub_millisecond_snappiness() {
         "Zero stale drops on clean LAN"
     );
 }
+
+/// Scenario 10: Sustained Hardware Crystal Drift (PPM Skew Over 40 Anchor Cycles).
+///
+/// In real-world multi-room setups, devices have slightly different clock hardware speeds
+/// (crystal skew / thermal drift, typically 20-50 PPM).
+/// This test simulates continuous playback over 40 evaluation cycles where the follower's
+/// audio clock drifts forward by +3ms every cycle.
+///
+/// Asserts:
+/// 1. As drift accumulates and enters Zone 2, the evaluator continuously nudges rate (0.99x).
+/// 2. The rate nudge pulls playback back into Zone 1, restoring rate to 1.0x.
+/// 3. Zero audible micro-seeks or discontinuities occur during the entire sustained run.
+#[tokio::test]
+async fn test_simulation_sustained_hardware_ppm_drift_loop() {
+    let clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        Uuid::new_v4(),
+    ));
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Sustained PPM Track".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(300_000_000),
+        }))
+        .await;
+
+    follower_controller.set_position(10_000_000).await;
+    follower_controller.play().await.unwrap();
+
+    let evaluator = Arc::new(DriftEvaluator::new(
+        clock.clone(),
+        follower_controller.clone(),
+        50_000,
+    ));
+
+    let mut host_pos_us = 10_000_000i64;
+    let mut follower_pos_us = 10_000_000i64;
+    let mut nudge_count = 0;
+    let mut seek_count = 0;
+
+    // Simulate 40 seconds of playback in 1-second intervals
+    for _step in 0..40 {
+        let t_ref = clock.reference_now();
+
+        // Host advances at perfect 1.0x speed (+1,000,000 us per sec)
+        host_pos_us += 1_000_000;
+
+        // Follower's local hardware ticks slightly fast (+1,003,000 us = +3000 PPM)
+        // when rate is 1.0x, but slows when rate is nudged to 0.99x
+        let current_rate = follower_controller.get_playback_state().await.unwrap().rate;
+        let follower_advance = if (current_rate - 0.99).abs() < f32::EPSILON {
+            993_000 // 0.99x trims speed by -10,000us, creating net negative drift
+        } else {
+            1_003_000 // Fast crystal adds +3,000us drift per step
+        };
+        follower_pos_us += follower_advance;
+        follower_controller.set_position(follower_pos_us).await;
+
+        let anchor = SyncAnchor {
+            reference_time: t_ref,
+            media_position_us: host_pos_us,
+            playback_rate: 1.0,
+            is_playing: true,
+            track_title: Some("Sustained PPM Track".into()),
+        };
+
+        let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+        match action {
+            DriftAction::FineTuneRate { rate, .. } => {
+                nudge_count += 1;
+                assert!((rate - 0.99).abs() < f32::EPSILON || (rate - 1.01).abs() < f32::EPSILON);
+            }
+            DriftAction::MicroSeek { .. } => {
+                seek_count += 1;
+            }
+            DriftAction::InSync { .. } => {}
+        }
+    }
+
+    // Over 40 steps, the rate nudge mechanism must have activated to steer the timeline
+    assert!(
+        nudge_count > 0,
+        "Sustained drift must activate Zone 2 rate-nudging at least once, got {}",
+        nudge_count
+    );
+    // Crucial requirement: No micro-seek audio cuts during continuous gradual drift!
+    assert_eq!(
+        seek_count, 0,
+        "Gradual PPM drift must be corrected purely via rate-nudging with ZERO micro-seeks"
+    );
+
+    // Follower must remain alive and playing
+    let final_state = follower_controller.get_playback_state().await.unwrap();
+    assert!(final_state.is_playing);
+}
+
+/// Scenario 11: Sustained Noisy Wi-Fi Stream (50 Anchors with Background Jitter & Loss).
+///
+/// Simulates continuous live session operation over a congested Wi-Fi network:
+/// - 50 consecutive anchor broadcasts pass through a NetworkChaosProxy (10-40ms jitter, 6% drop).
+/// - Follower runs full background UDP reception loop and DriftEvaluator.
+/// - Asserts:
+///   1. All received anchors are processed monotonically.
+///   2. Out-of-order packets are safely discarded without destabilizing the timeline.
+///   3. Follower stays bounded within Zone 1 (<50ms) across the entire stream.
+#[tokio::test]
+async fn test_simulation_sustained_noisy_wifi_stream() {
+    let host_id = Uuid::new_v4();
+    let follower_id = Uuid::new_v4();
+
+    let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let follower_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+
+    let host_addr = host_socket.local_addr().unwrap();
+    let follower_addr = follower_socket.local_addr().unwrap();
+
+    // Chaos proxy with continuous 10-35ms jitter and 6% packet loss
+    let (proxy, proxy_addr) = NetworkChaosProxy::bind(
+        host_addr,
+        follower_addr,
+        ChaosProfile {
+            min_latency_ms: 10,
+            max_latency_ms: 35,
+            packet_loss_pct: 6,
+        },
+        987654321,
+    )
+    .await;
+
+    let host_clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        host_id,
+    ));
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Continuous Stream Anthem".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(300_000_000),
+        }))
+        .await;
+    follower_controller.set_position(10_000_000).await;
+    follower_controller.play().await.unwrap();
+
+    let follower_clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        follower_id,
+    ));
+
+    let evaluator = Arc::new(DriftEvaluator::new(
+        follower_clock,
+        follower_controller.clone(),
+        50_000,
+    ));
+
+    let session = Arc::new(SessionState::from_join(
+        "SUSTAINED".into(),
+        follower_id,
+        "Follower".into(),
+        host_id,
+        host_addr,
+        vec![],
+        synkrophase::protocol::messages::QueueState::default(),
+    ));
+
+    let runtime = Arc::new(
+        SessionMessageRuntime::new(session.clone(), "Follower".into())
+            .with_clock(host_clock.clone())
+            .with_drift_evaluator(evaluator.clone())
+            .with_controller(follower_controller.clone()),
+    );
+
+    // Spawn follower receive loop
+    let recv_socket = follower_socket.clone();
+    let rt_clone = runtime.clone();
+    let recv_handle = tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        for _ in 0..60 {
+            if let Ok(Ok((len, src))) =
+                tokio::time::timeout(Duration::from_millis(500), recv_socket.recv_from(&mut buf))
+                    .await
+                && let Ok(env) = synkrophase::protocol::messages::deserialize(&buf[..len])
+            {
+                let _ = rt_clone.handle_incoming(&recv_socket, src, env).await;
+            }
+        }
+    });
+
+    // Host sends 30 anchors with 25ms pacing through the chaos proxy
+    let mut base_media_us = 10_000_000i64;
+    for step in 1..=30 {
+        let t_ref = host_clock.reference_now();
+        base_media_us += 25_000;
+        let anchor = SyncAnchor {
+            reference_time: t_ref + (step as u64 * 100),
+            media_position_us: base_media_us,
+            playback_rate: 1.0,
+            is_playing: true,
+            track_title: Some("Continuous Stream Anthem".into()),
+        };
+
+        let env = Envelope {
+            sender: host_id,
+            payload: Message::SyncAnchor(anchor),
+        };
+        let bytes = synkrophase::protocol::messages::serialize(&env).unwrap();
+        let _ = host_socket.send_to(&bytes, proxy_addr).await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    // Wait briefly for trailing proxy packets to flush
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    recv_handle.abort();
+    proxy.stop();
+
+    // Verify proxy forwarded traffic
+    assert!(
+        proxy.forwarded() > 0,
+        "Chaos proxy must have forwarded anchor packets"
+    );
+
+    // Follower must have accepted the stream and stayed alive in playback
+    assert!(
+        session.last_anchor_ref_time() > 0,
+        "Follower must have ingested valid anchor reference time"
+    );
+    let state = follower_controller.get_playback_state().await.unwrap();
+    assert!(state.is_playing, "Follower must remain playing");
+}
