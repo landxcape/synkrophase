@@ -169,12 +169,12 @@ While playing, followers continuously reconcile their local playback position ag
 | :--- | :--- | :--- | :--- |
 | **Zone 1** | `< 50ms` | No action needed. Audio is in sync. | `Locked (<50ms)` |
 | **Zone 2** | `50ms – Adaptive Threshold` | Fine rate adjustment ($0.99\times$ or $1.01\times$) to correct gradual hardware crystal skew. | `Nudging (+85.0ms)` |
-| **Zone 3** | `> Adaptive Threshold (200ms–600ms)` | Corrective micro-seek directly to target timestamp. | `Drifting (+240.0ms)` |
+| **Zone 3** | `> Adaptive Threshold (200ms–350ms)` | Corrective micro-seek directly to target timestamp. | `Drifting (+240.0ms)` |
 
 A 1500ms post-seek grace window and a 2-pass confirmation gate prevent repeated seeking while players buffer.
 
 ### Automatic Host Failover
-If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room.
+If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room. Timeline watermarks reset dynamically on failover so followers immediately synchronize against the new leader's clock.
 
 ---
 
