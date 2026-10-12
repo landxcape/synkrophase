@@ -258,7 +258,7 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
     // Left Panel: Peers & Drift
     let left_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(4), Constraint::Length(4)])
+        .constraints([Constraint::Min(4), Constraint::Length(5)])
         .split(middle_layout[0]);
 
     // Peer Table
@@ -337,7 +337,7 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
 
     frame.render_widget(peer_table, left_layout[0]);
 
-    // Drift Health
+    // Drift & Network Health
     let drift_color = match app.drift.zone {
         1 => Color::Green,
         2 => Color::Yellow,
@@ -357,14 +357,45 @@ fn render_middle_panel(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::R
             Style::default().fg(Color::White),
         ),
     ]);
+
+    let rtt_ms = (app.network.srtt_us as f64) / 1000.0;
+    let jitter_ms = (app.network.rttvar_us as f64) / 1000.0;
+    let rto_ms = (app.network.rto_us as f64) / 1000.0;
+    let net_mode = if app.network.rto_us <= 75_000 {
+        "Snappy LAN"
+    } else {
+        "Adaptive"
+    };
+
+    let net_line = Line::from(vec![
+        Span::raw("RTT: "),
+        Span::styled(
+            format!("{:.1}ms (±{:.1}ms)", rtt_ms, jitter_ms),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" | RTO: "),
+        Span::styled(
+            format!("{:.0}ms ({})", rto_ms, net_mode),
+            Style::default().fg(Color::Yellow),
+        ),
+        if app.network.stale_anchors_dropped > 0 {
+            Span::styled(
+                format!(" | Drops: {}", app.network.stale_anchors_dropped),
+                Style::default().fg(Color::LightRed),
+            )
+        } else {
+            Span::styled(" | Drops: 0", Style::default().fg(Color::DarkGray))
+        },
+    ]);
+
     let drift_block = Block::default()
-        .title(" Clock Synchronization Health ")
+        .title(" Clock & Network Health ")
         .title_style(Style::default().fg(drift_color))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
     frame.render_widget(
-        Paragraph::new(drift_line).block(drift_block),
+        Paragraph::new(vec![drift_line, net_line]).block(drift_block),
         left_layout[1],
     );
 

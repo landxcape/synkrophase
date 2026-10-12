@@ -1,8 +1,9 @@
+use crate::clock::telemetry::NetworkStats;
 use crate::config::SyncConfig;
 use crate::protocol::messages::{Envelope, Message, deserialize, serialize};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
@@ -26,6 +27,7 @@ pub struct ClockSync {
     self_id: uuid::Uuid,
     response_tx: tokio::sync::broadcast::Sender<(u64, u64, u64, SocketAddr)>,
     receiver_handle: Option<tokio::task::JoinHandle<()>>,
+    network_stats: RwLock<NetworkStats>,
 }
 
 impl Drop for ClockSync {
@@ -89,6 +91,7 @@ impl ClockSync {
             self_id,
             response_tx,
             receiver_handle,
+            network_stats: RwLock::new(NetworkStats::default()),
         }
     }
 
@@ -109,11 +112,25 @@ impl ClockSync {
         self.offset_us.store(offset, Ordering::Release);
     }
 
+    pub fn network_stats(&self) -> NetworkStats {
+        *self.network_stats.read().unwrap()
+    }
+
+    pub fn record_stale_anchor_drop(&self) {
+        self.network_stats
+            .write()
+            .unwrap()
+            .record_stale_anchor_drop();
+    }
+
     pub async fn measure_offset(&self, target_addr: SocketAddr) -> crate::error::Result<i64> {
         let mut samples = Vec::with_capacity(self.config.clock_sample_count);
         let mut rx = self.response_tx.subscribe();
 
         for _ in 0..self.config.clock_sample_count {
+            let current_rto_us = self.network_stats.read().unwrap().rto_us;
+            let sample_timeout = Duration::from_micros(current_rto_us);
+
             let t1 = local_now();
             let req = Envelope {
                 sender: self.self_id,
@@ -123,7 +140,7 @@ impl ClockSync {
 
             self.socket.send_to(&data, target_addr).await?;
 
-            let recv_result = timeout(Duration::from_millis(500), async {
+            let recv_result = timeout(sample_timeout, async {
                 loop {
                     match rx.recv().await {
                         Ok((rt1, t2, t3, src)) if src == target_addr && rt1 == t1 => {
@@ -137,14 +154,23 @@ impl ClockSync {
             })
             .await;
 
-            if let Ok(Ok((rt1, t2, t3))) = recv_result {
-                let t4 = local_now();
-                let offset = ((t2 as i64 - rt1 as i64) + (t3 as i64 - t4 as i64)) / 2;
-                // Calculate Round-Trip Time (RTT): Total round trip minus remote processing time
-                let total_delay = t4.saturating_sub(rt1);
-                let remote_processing = t3.saturating_sub(t2);
-                let rtt = total_delay.saturating_sub(remote_processing);
-                samples.push((offset, rtt));
+            match recv_result {
+                Ok(Ok((rt1, t2, t3))) => {
+                    let t4 = local_now();
+                    let offset = ((t2 as i64 - rt1 as i64) + (t3 as i64 - t4 as i64)) / 2;
+                    // Calculate Round-Trip Time (RTT): Total round trip minus remote processing time
+                    let total_delay = t4.saturating_sub(rt1);
+                    let remote_processing = t3.saturating_sub(t2);
+                    let rtt = total_delay.saturating_sub(remote_processing);
+
+                    // Update RFC 6298 adaptive EWMA network statistics
+                    self.network_stats.write().unwrap().update_rtt(rtt);
+                    samples.push((offset, rtt));
+                }
+                _ => {
+                    // Record probe loss and back off RTO
+                    self.network_stats.write().unwrap().record_sample_loss();
+                }
             }
         }
 

@@ -9,11 +9,18 @@ use crate::protocol::messages::SyncAnchor;
 
 pub trait ClockSource: Send + Sync {
     fn reference_now(&self) -> u64;
+    fn network_stats(&self) -> Option<crate::clock::NetworkStats> {
+        None
+    }
 }
 
 impl ClockSource for ClockSync {
     fn reference_now(&self) -> u64 {
         ClockSync::reference_now(self)
+    }
+
+    fn network_stats(&self) -> Option<crate::clock::NetworkStats> {
+        Some(ClockSync::network_stats(self))
     }
 }
 

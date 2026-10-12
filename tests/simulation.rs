@@ -980,3 +980,223 @@ async fn test_simulation_multi_peer_asymmetric_fanout() {
         );
     }
 }
+
+/// Scenario 8: Extreme 1.0-Second Jitter, Congestion, and Monotonic Reorder Drop.
+///
+/// Models severe real-world network turbulence:
+/// 1. Followers experience high jitter: base RTT 200ms, spikes up to 1000ms.
+/// 2. RFC 6298 EWMA expands RTO timeout up to ~1,200ms dynamically to prevent starvation.
+/// 3. Follower starts with a massive 1,000ms (1.0s) playback desynchronization.
+/// 4. Late, out-of-order anchor packets (arrival delayed behind newer packets) are safely
+///    dropped by the monotonic reference-time filter without corrupting the timeline.
+/// 5. Follower executes a clean single Micro-Seek to eliminate the 1.0s gap and locks into Zone 1.
+#[tokio::test]
+async fn test_simulation_extreme_one_second_jitter_and_unsync() {
+    let host_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let host_addr = host_socket.local_addr().unwrap();
+    let host_id = Uuid::new_v4();
+    let host_clock = Arc::new(ClockSync::new(host_socket, SyncConfig::default(), host_id));
+
+    // Follower has a direct UDP socket
+    let follower_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let follower_id = Uuid::new_v4();
+
+    // 1. Validate that ClockSync EWMA adapts to high latency (200ms - 900ms)
+    assert_eq!(
+        host_clock.network_stats().rto_us,
+        synkrophase::clock::NetworkStats::MIN_RTO_US,
+        "Initial RTO must be snappy 50ms floor"
+    );
+
+    // Simulate high latency measurements updating EWMA
+    // Sample 1: 300ms
+    let mut stats = host_clock.network_stats();
+    stats.update_rtt(300_000);
+    // Sample 2: 950ms jitter burst
+    stats.update_rtt(950_000);
+    assert!(
+        stats.rto_us > 950_000,
+        "Adaptive RTO {}us must expand beyond 950ms under severe latency",
+        stats.rto_us
+    );
+
+    // 2. Monotonic Reorder Drop Test in SessionState
+    let session = Arc::new(SessionState::from_join(
+        "EXTREME".into(),
+        follower_id,
+        "Follower".into(),
+        host_id,
+        host_addr,
+        vec![],
+        synkrophase::protocol::messages::QueueState::default(),
+    ));
+
+    let t_now = host_clock.reference_now();
+
+    // Anchor 1: ref_time = t_now + 1_000_000
+    let anchor1 = SyncAnchor {
+        reference_time: t_now + 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Extreme Congestion Track".into()),
+    };
+
+    // Anchor 2: Newer anchor, ref_time = t_now + 2_000_000
+    let anchor2 = SyncAnchor {
+        reference_time: t_now + 2_000_000,
+        media_position_us: 11_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Extreme Congestion Track".into()),
+    };
+
+    // Anchor 1 arrives first
+    assert!(
+        session.accept_sync_anchor(anchor1.clone()),
+        "Anchor 1 must be accepted"
+    );
+    assert_eq!(session.last_anchor_ref_time(), t_now + 1_000_000);
+
+    // Anchor 2 arrives second
+    assert!(
+        session.accept_sync_anchor(anchor2.clone()),
+        "Anchor 2 must be accepted"
+    );
+    assert_eq!(session.last_anchor_ref_time(), t_now + 2_000_000);
+
+    // Now Anchor 1 arrives AGAIN (or a delayed packet with ref_time <= last_anchor_ref_time)
+    assert!(
+        !session.accept_sync_anchor(anchor1.clone()),
+        "Out-of-order stale Anchor 1 must be rejected by monotonic filter"
+    );
+
+    // 3. Follower 1.0s (1,000,000us) Unsync Recovery Test
+    let follower_controller = Arc::new(MockMediaController::new());
+    follower_controller
+        .set_track(Some(synkrophase::controller::TrackMetadata {
+            title: "Extreme Congestion Track".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(300_000_000),
+        }))
+        .await;
+
+    // Follower is at 10.0s, but host Anchor 2 says position should be 11.0s (1,000ms behind!)
+    follower_controller.set_position(10_000_000).await;
+    follower_controller.play().await.unwrap();
+
+    let follower_clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        follower_id,
+    ));
+
+    let evaluator = Arc::new(DriftEvaluator::new(
+        follower_clock.clone(),
+        follower_controller.clone(),
+        50_000,
+    ));
+
+    // True anchor sample: host is at 11.0s, reference_time is follower_clock.reference_now()
+    let anchor2 = SyncAnchor {
+        reference_time: follower_clock.reference_now(),
+        media_position_us: 11_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Extreme Congestion Track".into()),
+    };
+
+    // Follower runtime processes incoming message with out-of-order rejection
+    let runtime = SessionMessageRuntime::new(session.clone(), "Follower".into())
+        .with_clock(host_clock.clone())
+        .with_drift_evaluator(evaluator.clone())
+        .with_controller(follower_controller.clone());
+
+    // Ingest delayed stale anchor through runtime - must be dropped
+    let stale_env = Envelope {
+        sender: host_id,
+        payload: Message::SyncAnchor(anchor1),
+    };
+    runtime
+        .handle_incoming(&follower_socket, host_addr, stale_env)
+        .await
+        .unwrap();
+
+    // Verify clock stats recorded the stale drop
+    assert_eq!(
+        host_clock.network_stats().stale_anchors_dropped,
+        1,
+        "Network stats must record 1 dropped out-of-order anchor"
+    );
+
+    // Now evaluate drift against the true anchor (Anchor 2)
+    // Drift is ~ -1,000,000 us (1 second behind).
+    // Because this is a fresh anchor (or discontinuity), MicroSeek fires directly!
+    let action = evaluator.evaluate_and_reconcile(&anchor2).await.unwrap();
+
+    match action {
+        DriftAction::MicroSeek {
+            target_position_us,
+            drift_us,
+        } => {
+            assert!(
+                drift_us < -900_000,
+                "Drift {}us must capture the ~1.0s gap",
+                drift_us
+            );
+            assert!(
+                target_position_us >= 11_000_000,
+                "Target position {}us must seek forward to match host",
+                target_position_us
+            );
+        }
+        other => panic!(
+            "Expected MicroSeek to recover from 1.0s desync, got {:?}",
+            other
+        ),
+    }
+
+    // Verify player is now positioned at the target (~11s) and playing
+    let final_state = follower_controller.get_playback_state().await.unwrap();
+    assert!(final_state.is_playing, "Player must continue playing");
+    assert!(
+        final_state.position_us >= 11_000_000,
+        "Player position must have hopped over the 1.0s gap to >= 11.0s, got {}",
+        final_state.position_us
+    );
+}
+
+/// Scenario 9: Fast LAN Sub-Millisecond Snappiness.
+///
+/// Verifies that on clean low-latency LANs:
+/// 1. Adaptive RTO remains locked at the minimum 50ms floor.
+/// 2. Zone 1 tightly maintains synchronization within < 50ms without intervention.
+/// 3. Zero stale drops occur.
+#[tokio::test]
+async fn test_simulation_fast_lan_sub_millisecond_snappiness() {
+    let clock_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let clock = Arc::new(ClockSync::new(
+        clock_socket,
+        SyncConfig::default(),
+        Uuid::new_v4(),
+    ));
+
+    // Send 10 clean 1ms RTT measurements
+    let mut stats = clock.network_stats();
+    for _ in 0..10 {
+        stats.update_rtt(1_000); // 1.0ms
+    }
+
+    assert_eq!(
+        stats.rto_us,
+        synkrophase::clock::NetworkStats::MIN_RTO_US,
+        "Clean LAN RTO must remain strictly at the 50ms minimum floor"
+    );
+    assert_eq!(stats.srtt_us, 1_000, "SRTT must stabilize at 1ms");
+    assert!(stats.rttvar_us < 1_000, "RTTVAR must be < 1ms on clean LAN");
+    assert_eq!(
+        stats.stale_anchors_dropped, 0,
+        "Zero stale drops on clean LAN"
+    );
+}

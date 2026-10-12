@@ -1,5 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -34,6 +34,7 @@ pub struct SessionState {
     peers: PeerRegistry,
     queue: QueueManager,
     current_anchor: RwLock<Option<SyncAnchor>>,
+    last_anchor_ref_time: AtomicU64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +57,7 @@ impl SessionState {
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
             current_anchor: RwLock::new(None),
+            last_anchor_ref_time: AtomicU64::new(0),
         }
     }
 
@@ -78,6 +80,7 @@ impl SessionState {
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
             current_anchor: RwLock::new(None),
+            last_anchor_ref_time: AtomicU64::new(0),
         };
 
         for peer in peer_list {
@@ -309,8 +312,25 @@ impl SessionState {
         self.force_queue_state(queue);
     }
 
-    pub fn accept_sync_anchor(&self, anchor: SyncAnchor) {
+    /// Ingests a new SyncAnchor if and only if its reference_time is strictly monotonically
+    /// increasing relative to previously observed anchors, filtering out late network arrivals.
+    pub fn accept_sync_anchor(&self, anchor: SyncAnchor) -> bool {
+        let prev = self.last_anchor_ref_time.load(Ordering::Acquire);
+        if prev > 0 && anchor.reference_time <= prev {
+            return false;
+        }
+        self.last_anchor_ref_time
+            .store(anchor.reference_time.max(1), Ordering::Release);
         *self.current_anchor.write().unwrap() = Some(anchor);
+        true
+    }
+
+    pub fn last_anchor_ref_time(&self) -> u64 {
+        self.last_anchor_ref_time.load(Ordering::Acquire)
+    }
+
+    pub fn reset_anchor_watermark(&self) {
+        self.last_anchor_ref_time.store(0, Ordering::Release);
     }
 
     pub fn latest_sync_anchor(&self) -> Option<SyncAnchor> {

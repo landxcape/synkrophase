@@ -66,15 +66,17 @@ pub async fn run_tui(
         }
     });
 
-    // Tick loop for periodic UI updates and player position polling
+    // Tick loop for periodic UI updates, player position polling, and network stats
     let event_tx_tick = event_tx.clone();
     let controller_poll = Arc::clone(&controller);
+    let clock_poll = engine.clock();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(200)).await;
             if let Ok(state) = controller_poll.get_playback_state().await {
                 let _ = event_tx_tick.send(AppEvent::PlaybackUpdate(state));
             }
+            let _ = event_tx_tick.send(AppEvent::NetworkUpdate(clock_poll.network_stats()));
             let _ = event_tx_tick.send(AppEvent::Tick);
         }
     });
@@ -113,6 +115,9 @@ pub async fn run_tui(
                     app.drift.offset_us = offset_us;
                     app.drift.zone = zone;
                     app.drift.status = status;
+                }
+                AppEvent::NetworkUpdate(stats) => {
+                    app.network = stats;
                 }
                 AppEvent::PeerListUpdate(peers) => {
                     app.peers = peers;

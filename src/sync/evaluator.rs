@@ -117,18 +117,30 @@ impl DriftEvaluator {
         sorted[sorted.len() / 2]
     }
 
-    /// Evaluates the target drift zone with hysteresis.
+    /// Evaluates the target drift zone with hysteresis and adaptive network jitter tolerance.
     /// Zone 1: Locked (< threshold_us + 25ms release margin)
-    /// Zone 2: Nudging (50ms - 200/225ms margin)
-    /// Zone 3: Micro-seeking / Drifting (> 200ms)
+    /// Zone 2: Nudging (50ms - adaptive Zone 3 entry threshold)
+    /// Zone 3: Micro-seeking / Drifting (exceeding adaptive threshold)
     pub fn compute_zone(&self, drift_abs: u64) -> u8 {
         let mut current_zone = self.last_zone.lock().unwrap();
         let exit_zone1_threshold = self.threshold_us + 25_000;
+
+        // Base Zone 3 entry threshold is 200ms. If network has high RTT or jitter,
+        // expand Zone 3 threshold up to 600ms so rate-nudging absorbs jitter before cutting audio.
+        let base_zone3 = 200_000u64;
+        let adaptive_zone3 = if let Some(stats) = self.clock.network_stats() {
+            let network_padding = (stats.srtt_us / 2).saturating_add(stats.rttvar_us * 2);
+            base_zone3.max(network_padding).min(600_000)
+        } else {
+            base_zone3
+        };
+        let adaptive_zone3_hysteresis = adaptive_zone3 + 25_000;
+
         let zone = match *current_zone {
             1 => {
                 if drift_abs <= exit_zone1_threshold {
                     1
-                } else if drift_abs < 200_000 {
+                } else if drift_abs < adaptive_zone3 {
                     2
                 } else {
                     3
@@ -137,7 +149,7 @@ impl DriftEvaluator {
             2 => {
                 if drift_abs <= self.threshold_us {
                     1
-                } else if drift_abs < 225_000 {
+                } else if drift_abs < adaptive_zone3_hysteresis {
                     2
                 } else {
                     3
@@ -146,7 +158,7 @@ impl DriftEvaluator {
             _ => {
                 if drift_abs <= self.threshold_us {
                     1
-                } else if drift_abs < 200_000 {
+                } else if drift_abs < adaptive_zone3 {
                     2
                 } else {
                     3

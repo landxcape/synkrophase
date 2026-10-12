@@ -992,7 +992,17 @@ impl SessionMessageRuntime {
                 if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
-                self.session.accept_sync_anchor(anchor.clone());
+                if !self.session.accept_sync_anchor(anchor.clone()) {
+                    // Out-of-order anchor delayed in transit; drop to prevent timeline rewind
+                    if let Some(clock) = &self.clock {
+                        clock.record_stale_anchor_drop();
+                    }
+                    tracing::debug!(
+                        ref_time = anchor.reference_time,
+                        "Dropped out-of-order SyncAnchor packet"
+                    );
+                    return Ok(());
+                }
                 if let Some(evaluator) = &self.drift_evaluator {
                     evaluator.trigger_immediate();
                 }

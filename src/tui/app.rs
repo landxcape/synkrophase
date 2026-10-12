@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::clock::NetworkStats;
 use crate::controller::{MediaController, PlaybackState};
 use crate::protocol::messages::{PeerInfo, Role};
 use crate::session::SessionState;
@@ -41,6 +42,7 @@ pub enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Log { source: String, text: String },
     DriftUpdate(i64, u8, String),
+    NetworkUpdate(NetworkStats),
     PlaybackUpdate(PlaybackState),
     PeerListUpdate(Vec<PeerInfo>),
 }
@@ -54,6 +56,7 @@ pub struct TuiApp {
 
     pub playback: PlaybackState,
     pub drift: DriftInfo,
+    pub network: NetworkStats,
     pub peers: Vec<PeerInfo>,
     pub logs: Vec<LogEntry>,
 
@@ -89,6 +92,7 @@ impl TuiApp {
             is_leader,
             playback: PlaybackState::default(),
             drift: DriftInfo::default(),
+            network: NetworkStats::default(),
             peers: Vec::new(),
             logs: vec![LogEntry {
                 timestamp: current_time_str(),
