@@ -3,6 +3,21 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-10-15
+
+### Added
+- **Closed-Loop Seek Priming Compensation**: Added `default_seek_priming_lead_us()` to `MediaController` trait with a 120ms baseline across macOS, Linux, and Windows controllers (0ms for Mock). Seeks pre-compensate for decoder flush and DAC ring buffer fill delay (`target_seek_position_us = expected_position_us + actuation_delay_us + priming_lead_us`).
+- **Post-Settling Residual Auto-Calibration**: `DriftEvaluator` measures residual drift on the first steady-state sample following the 2,500ms post-seek settling window, adjusting the priming lead by residual error ($e_{\text{residual}}$) clamped within $0\text{--}350\text{ms}$.
+- **Discontinuity Protection**: Manual scrubs and track transitions disarm pending seek calibration to prevent false lead adjustments.
+
+## [0.7.3] - 2026-10-15
+
+### Fixed
+- **Zone 1 Deadband Threshold**: Widened the Zone 1 deadband from $50\text{ms}$ to $80\text{ms}$ to prevent acoustic micro-seek thrashing on players that lack rate-scaling capabilities.
+- **Fixed-Rate Player Zone 2 Persistence Gate**: In Zone 2 ($80\text{ms}\text{--}\text{Adaptive Threshold}$), controllers without rate control must persist in Zone 2 continuously for $\ge 3.0\text{s}$ before escalating to seek, filtering out transient network or playback jitter.
+- **Time-Bounded Rate Nudging**: Active rate nudging ($0.99\times / 1.01\times$) on rate-capable players is capped at a $3.5\text{s}$ hard deadline; if playback does not re-enter Zone 1 within this window, the engine restores the rate to $1.0\times$ and falls through to a corrective micro-seek.
+- **Extended Post-Seek Settling Window**: Increased the post-seek grace settling window from $1,500\text{ms}$ to $2,500\text{ms}$ to accommodate slow player buffer priming before evaluating subsequent drift.
+
 ## [0.7.2] - 2026-10-15
 
 ### Fixed

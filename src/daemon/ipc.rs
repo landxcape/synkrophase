@@ -30,7 +30,7 @@ impl IpcServer {
         engine: Arc<SynkroEngine>,
     ) -> (Self, broadcast::Sender<IpcEvent>) {
         let (event_tx, _) = broadcast::channel(128);
-        let latest_drift = Arc::new(std::sync::Mutex::new((0, 1, "Locked (<50ms)".to_string())));
+        let latest_drift = Arc::new(std::sync::Mutex::new((0, 1, "Locked (<80ms)".to_string())));
         let server = Self {
             paths,
             engine,

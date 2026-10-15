@@ -32,7 +32,7 @@ impl Default for DriftInfo {
         Self {
             offset_us: 0,
             zone: 1,
-            status: "Locked (<50ms)".to_string(),
+            status: "Locked (<80ms)".to_string(),
         }
     }
 }

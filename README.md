@@ -163,7 +163,7 @@ Devices do not rely on system wall clocks or time zones. When a follower joins:
 ### Control-Plane Clock Precision vs. Audible Sound Output
 It is important to distinguish between control-plane clock synchronization and physical acoustic playback:
 - **Control-Plane Clock Synchronization**: PTP-lite round-trip UDP measurements establish a shared monotonic reference clock across local peers with sub-millisecond precision.
-- **Audible Output Alignment**: Because Synkrophase coordinates third-party media players (Spotify, Apple Music) rather than decoding and streaming raw audio samples directly to DAC hardware, audible synchronization is bounded by the ~50ms perceptual deadband (`Zone 1`), external player IPC response times, and native OS audio buffer latencies. This design prioritizes local account autonomy and zero bandwidth consumption over DAC-level audio phase-locking.
+- **Audible Output Alignment**: Because Synkrophase coordinates third-party media players (Spotify, Apple Music) rather than decoding and streaming raw audio samples directly to DAC hardware, audible synchronization is bounded by the ~80ms perceptual deadband (`Zone 1`), external player IPC response times, and native OS audio buffer latencies. This design prioritizes local account autonomy and zero bandwidth consumption over DAC-level audio phase-locking.
 
 ### Drift Management & Monotonic Sequencing
 While playing, followers continuously reconcile their local playback position against incoming host anchors:
@@ -172,11 +172,11 @@ While playing, followers continuously reconcile their local playback position ag
 
 | Zone | Drift Range | Action Taken | Status Display |
 | :--- | :--- | :--- | :--- |
-| **Zone 1** | `< 50ms` | No action needed. Audio is in sync. | `Locked (<50ms)` |
-| **Zone 2** | `50ms – Adaptive Threshold` | Fine rate adjustment ($0.99\times$ or $1.01\times$) on players with rate control. On players without rate control (macOS AppleScript, Windows GSMTC, or fixed-rate MPRIS players), Zone 2 is bypassed to avoid ineffective adjustments. | `Nudging (+85.0ms)` |
-| **Zone 3** | `> Adaptive Threshold (200ms–350ms)` | Corrective micro-seek directly to target timestamp. | `Drifting (+240.0ms)` |
+| **Zone 1** | `< 80ms` | No action needed. Audio is in sync. | `Locked (<80ms)` |
+| **Zone 2** | `80ms – Adaptive Threshold` | Fine rate adjustment ($0.99\times$ or $1.01\times$) on players with rate control (capped at a 3.5s deadline). On players without rate control (macOS AppleScript, Windows GSMTC, or fixed-rate MPRIS players), requires 3.0s continuous persistence before escalating to seek. | `Nudging (+85.0ms)` |
+| **Zone 3** | `> Adaptive Threshold (200ms–350ms)` | Corrective micro-seek pre-compensated by actuation delay and buffer priming lead. | `Drifting (+240.0ms)` |
 
-A 1500ms post-seek grace window and a 2-pass confirmation gate prevent repeated seeking while players buffer.
+A 2500ms post-seek settling window prevents repeated seeking while players prime their audio buffers. Closed-loop auto-calibration measures residual landing error on the first steady-state sample after settling, adjusting the buffer priming lead (0–350ms) for subsequent seeks.
 
 ### Automatic Host Failover & Consistency Model
 If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room. Timeline watermarks reset dynamically on failover so followers immediately synchronize against the new leader's clock.
@@ -223,7 +223,7 @@ When hosting or joining a room interactively, Synkrophase launches a full termin
 │e8a15b3a Host (You)    Leader    Ref││[21:14:03] Room: TESTROOM               │
 │a3f290d1 Follower   Moderator  +12µs││[21:14:12] [Follower] Connected.        │
 ├─ Clock & Network Health ───────────┤│                                        │
-│Sync: Locked (<50ms) | Offset: +12µs││                                        │
+│Sync: Locked (<80ms) | Offset: +12µs││                                        │
 │RTT: 3.4ms | Jitter: 0.8ms | RTO: 50││                                        │
 ╰────────────────────────────────────╯╰────────────────────────────────────────╯
 [Space] Play/Pause • [←/→] Seek ±5s • [↑/↓] Scroll • [n/p] Next/Prev • [v] Vol • [/] Chat • [q] Quit
