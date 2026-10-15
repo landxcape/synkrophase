@@ -351,3 +351,30 @@ async fn test_evaluator_skips_rate_nudge_when_unsupported() {
     // Rate must NOT have been changed
     assert!((controller.get_playback_state().await.unwrap().rate - 1.0).abs() < f32::EPSILON);
 }
+
+#[tokio::test]
+async fn test_evaluator_falls_through_to_seek_when_rate_unconfirmed() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    // Controller claims rate support is true, but player silently ignores rate changes
+    controller.set_supports_rate_control(true);
+    controller.set_ignore_rate_changes(true);
+    controller.seek_to(10_100_000).await.unwrap(); // 100ms drift (Zone 2)
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    // First evaluation: new anchor causes discontinuity -> immediate seek fallback when rate confirmation fails
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action, DriftAction::MicroSeek { .. }));
+    // Rate remains unchanged because the player ignores rate modifications
+    assert!((controller.get_playback_state().await.unwrap().rate - 1.0).abs() < f32::EPSILON);
+}
+

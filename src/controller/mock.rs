@@ -11,6 +11,7 @@ pub struct MockMediaController {
     state: Arc<RwLock<PlaybackState>>,
     actuation_delay_us: Arc<AtomicU64>,
     supports_rate: Arc<std::sync::atomic::AtomicBool>,
+    ignore_rate_changes: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MockMediaController {
@@ -19,11 +20,16 @@ impl MockMediaController {
             state: Arc::new(RwLock::new(PlaybackState::default())),
             actuation_delay_us: Arc::new(AtomicU64::new(0)),
             supports_rate: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            ignore_rate_changes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
     pub fn set_supports_rate_control(&self, supports: bool) {
         self.supports_rate.store(supports, Ordering::Relaxed);
+    }
+
+    pub fn set_ignore_rate_changes(&self, ignore: bool) {
+        self.ignore_rate_changes.store(ignore, Ordering::Relaxed);
     }
 
     pub fn set_actuation_delay_us(&self, delay_us: u64) {
@@ -94,8 +100,10 @@ impl MediaController for MockMediaController {
     }
 
     async fn set_rate(&self, rate: f32) -> Result<()> {
-        let mut state = self.state.write().await;
-        state.rate = rate;
+        if !self.ignore_rate_changes.load(Ordering::Relaxed) {
+            let mut state = self.state.write().await;
+            state.rate = rate;
+        }
         Ok(())
     }
 

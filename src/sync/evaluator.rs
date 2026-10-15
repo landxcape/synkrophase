@@ -344,11 +344,9 @@ impl DriftEvaluator {
                     });
                 }
             }
-            // Rate control is supported but failed to set/confirm: stay in rate adjustment tier without escalating to seek in Zone 2
-            return Ok(DriftAction::FineTuneRate {
-                rate: 1.0,
-                drift_us: smoothed_drift_us,
-            });
+            tracing::warn!(
+                "Controller reported rate support but rate change to {target_rate} failed confirmation; falling through to seek tier"
+            );
         }
 
         // Stage 2: Zone 3 Micro-seek with cooldown & consecutive outlier confirmation

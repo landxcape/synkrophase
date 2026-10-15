@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
 use zbus::Connection;
@@ -18,6 +18,7 @@ const DEFAULT_ACTUATION_DELAY_US: u64 = 4_000; // ~4ms typical for Linux Unix so
 pub struct LinuxMediaController {
     last_player: Arc<RwLock<Option<String>>>,
     actuation_delay_us: Arc<AtomicU64>,
+    supports_rate: Arc<AtomicBool>,
 }
 
 impl Default for LinuxMediaController {
@@ -31,6 +32,7 @@ impl LinuxMediaController {
         Self {
             last_player: Arc::new(RwLock::new(None)),
             actuation_delay_us: Arc::new(AtomicU64::new(DEFAULT_ACTUATION_DELAY_US)),
+            supports_rate: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -94,38 +96,40 @@ impl LinuxMediaController {
         }
 
         // Priority 1: Check playing players
-        if !playing_players.is_empty() {
+        let chosen = if !playing_players.is_empty() {
             if let Some(spotify) = playing_players.iter().find(|p| p.ends_with(".spotify")) {
-                let chosen = spotify.clone();
-                *self.last_player.write().await = Some(chosen.clone());
-                return Ok(chosen);
+                spotify.clone()
+            } else {
+                playing_players[0].clone()
             }
-            let chosen = playing_players[0].clone();
-            *self.last_player.write().await = Some(chosen.clone());
-            return Ok(chosen);
-        }
-
-        // Priority 2: Last active player if still running
+        } else if let Some(ref name) = *self.last_player.read().await
+            && players.contains(name)
         {
-            let last = self.last_player.read().await;
-            if let Some(ref name) = *last
-                && players.contains(name)
-            {
-                return Ok(name.clone());
-            }
-        }
+            name.clone()
+        } else if let Some(spotify) = players.iter().find(|p| p.ends_with(".spotify")) {
+            spotify.clone()
+        } else {
+            players[0].clone()
+        };
 
-        // Priority 3: Spotify if present
-        if let Some(spotify) = players.iter().find(|p| p.ends_with(".spotify")) {
-            let chosen = spotify.clone();
-            *self.last_player.write().await = Some(chosen.clone());
-            return Ok(chosen);
-        }
-
-        // Priority 4: First available player
-        let chosen = players[0].clone();
         *self.last_player.write().await = Some(chosen.clone());
+        let rate_supported = Self::check_player_rate_support(conn, &chosen).await;
+        self.supports_rate.store(rate_supported, Ordering::Relaxed);
         Ok(chosen)
+    }
+
+    /// Query the player's MPRIS MinimumRate and MaximumRate properties.
+    /// A player supports Synkrophase micro-rate adjustments if it can accommodate [0.99, 1.01].
+    async fn check_player_rate_support(conn: &Connection, player_service: &str) -> bool {
+        let min_rate = match Self::get_property_value(conn, player_service, "MinimumRate").await {
+            Ok(Value::F64(v)) => v,
+            _ => return false,
+        };
+        let max_rate = match Self::get_property_value(conn, player_service, "MaximumRate").await {
+            Ok(Value::F64(v)) => v,
+            _ => return false,
+        };
+        (max_rate - min_rate) > 0.01 && min_rate <= 0.99 && max_rate >= 1.01
     }
 
     async fn get_playback_status(conn: &Connection, player_service: &str) -> Result<String> {
@@ -496,6 +500,6 @@ impl MediaController for LinuxMediaController {
     }
 
     fn supports_rate_control(&self) -> bool {
-        true
+        self.supports_rate.load(Ordering::Relaxed)
     }
 }
