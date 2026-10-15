@@ -540,4 +540,8 @@ impl MediaController for MacOsMediaController {
     fn estimated_actuation_delay_us(&self) -> u64 {
         self.actuation_delay_us.load(Ordering::Relaxed)
     }
+
+    fn default_seek_priming_lead_us(&self) -> u64 {
+        120_000
+    }
 }

@@ -89,4 +89,10 @@ pub trait MediaController: Send + Sync {
     fn supports_rate_control(&self) -> bool {
         false
     }
+
+    /// Default buffer priming lead time (in microseconds) for seek operations to
+    /// compensate for audio decoder flush, packet re-indexing, and DAC priming lag.
+    fn default_seek_priming_lead_us(&self) -> u64 {
+        0
+    }
 }

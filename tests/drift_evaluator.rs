@@ -523,3 +523,118 @@ async fn test_post_seek_settling_window_2500ms() {
     let (_, _, text_after) = evaluator.evaluate_drift(&anchor).await.unwrap();
     assert_ne!(text_after, "Settling (2.5s)");
 }
+
+#[tokio::test]
+async fn test_seek_priming_lead_initial_application() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.set_seek_priming_lead_us(120_000); // 120ms baseline
+    controller.set_actuation_delay_us(10_000); // 10ms IPC delay
+    controller.seek_to(10_300_000).await.unwrap(); // 300ms drift -> Zone 3 seek
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    assert_eq!(evaluator.seek_priming_lead_us(), 120_000);
+
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Priming Test".into()),
+    };
+
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    match action {
+        DriftAction::MicroSeek {
+            target_position_us, ..
+        } => {
+            // expected = 10_000_000, actuation = 10_000, priming = 120_000 -> 10_130_000
+            assert_eq!(target_position_us, 10_130_000);
+        }
+        other => panic!("Expected MicroSeek, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_closed_loop_seek_priming_auto_calibration() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.set_seek_priming_lead_us(100_000); // starts at 100ms
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Auto Cal".into()),
+    };
+
+    // 1. Initial seek arms calibration
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+
+    // 2. Simulate 2.6s post-seek settling elapsing
+    evaluator.set_last_seek(Some(
+        std::time::Instant::now() - std::time::Duration::from_millis(2600),
+    ));
+
+    // 3. Player actually landed -50ms behind (10_000_000 - 50_000 = 9_950_000)
+    controller.seek_to(9_950_000).await.unwrap();
+
+    // 4. Next evaluation should detect -50ms residual drift and auto-calibrate:
+    // new_lead = 100_000 + 50_000 = 150_000
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert_eq!(evaluator.seek_priming_lead_us(), 150_000);
+
+    // 5. Another seek incorporates the new 150ms lead
+    controller.seek_to(10_300_000).await.unwrap(); // trigger seek again
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    match action {
+        DriftAction::MicroSeek {
+            target_position_us, ..
+        } => {
+            assert_eq!(target_position_us, 10_150_000);
+        }
+        other => panic!("Expected MicroSeek with calibrated lead, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_closed_loop_seek_priming_clamp_bounds() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.set_seek_priming_lead_us(200_000);
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Clamp Test".into()),
+    };
+
+    // 0. Establish baseline anchor and lock
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+
+    // Case A: Huge undershoot (-500ms) clamps at upper bound 350ms
+    evaluator.set_last_seek(Some(
+        std::time::Instant::now() - std::time::Duration::from_millis(2600),
+    ));
+    evaluator.set_pending_seek_calibration(true);
+    controller.seek_to(9_500_000).await.unwrap(); // -500ms drift
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert_eq!(evaluator.seek_priming_lead_us(), 350_000);
+
+    // Case B: Huge overshoot (+600ms) clamps at lower bound 0ms
+    evaluator.set_last_seek(Some(
+        std::time::Instant::now() - std::time::Duration::from_millis(2600),
+    ));
+    evaluator.set_pending_seek_calibration(true);
+    controller.seek_to(10_600_000).await.unwrap(); // +600ms drift
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert_eq!(evaluator.seek_priming_lead_us(), 0);
+}

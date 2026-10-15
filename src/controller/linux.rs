@@ -556,6 +556,10 @@ impl MediaController for LinuxMediaController {
     fn supports_rate_control(&self) -> bool {
         self.supports_rate.load(Ordering::Relaxed)
     }
+
+    fn default_seek_priming_lead_us(&self) -> u64 {
+        120_000
+    }
 }
 
 #[cfg(test)]

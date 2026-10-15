@@ -38,6 +38,8 @@ pub struct DriftEvaluator {
     current_adjusted_rate: Mutex<Option<f32>>,
     zone2_started_at: Mutex<Option<std::time::Instant>>,
     nudge_started_at: Mutex<Option<std::time::Instant>>,
+    seek_priming_lead_us: Mutex<i64>,
+    pending_seek_calibration: Mutex<bool>,
 }
 
 pub fn is_timeline_discontinuity(prev: &SyncAnchor, curr: &SyncAnchor) -> bool {
@@ -68,6 +70,7 @@ impl DriftEvaluator {
         controller: Arc<dyn MediaController>,
         threshold_us: u64,
     ) -> Self {
+        let default_lead = controller.default_seek_priming_lead_us() as i64;
         Self {
             clock,
             controller,
@@ -82,6 +85,8 @@ impl DriftEvaluator {
             current_adjusted_rate: Mutex::new(None),
             zone2_started_at: Mutex::new(None),
             nudge_started_at: Mutex::new(None),
+            seek_priming_lead_us: Mutex::new(default_lead),
+            pending_seek_calibration: Mutex::new(false),
         }
     }
 
@@ -91,6 +96,7 @@ impl DriftEvaluator {
         *self.last_zone.lock().unwrap() = 1;
         *self.zone2_started_at.lock().unwrap() = None;
         *self.nudge_started_at.lock().unwrap() = None;
+        *self.pending_seek_calibration.lock().unwrap() = false;
         *self.consecutive_outliers.lock().unwrap() = 0;
         self.drift_history.lock().unwrap().clear();
         self.trigger_immediate();
@@ -106,6 +112,7 @@ impl DriftEvaluator {
         *self.last_zone.lock().unwrap() = 1;
         *self.zone2_started_at.lock().unwrap() = None;
         *self.nudge_started_at.lock().unwrap() = None;
+        *self.pending_seek_calibration.lock().unwrap() = true;
         *self.consecutive_outliers.lock().unwrap() = 0;
         if let Some(a) = anchor {
             *self.last_anchor.lock().unwrap() = Some(a);
@@ -125,6 +132,21 @@ impl DriftEvaluator {
     #[doc(hidden)]
     pub fn set_last_seek(&self, instant: Option<std::time::Instant>) {
         *self.last_seek.lock().unwrap() = instant;
+    }
+
+    #[doc(hidden)]
+    pub fn seek_priming_lead_us(&self) -> i64 {
+        *self.seek_priming_lead_us.lock().unwrap()
+    }
+
+    #[doc(hidden)]
+    pub fn set_seek_priming_lead_us(&self, lead_us: i64) {
+        *self.seek_priming_lead_us.lock().unwrap() = lead_us;
+    }
+
+    #[doc(hidden)]
+    pub fn set_pending_seek_calibration(&self, pending: bool) {
+        *self.pending_seek_calibration.lock().unwrap() = pending;
     }
 
     pub fn trigger_immediate(&self) {
@@ -345,12 +367,29 @@ impl DriftEvaluator {
 
         if is_discontinuity {
             self.drift_history.lock().unwrap().clear();
+            *self.pending_seek_calibration.lock().unwrap() = false;
         }
 
         let raw_drift_us = local_state.position_us - expected_position_us;
         let smoothed_drift_us = self.push_and_median(raw_drift_us);
         let drift_abs = smoothed_drift_us.unsigned_abs();
         let zone = self.compute_zone(drift_abs);
+
+        // Auto-calibrate seek priming lead on the first stable sample after post-seek settling
+        if !is_discontinuity && *self.pending_seek_calibration.lock().unwrap() {
+            let mut lead_guard = self.seek_priming_lead_us.lock().unwrap();
+            let prev_lead = *lead_guard;
+            let delta = -smoothed_drift_us;
+            let updated_lead = (prev_lead + delta).clamp(0, 350_000);
+            *lead_guard = updated_lead;
+            *self.pending_seek_calibration.lock().unwrap() = false;
+            tracing::info!(
+                residual_drift_ms = (smoothed_drift_us as f64) / 1000.0,
+                prev_lead_ms = (prev_lead as f64) / 1000.0,
+                new_lead_ms = (updated_lead as f64) / 1000.0,
+                "Calibrated seek priming lead compensation"
+            );
+        }
 
         // Zone 1: Locked / InSync
         if zone == 1 {
@@ -468,10 +507,12 @@ impl DriftEvaluator {
         };
 
         let actuation_delay_us = self.controller.estimated_actuation_delay_us() as i64;
-        let target_seek_position_us = expected_position_us + actuation_delay_us;
+        let priming_lead_us = *self.seek_priming_lead_us.lock().unwrap();
+        let target_seek_position_us = expected_position_us + actuation_delay_us + priming_lead_us;
 
         if should_seek {
             self.controller.seek_to(target_seek_position_us).await?;
+            *self.pending_seek_calibration.lock().unwrap() = true;
             let needs_restore = self.current_adjusted_rate.lock().unwrap().is_some();
             if needs_restore {
                 if let Ok(()) = self.controller.set_rate(1.0).await {

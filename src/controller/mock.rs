@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct MockMediaController {
     state: Arc<RwLock<PlaybackState>>,
     actuation_delay_us: Arc<AtomicU64>,
+    seek_priming_lead_us: Arc<AtomicU64>,
     supports_rate: Arc<std::sync::atomic::AtomicBool>,
     ignore_rate_changes: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -19,6 +20,7 @@ impl MockMediaController {
         Self {
             state: Arc::new(RwLock::new(PlaybackState::default())),
             actuation_delay_us: Arc::new(AtomicU64::new(0)),
+            seek_priming_lead_us: Arc::new(AtomicU64::new(0)),
             supports_rate: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             ignore_rate_changes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -34,6 +36,10 @@ impl MockMediaController {
 
     pub fn set_actuation_delay_us(&self, delay_us: u64) {
         self.actuation_delay_us.store(delay_us, Ordering::Relaxed);
+    }
+
+    pub fn set_seek_priming_lead_us(&self, lead_us: u64) {
+        self.seek_priming_lead_us.store(lead_us, Ordering::Relaxed);
     }
 
     pub async fn set_track(&self, metadata: Option<TrackMetadata>) {
@@ -133,5 +139,9 @@ impl MediaController for MockMediaController {
 
     fn supports_rate_control(&self) -> bool {
         self.supports_rate.load(Ordering::Relaxed)
+    }
+
+    fn default_seek_priming_lead_us(&self) -> u64 {
+        self.seek_priming_lead_us.load(Ordering::Relaxed)
     }
 }
