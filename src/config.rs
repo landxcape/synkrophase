@@ -33,8 +33,8 @@ impl Default for SyncConfig {
             heartbeat_timeout_ms: 3_000,
             zone1_threshold_ms: 5,
             zone2_threshold_ms: 200,
-            rate_fast: 1.05,
-            rate_slow: 0.95,
+            rate_fast: 1.01,
+            rate_slow: 0.99,
             sync_eval_interval_ms: 200,
         }
     }

@@ -351,7 +351,7 @@ mod tests {
             track_title: None,
         });
 
-        assert_eq!(controller.evaluate(), SyncAction::AdjustRate { rate: 0.95 });
+        assert_eq!(controller.evaluate(), SyncAction::AdjustRate { rate: 0.99 });
     }
 
     #[test]
