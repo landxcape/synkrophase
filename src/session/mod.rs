@@ -203,6 +203,11 @@ impl SessionState {
         }
     }
 
+    pub fn leader_socket_addr(&self) -> Option<std::net::SocketAddr> {
+        let leader = self.leader_id();
+        self.peers.get_addr(&leader)
+    }
+
     pub fn clock_offset(&self) -> i64 {
         self.clock_offset_us.load(Ordering::Acquire)
     }

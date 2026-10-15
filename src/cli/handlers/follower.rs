@@ -112,6 +112,9 @@ pub async fn run_join(
                     _ = sleep(Duration::from_millis(1000)) => {}
                     _ = notify.notified() => {}
                 }
+                if session.is_leader() {
+                    continue;
+                }
                 if let Some(anchor) = session.latest_sync_anchor() {
                     let _ = evaluator.evaluate_and_reconcile(&anchor).await;
                 }
@@ -126,8 +129,16 @@ pub async fn run_join(
         async move {
             loop {
                 sleep(Duration::from_secs(10)).await;
-                if let Ok(_offset) = clock.measure_offset(leader_clock_addr).await {
-                    session.set_clock_offset(clock.residual_offset());
+                if session.is_leader() {
+                    clock.set_offset(0);
+                    session.set_clock_offset(0);
+                    continue;
+                }
+                if let Some(leader_addr) = session.leader_socket_addr() {
+                    let target_clock_addr = SocketAddr::new(leader_addr.ip(), leader_clock_port);
+                    if let Ok(_offset) = clock.measure_offset(target_clock_addr).await {
+                        session.set_clock_offset(clock.residual_offset());
+                    }
                 }
             }
         }
@@ -172,6 +183,14 @@ pub async fn run_join(
         async move {
             loop {
                 sleep(Duration::from_millis(500)).await;
+                if session.is_leader() {
+                    let _ = tx.send(crate::tui::AppEvent::DriftUpdate(
+                        0,
+                        1,
+                        "Leader (Ref)".to_string(),
+                    ));
+                    continue;
+                }
                 if let Some(anchor) = session.latest_sync_anchor()
                     && let Ok((offset_us, zone, status)) = evaluator.evaluate_drift(&anchor).await
                 {

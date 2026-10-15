@@ -73,6 +73,11 @@ impl PeerRegistry {
         peers.get(id).map(|entry| entry.info.role)
     }
 
+    pub fn get_addr(&self, id: &Uuid) -> Option<SocketAddr> {
+        let peers = self.peers.read().unwrap();
+        peers.get(id).map(|entry| entry.addr)
+    }
+
     pub fn set_role(&self, id: &Uuid, role: Role) {
         let mut peers = self.peers.write().unwrap();
         if let Some(entry) = peers.get_mut(id) {

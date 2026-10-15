@@ -393,3 +393,24 @@ fn test_role_rbac_hierarchy_rules() {
             .is_err()
     );
 }
+
+#[test]
+fn test_leader_socket_addr_tracks_leader_promotion_and_change() {
+    let session = SessionState::new_leader("ROOM1".into(), Uuid::new_v4(), "Host".into());
+    assert!(session.leader_socket_addr().is_none());
+
+    let remote_id = Uuid::new_v4();
+    let remote_addr: std::net::SocketAddr = "192.168.1.50:5000".parse().unwrap();
+    session.record_peer_heartbeat(
+        synkrophase::protocol::messages::PeerInfo {
+            device_id: remote_id,
+            name: "Remote".into(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: synkrophase::protocol::messages::Role::Leader,
+        },
+        remote_addr,
+    );
+    session.set_leader_id(remote_id);
+    assert_eq!(session.leader_socket_addr(), Some(remote_addr));
+}
