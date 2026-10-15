@@ -1,15 +1,14 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::RwLock;
 use std::time::Duration;
 
-use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{Message, PeerInfo, QueueCommand, QueueState, Role, SyncAnchor};
 use crate::queue::state::QueueManager;
-use crate::sync::controller::{PlaybackStatus, SyncController};
+use crate::sync::controller::PlaybackStatus;
 
 use self::leader::appoint_successor;
 use self::peer::{PeerEntry, PeerRegistry};
@@ -378,46 +377,3 @@ impl SessionState {
     }
 }
 
-pub struct FollowerSyncRuntime {
-    controller: Arc<SyncController>,
-    sync_loop_handle: Mutex<Option<JoinHandle<()>>>,
-}
-
-impl FollowerSyncRuntime {
-    pub fn new(controller: Arc<SyncController>) -> Self {
-        Self {
-            controller,
-            sync_loop_handle: Mutex::new(None),
-        }
-    }
-
-    pub fn ingest_message(&self, session: &SessionState, message: &Message) {
-        if let Message::SyncAnchor(anchor) = message {
-            session.accept_sync_anchor(anchor.clone());
-            self.controller.set_anchor(anchor.clone());
-        }
-    }
-
-    pub fn start_sync_loop(&self) -> bool {
-        let mut handle = self.sync_loop_handle.lock().unwrap();
-        if handle.is_some() {
-            return false;
-        }
-
-        let controller = Arc::clone(&self.controller);
-        *handle = Some(tokio::spawn(async move {
-            let _ = controller.run_sync_loop().await;
-        }));
-        true
-    }
-
-    pub fn stop_sync_loop(&self) {
-        if let Some(handle) = self.sync_loop_handle.lock().unwrap().take() {
-            handle.abort();
-        }
-    }
-
-    pub fn sync_loop_running(&self) -> bool {
-        self.sync_loop_handle.lock().unwrap().is_some()
-    }
-}

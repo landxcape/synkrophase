@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::clock::sync::ClockSync;
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{Envelope, Message, PeerInfo, deserialize, serialize};
-use crate::session::{FollowerSyncRuntime, SessionState};
+use crate::session::SessionState;
 use crate::sync::controller::PlaybackControl;
 use crate::sync::evaluator::DriftEvaluator;
 use crate::sync::scheduler::IntentScheduler;
@@ -18,7 +18,6 @@ use tokio::sync::mpsc;
 
 pub struct SessionMessageRuntime {
     session: Arc<SessionState>,
-    follower_sync: Option<Arc<FollowerSyncRuntime>>,
     playback: Option<Arc<dyn PlaybackControl>>,
     scheduler: Option<Arc<IntentScheduler>>,
     drift_evaluator: Option<Arc<DriftEvaluator>>,
@@ -36,7 +35,6 @@ impl SessionMessageRuntime {
     pub fn new(session: Arc<SessionState>, name: String) -> Self {
         Self {
             session,
-            follower_sync: None,
             playback: None,
             scheduler: None,
             drift_evaluator: None,
@@ -49,11 +47,6 @@ impl SessionMessageRuntime {
 
     pub fn with_event_tx(mut self, event_tx: mpsc::UnboundedSender<AppEvent>) -> Self {
         self.event_tx = Some(event_tx);
-        self
-    }
-
-    pub fn with_follower_sync(mut self, follower_sync: Arc<FollowerSyncRuntime>) -> Self {
-        self.follower_sync = Some(follower_sync);
         self
     }
 
@@ -137,9 +130,6 @@ impl SessionMessageRuntime {
             Err(err) => return Err(err),
         }
 
-        if let Some(follower_sync) = &self.follower_sync {
-            follower_sync.ingest_message(&self.session, &message);
-        }
         Ok(())
     }
 
@@ -311,10 +301,7 @@ impl SessionMessageRuntime {
                     assigned_role,
                 );
                 if let Some(anchor) = current_anchor.clone() {
-                    self.session.accept_sync_anchor(anchor.clone());
-                    if let Some(follower_sync) = &self.follower_sync {
-                        follower_sync.ingest_message(&self.session, &Message::SyncAnchor(anchor));
-                    }
+                    self.session.accept_sync_anchor(anchor);
                 }
 
                 // Initial Playback Reconciliation: if room has a current track, reconcile local playback
@@ -1006,23 +993,17 @@ impl SessionMessageRuntime {
                 if let Some(evaluator) = &self.drift_evaluator {
                     evaluator.trigger_immediate();
                 }
-                if let Some(follower_sync) = &self.follower_sync {
-                    follower_sync.ingest_message(&self.session, &Message::SyncAnchor(anchor));
-                }
                 Ok(())
             }
             message => {
                 // Best-effort application message handling. Stale queue updates should not
                 // stop the receive loop.
-                match self.session.apply_message(message.clone()) {
+                match self.session.apply_message(message) {
                     Ok(()) => {}
                     Err(SynkroError::StaleQueue { .. }) => {}
                     Err(err) => return Err(err),
                 }
 
-                if let Some(follower_sync) = &self.follower_sync {
-                    follower_sync.ingest_message(&self.session, &message);
-                }
                 Ok(())
             }
         }
