@@ -160,6 +160,11 @@ Devices do not rely on system wall clocks or time zones. When a follower joins:
 4. Every 10 seconds, it performs a background measurement to track oscillator drift and network jitter.
 5. The **Offset** displayed in the room table shows this live residual clock difference (e.g. `+14µs`, `-0.2ms`).
 
+### Control-Plane Clock Precision vs. Audible Sound Output
+It is important to distinguish between control-plane clock synchronization and physical acoustic playback:
+- **Control-Plane Clock Synchronization**: PTP-lite round-trip UDP measurements establish a shared monotonic reference clock across local peers with sub-millisecond precision.
+- **Audible Output Alignment**: Because Synkrophase coordinates third-party media players (Spotify, Apple Music) rather than decoding and streaming raw audio samples directly to DAC hardware, audible synchronization is bounded by the ~50ms perceptual deadband (`Zone 1`), external player IPC response times, and native OS audio buffer latencies. This design prioritizes local account autonomy and zero bandwidth consumption over DAC-level audio phase-locking.
+
 ### Drift Management & Monotonic Sequencing
 While playing, followers continuously reconcile their local playback position against incoming host anchors:
 - **Monotonic Packet Filtering**: Stale or out-of-order anchor packets delayed by network jitter are discarded before processing, preventing playback state corruption.
@@ -173,8 +178,11 @@ While playing, followers continuously reconcile their local playback position ag
 
 A 1500ms post-seek grace window and a 2-pass confirmation gate prevent repeated seeking while players buffer.
 
-### Automatic Host Failover
+### Automatic Host Failover & Consistency Model
 If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room. Timeline watermarks reset dynamically on failover so followers immediately synchronize against the new leader's clock.
+
+- **Eventual Convergence**: The protocol intentionally avoids the operational complexity of distributed consensus frameworks (such as Raft or Paxos). If a transient network partition occurs, isolated peers continue local playback independently.
+- **Conflict Resolution on Reconnection**: When network connectivity resumes, concurrent leader claims are deterministically reconciled via role hierarchy (`Leader > Moderator > Listener`) followed by lowest-UUID tie-breaks, seamlessly converging peers back to a single reference timeline without disrupting playback.
 
 ---
 
