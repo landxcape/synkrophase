@@ -168,7 +168,7 @@ While playing, followers continuously reconcile their local playback position ag
 | Zone | Drift Range | Action Taken | Status Display |
 | :--- | :--- | :--- | :--- |
 | **Zone 1** | `< 50ms` | No action needed. Audio is in sync. | `Locked (<50ms)` |
-| **Zone 2** | `50ms – Adaptive Threshold` | Fine rate adjustment ($0.99\times$ or $1.01\times$) to correct gradual hardware crystal skew. | `Nudging (+85.0ms)` |
+| **Zone 2** | `50ms – Adaptive Threshold` | Fine rate adjustment ($0.99\times$ or $1.01\times$) on players with rate control. On players without rate control (macOS AppleScript, Windows GSMTC, or fixed-rate MPRIS players), Zone 2 is bypassed to avoid ineffective adjustments. | `Nudging (+85.0ms)` |
 | **Zone 3** | `> Adaptive Threshold (200ms–350ms)` | Corrective micro-seek directly to target timestamp. | `Drifting (+240.0ms)` |
 
 A 1500ms post-seek grace window and a 2-pass confirmation gate prevent repeated seeking while players buffer.

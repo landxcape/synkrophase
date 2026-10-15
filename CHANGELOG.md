@@ -3,6 +3,17 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-15
+
+### Fixed
+- **Windows GSMTC Timeline Position Extrapolation**: Extrapolate live playback positions from `timeline.LastUpdatedTime()` in `windows.rs`. Resolves an issue where Windows followers remained permanently stuck in settling or drifting states due to WinRT returning a static position snapshot.
+- **Failover Drift Evaluation Suppression**: Followers promoted to host immediately halt active drift tasks and emit `Leader (Ref)` to prevent self-evaluating against departed leaders.
+- **Dynamic Leader Address Resolution in Clock Refresh**: The follower clock refresh loop now dynamically queries the active leader's network address and clears residual offsets upon host promotion, preventing RTO probe timeouts and exponential backoff after failover.
+- **Spec-Driven Rate Capability Detection & Drift Fallback**: Added `supports_rate_control()` to `MediaController`. On Linux, the controller dynamically inspects MPRIS `MinimumRate` and `MaximumRate` D-Bus properties to detect fixed-rate players. If rate control is unsupported or unconfirmed, drift evaluation proceeds directly to the outlier-confirmed seek tier rather than stalling.
+
+### Changed
+- **Legacy Controller Pruning**: Removed orphaned `SyncController`, `FollowerSyncRuntime`, and uninvoked sync hooks in `SessionMessageRuntime`, standardizing all drift evaluation on `DriftEvaluator`.
+
 ## [0.6.9] - 2026-10-12
 
 ### Fixed
