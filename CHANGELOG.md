@@ -3,6 +3,13 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-10-15
+
+### Fixed
+- **Linux MPRIS Metadata & Track Recognition**: Implemented recursive D-Bus variant unwrapping in `LinuxMediaController` to properly unpack `a{sv}` metadata dictionaries. Fixes an issue where song titles and artists appeared unrecognized or empty on Linux.
+- **Linux Drift Settling & Seek Execution**: In `seek_to()`, dynamically extract the player's active `mpris:trackid` from metadata rather than using a static fallback path. Fixes a bug where Spotify silently dropped `SetPosition` commands due to mismatched track identifiers, leaving Linux followers permanently drifting in Zone 3 (+500ms).
+- **Linux Flatpak/Snap Player Prioritization**: Matched player service bus names using `.contains("spotify")` instead of `.ends_with(".spotify")`, ensuring instances running under Flatpak or Snap are prioritized correctly.
+
 ## [0.7.1] - 2026-10-15
 
 ### Fixed
