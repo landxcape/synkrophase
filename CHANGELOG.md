@@ -3,6 +3,15 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-15
+
+### Fixed
+- **Host Anchor Filtering**: Enforced strict anchor acceptance rules in `SessionMessageRuntime`. Leaders now unconditionally reject incoming `SyncAnchor` envelopes from peers, and followers strictly reject anchors from any node other than the active leader. Prevents desynchronization if demoted hosts or rogue peers broadcast sync anchors.
+
+### Documentation
+- **Clock Precision vs. Audible Sound Grounding**: Clarified the technical distinction between PTP-lite control-plane clock sync (<1ms precision) and physical acoustic output bounded by the ~50ms perceptual deadband (`Zone 1`), external player IPC latencies, and native OS audio buffer queues.
+- **Partition Consistency Model**: Documented the eventual-convergence model via role hierarchy (`Leader > Moderator > Listener`) and lowest-UUID tie-breaks on network reconnection, explaining the intentional omission of distributed consensus (Raft/Paxos).
+
 ## [0.7.0] - 2026-10-15
 
 ### Fixed
