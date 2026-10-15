@@ -976,7 +976,9 @@ impl SessionMessageRuntime {
                 Ok(())
             }
             Message::SyncAnchor(anchor) => {
-                if !self.session.is_leader() && envelope.sender != self.session.leader_id() {
+                // Leaders are the authoritative timeline reference and never ingest anchors;
+                // followers strictly only accept anchors from the current elected leader.
+                if self.session.is_leader() || envelope.sender != self.session.leader_id() {
                     return Ok(());
                 }
                 if !self.session.accept_sync_anchor(anchor.clone()) {

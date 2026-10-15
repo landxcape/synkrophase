@@ -414,3 +414,75 @@ fn test_leader_socket_addr_tracks_leader_promotion_and_change() {
     session.set_leader_id(remote_id);
     assert_eq!(session.leader_socket_addr(), Some(remote_addr));
 }
+
+#[tokio::test]
+async fn test_leader_and_follower_anchor_rejection_rules() {
+    use synkrophase::protocol::messages::Envelope;
+    use synkrophase::session::runtime::SessionMessageRuntime;
+
+    let host_id = Uuid::new_v4();
+    let peer_id = Uuid::new_v4();
+
+    // Case 1: Host receives an anchor from another peer -> must be rejected
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
+    let host_runtime = SessionMessageRuntime::new(host_session.clone(), "Host".into());
+
+    let anchor = SyncAnchor {
+        reference_time: 50_000,
+        media_position_us: 10_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    let fake_anchor_envelope = Envelope {
+        sender: peer_id,
+        payload: Message::SyncAnchor(anchor.clone()),
+    };
+
+    let tokio_socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let dummy_addr: std::net::SocketAddr = "127.0.0.1:9999".parse().unwrap();
+
+    let _ = host_runtime
+        .handle_incoming(&tokio_socket, dummy_addr, fake_anchor_envelope)
+        .await;
+    assert!(host_session.latest_sync_anchor().is_none());
+
+    // Case 2: Follower receives an anchor from a non-leader peer -> must be rejected
+    let follower_id = Uuid::new_v4();
+    let follower_session = Arc::new(SessionState::from_join(
+        "ROOM1".into(),
+        follower_id,
+        "Follower".into(),
+        host_id,
+        dummy_addr,
+        vec![],
+        QueueState::default(),
+    ));
+    let follower_runtime = SessionMessageRuntime::new(follower_session.clone(), "Follower".into());
+
+    let non_leader_env = Envelope {
+        sender: peer_id, // peer_id != host_id
+        payload: Message::SyncAnchor(anchor.clone()),
+    };
+
+    let _ = follower_runtime
+        .handle_incoming(&tokio_socket, dummy_addr, non_leader_env)
+        .await;
+    assert!(follower_session.latest_sync_anchor().is_none());
+
+    // Case 3: Follower receives an anchor from the legitimate leader -> must be accepted
+    let leader_env = Envelope {
+        sender: host_id,
+        payload: Message::SyncAnchor(anchor.clone()),
+    };
+
+    let _ = follower_runtime
+        .handle_incoming(&tokio_socket, dummy_addr, leader_env)
+        .await;
+    assert_eq!(follower_session.latest_sync_anchor(), Some(anchor));
+}
