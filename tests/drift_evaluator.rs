@@ -170,7 +170,7 @@ async fn test_drift_evaluator_hysteresis_and_settling_display() {
     controller.seek_to(10_040_000).await.unwrap();
     let (_, zone, text) = evaluator.evaluate_drift(&anchor).await.unwrap();
     assert_eq!(zone, 1);
-    assert_eq!(text, "Locked (<50ms)");
+    assert_eq!(text, "Locked (<80ms)");
 
     // 2. Drift rises to 65ms (within 50ms + 25ms hysteresis release margin)
     // Should remain in Zone 1 (Locked) due to hysteresis
@@ -376,4 +376,150 @@ async fn test_evaluator_falls_through_to_seek_when_rate_unconfirmed() {
     assert!(matches!(action, DriftAction::MicroSeek { .. }));
     // Rate remains unchanged because the player ignores rate modifications
     assert!((controller.get_playback_state().await.unwrap().rate - 1.0).abs() < f32::EPSILON);
+}
+
+#[tokio::test]
+async fn test_fixed_rate_player_zone2_persistence_gate() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.set_supports_rate_control(false);
+    controller.seek_to(10_000_000).await.unwrap();
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song A".into()),
+    };
+
+    // 1. Initial lock establishes baseline anchor and position
+    let action_init = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action_init, DriftAction::InSync { .. }));
+
+    // 2. Continuous playback drifts by +100ms (Zone 2 for fixed rate)
+    controller.seek_to(10_100_000).await.unwrap();
+    // Flush median buffer with this drift
+    for _ in 0..5 {
+        let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    }
+
+    // 3. Within 3 seconds, evaluator monitors and returns InSync without seeking
+    let action_monitoring = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(
+        matches!(action_monitoring, DriftAction::InSync { .. }),
+        "Fixed-rate Zone 2 drift must not seek immediately during monitoring window"
+    );
+
+    let (_, zone, text) = evaluator.evaluate_drift(&anchor).await.unwrap();
+    assert_eq!(zone, 2);
+    assert!(text.contains("Monitoring"));
+
+    // 4. Simulate persistence gate expiration (3.1s elapsed in Zone 2)
+    evaluator.set_zone2_started_at(Some(
+        std::time::Instant::now() - std::time::Duration::from_millis(3100),
+    ));
+
+    // 5. Next evaluation confirms persistent drift -> escalates to MicroSeek!
+    let action_seek = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(
+        matches!(action_seek, DriftAction::MicroSeek { .. }),
+        "Persistent Zone 2 drift beyond 3.0s must escalate to MicroSeek"
+    );
+}
+
+#[tokio::test]
+async fn test_rate_nudge_hard_deadline_escalates_to_seek() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.set_supports_rate_control(true);
+    controller.seek_to(10_000_000).await.unwrap();
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song Nudge".into()),
+    };
+
+    // Initial lock
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+
+    // Player drifts by +100ms
+    controller.seek_to(10_100_000).await.unwrap();
+    for _ in 0..5 {
+        let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    }
+
+    // Rate-capable player starts rate nudging
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(
+        matches!(action, DriftAction::FineTuneRate { rate, .. } if (rate - 0.99).abs() < f32::EPSILON)
+    );
+
+    // Simulate expired nudge deadline (13s elapsed, exceeding 12s deadline)
+    evaluator.set_nudge_started_at(Some(
+        std::time::Instant::now() - std::time::Duration::from_secs(13),
+    ));
+
+    // Evaluator must abort nudge, restore rate to 1.0, and escalate to MicroSeek
+    let action_timeout = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(
+        matches!(action_timeout, DriftAction::MicroSeek { .. }),
+        "Expired nudge deadline must escalate to MicroSeek"
+    );
+    assert!(
+        (controller.get_playback_state().await.unwrap().rate - 1.0).abs() < f32::EPSILON,
+        "Playback rate must be restored to 1.0 on seek escalation"
+    );
+}
+
+#[tokio::test]
+async fn test_post_seek_settling_window_2500ms() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.seek_to(10_300_000).await.unwrap(); // 300ms drift -> Zone 3 seek
+    controller.play().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Song Settling".into()),
+    };
+
+    // 1. Initial seek executed
+    let action1 = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action1, DriftAction::MicroSeek { .. }));
+
+    // 2. Simulate 2.0s post-seek (within 2.5s settling window)
+    evaluator.set_last_seek(Some(
+        std::time::Instant::now() - std::time::Duration::from_millis(2000),
+    ));
+
+    // evaluate_drift returns Settling (2.5s)
+    let (_, zone, text) = evaluator.evaluate_drift(&anchor).await.unwrap();
+    assert_eq!(zone, 1);
+    assert_eq!(text, "Settling (2.5s)");
+
+    // evaluate_and_reconcile suppresses further seeks
+    controller.seek_to(10_300_000).await.unwrap(); // simulate post-seek glitch
+    let action2 = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action2, DriftAction::InSync { drift_us: 0 }));
+
+    // 3. Simulate 2.6s post-seek (past 2.5s settling window)
+    evaluator.set_last_seek(Some(
+        std::time::Instant::now() - std::time::Duration::from_millis(2600),
+    ));
+
+    // After 2.6s, settling has completed
+    let (_, _, text_after) = evaluator.evaluate_drift(&anchor).await.unwrap();
+    assert_ne!(text_after, "Settling (2.5s)");
 }

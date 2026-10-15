@@ -489,11 +489,11 @@ async fn test_simulation_rapid_scrub_grace_period() {
         track_title: Some("Scrub Test Track".into()),
     };
 
-    // Even if local playback has slight jitter or lag, settling grace period (1500ms)
+    // Even if local playback has slight jitter or lag, settling grace period (2500ms)
     // must prevent repeated seeks or oscillations
     let (_, zone, status) = evaluator.evaluate_drift(&anchor_playing).await.unwrap();
     assert_eq!(zone, 1);
-    assert_eq!(status, "Settling...");
+    assert_eq!(status, "Settling (2.5s)");
 
     let action_settling = evaluator
         .evaluate_and_reconcile(&anchor_playing)
