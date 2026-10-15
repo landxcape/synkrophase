@@ -151,4 +151,3 @@ impl PlaybackControl for MediaControllerPlaybackAdapter {
         Ok(())
     }
 }
-

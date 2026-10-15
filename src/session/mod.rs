@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use uuid::Uuid;
@@ -376,4 +376,3 @@ impl SessionState {
         }
     }
 }
-

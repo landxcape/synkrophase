@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use synkrophase::controller::mock::MockMediaController;
 use synkrophase::controller::MediaController;
+use synkrophase::controller::mock::MockMediaController;
 use synkrophase::protocol::messages::SyncAnchor;
 use synkrophase::sync::controller::ClockSource;
 use synkrophase::sync::evaluator::{DriftAction, DriftEvaluator};
@@ -71,7 +71,10 @@ async fn test_stale_position_recovery_behavior() {
             assert_eq!(drift_us, -500_000);
             assert_eq!(target_position_us, 10_500_000);
         }
-        other => panic!("Expected MicroSeek when controller position is stale, got {:?}", other),
+        other => panic!(
+            "Expected MicroSeek when controller position is stale, got {:?}",
+            other
+        ),
     }
 
     // Case 3: Fix applied — controller advances in step with clock

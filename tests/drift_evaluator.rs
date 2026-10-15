@@ -377,4 +377,3 @@ async fn test_evaluator_falls_through_to_seek_when_rate_unconfirmed() {
     // Rate remains unchanged because the player ignores rate modifications
     assert!((controller.get_playback_state().await.unwrap().rate - 1.0).abs() < f32::EPSILON);
 }
-

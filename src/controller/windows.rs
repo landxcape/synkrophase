@@ -158,7 +158,10 @@ impl MediaController for WindowsMediaController {
                         .map(|d| (d.as_nanos() / 100) as i64 + EPOCH_DIFF_100NS)
                         .unwrap_or(0);
 
-                    let elapsed_100ns = if is_playing && last_updated_100ns > 0 && now_100ns >= last_updated_100ns {
+                    let elapsed_100ns = if is_playing
+                        && last_updated_100ns > 0
+                        && now_100ns >= last_updated_100ns
+                    {
                         now_100ns - last_updated_100ns
                     } else {
                         0
