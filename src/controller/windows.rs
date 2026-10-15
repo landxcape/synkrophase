@@ -145,9 +145,33 @@ impl MediaController for WindowsMediaController {
                 Ok(timeline) => {
                     // Position in WinRT is TimeSpan (100-nanosecond intervals)
                     let pos_100ns = timeline.Position().map(|ts| ts.Duration).unwrap_or(0);
-                    let pos_us = pos_100ns / 10;
+                    let last_updated_100ns = timeline
+                        .LastUpdatedTime()
+                        .map(|dt| dt.UniversalTime)
+                        .unwrap_or(0);
+
+                    // Windows epoch is Jan 1, 1601. Unix epoch is Jan 1, 1970.
+                    // Difference is 11,644,473,600 seconds = 116,444,736,000,000,000 in 100ns intervals.
+                    const EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
+                    let now_100ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| (d.as_nanos() / 100) as i64 + EPOCH_DIFF_100NS)
+                        .unwrap_or(0);
+
+                    let elapsed_100ns = if is_playing && last_updated_100ns > 0 && now_100ns >= last_updated_100ns {
+                        now_100ns - last_updated_100ns
+                    } else {
+                        0
+                    };
 
                     let end_100ns = timeline.EndTime().map(|ts| ts.Duration).unwrap_or(0);
+                    let total_100ns = if end_100ns > 0 {
+                        (pos_100ns + elapsed_100ns).min(end_100ns)
+                    } else {
+                        pos_100ns + elapsed_100ns
+                    };
+                    let pos_us = total_100ns / 10;
+
                     let dur_us = if end_100ns > 0 {
                         Some((end_100ns / 10) as u64)
                     } else {
