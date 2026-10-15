@@ -83,4 +83,10 @@ pub trait MediaController: Send + Sync {
     fn estimated_actuation_delay_us(&self) -> u64 {
         0
     }
+
+    /// Indicates whether the underlying player and platform bridge support continuous
+    /// playback rate scaling (pitch/tempo shifting for micro drift adjustment).
+    fn supports_rate_control(&self) -> bool {
+        false
+    }
 }

@@ -494,4 +494,8 @@ impl MediaController for LinuxMediaController {
     fn estimated_actuation_delay_us(&self) -> u64 {
         self.actuation_delay_us.load(Ordering::Relaxed)
     }
+
+    fn supports_rate_control(&self) -> bool {
+        true
+    }
 }

@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct MockMediaController {
     state: Arc<RwLock<PlaybackState>>,
     actuation_delay_us: Arc<AtomicU64>,
+    supports_rate: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MockMediaController {
@@ -17,7 +18,12 @@ impl MockMediaController {
         Self {
             state: Arc::new(RwLock::new(PlaybackState::default())),
             actuation_delay_us: Arc::new(AtomicU64::new(0)),
+            supports_rate: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
+    }
+
+    pub fn set_supports_rate_control(&self, supports: bool) {
+        self.supports_rate.store(supports, Ordering::Relaxed);
     }
 
     pub fn set_actuation_delay_us(&self, delay_us: u64) {
@@ -115,5 +121,9 @@ impl MediaController for MockMediaController {
 
     fn estimated_actuation_delay_us(&self) -> u64 {
         self.actuation_delay_us.load(Ordering::Relaxed)
+    }
+
+    fn supports_rate_control(&self) -> bool {
+        self.supports_rate.load(Ordering::Relaxed)
     }
 }

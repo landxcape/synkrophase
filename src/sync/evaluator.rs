@@ -329,8 +329,8 @@ impl DriftEvaluator {
         }
 
         // Two-stage correction:
-        // Stage 1: Fine-tune rate if in Zone 2 (Nudging: 50ms - 200/225ms)
-        if zone == 2 {
+        // Stage 1: Fine-tune rate if in Zone 2 and controller supports rate control
+        if zone == 2 && self.controller.supports_rate_control() {
             let target_rate = if smoothed_drift_us > 0 { 0.99 } else { 1.01 };
             if let Ok(()) = self.controller.set_rate(target_rate).await {
                 // If player actually changed rate, return FineTuneRate
@@ -344,6 +344,11 @@ impl DriftEvaluator {
                     });
                 }
             }
+            // Rate control is supported but failed to set/confirm: stay in rate adjustment tier without escalating to seek in Zone 2
+            return Ok(DriftAction::FineTuneRate {
+                rate: 1.0,
+                drift_us: smoothed_drift_us,
+            });
         }
 
         // Stage 2: Zone 3 Micro-seek with cooldown & consecutive outlier confirmation
