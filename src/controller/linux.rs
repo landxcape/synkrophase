@@ -21,6 +21,65 @@ pub struct LinuxMediaController {
     supports_rate: Arc<AtomicBool>,
 }
 
+fn unwrap_value_ref<'a>(val: &'a Value<'a>) -> &'a Value<'a> {
+    let mut cur = val;
+    while let Value::Value(inner) = cur {
+        cur = inner.as_ref();
+    }
+    cur
+}
+
+fn unwrap_value<'a>(val: Value<'a>) -> Value<'a> {
+    let mut cur = val;
+    while let Value::Value(inner) = cur {
+        cur = *inner;
+    }
+    cur
+}
+
+fn extract_string(val: &Value<'_>) -> Option<String> {
+    match unwrap_value_ref(val) {
+        Value::Str(s) => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+fn extract_string_array(val: &Value<'_>) -> Vec<String> {
+    match unwrap_value_ref(val) {
+        Value::Array(arr) => arr.iter().filter_map(extract_string).collect(),
+        Value::Str(s) => vec![s.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+fn extract_i64(val: &Value<'_>) -> Option<i64> {
+    match unwrap_value_ref(val) {
+        Value::I64(v) => Some(*v),
+        Value::U64(v) => Some(*v as i64),
+        Value::I32(v) => Some(*v as i64),
+        Value::U32(v) => Some(*v as i64),
+        _ => None,
+    }
+}
+
+fn extract_u64(val: &Value<'_>) -> Option<u64> {
+    match unwrap_value_ref(val) {
+        Value::U64(v) => Some(*v),
+        Value::I64(v) if *v >= 0 => Some(*v as u64),
+        Value::U32(v) => Some(*v as u64),
+        Value::I32(v) if *v >= 0 => Some(*v as u64),
+        _ => None,
+    }
+}
+
+fn extract_track_id(val: &Value<'_>) -> Option<String> {
+    match unwrap_value_ref(val) {
+        Value::ObjectPath(p) => Some(p.to_string()),
+        Value::Str(s) => Some(s.to_string()),
+        _ => None,
+    }
+}
+
 impl Default for LinuxMediaController {
     fn default() -> Self {
         Self::new()
@@ -97,7 +156,7 @@ impl LinuxMediaController {
 
         // Priority 1: Check playing players
         let chosen = if !playing_players.is_empty() {
-            if let Some(spotify) = playing_players.iter().find(|p| p.ends_with(".spotify")) {
+            if let Some(spotify) = playing_players.iter().find(|p| p.contains("spotify")) {
                 spotify.clone()
             } else {
                 playing_players[0].clone()
@@ -106,7 +165,7 @@ impl LinuxMediaController {
             && players.contains(name)
         {
             name.clone()
-        } else if let Some(spotify) = players.iter().find(|p| p.ends_with(".spotify")) {
+        } else if let Some(spotify) = players.iter().find(|p| p.contains("spotify")) {
             spotify.clone()
         } else {
             players[0].clone()
@@ -122,11 +181,17 @@ impl LinuxMediaController {
     /// A player supports Synkrophase micro-rate adjustments if it can accommodate [0.99, 1.01].
     async fn check_player_rate_support(conn: &Connection, player_service: &str) -> bool {
         let min_rate = match Self::get_property_value(conn, player_service, "MinimumRate").await {
-            Ok(Value::F64(v)) => v,
+            Ok(val) => match unwrap_value_ref(&val) {
+                Value::F64(v) => *v,
+                _ => return false,
+            },
             _ => return false,
         };
         let max_rate = match Self::get_property_value(conn, player_service, "MaximumRate").await {
-            Ok(Value::F64(v)) => v,
+            Ok(val) => match unwrap_value_ref(&val) {
+                Value::F64(v) => *v,
+                _ => return false,
+            },
             _ => return false,
         };
         (max_rate - min_rate) > 0.01 && min_rate <= 0.99 && max_rate >= 1.01
@@ -153,10 +218,8 @@ impl LinuxMediaController {
         })?;
 
         let val: Value<'_> = value.into();
-        match val {
-            Value::Str(s) => Ok(s.to_string()),
-            _ => Ok("Stopped".into()),
-        }
+        let status = extract_string(&val).unwrap_or_else(|| "Stopped".into());
+        Ok(status)
     }
 
     async fn get_property_value(
@@ -247,74 +310,63 @@ impl MediaController for LinuxMediaController {
 
         // 2. Position (in microseconds for MPRIS)
         let position_us = match Self::get_property_value(&conn, &target, "Position").await {
-            Ok(Value::I64(pos)) => pos,
-            Ok(Value::U64(pos)) => pos as i64,
+            Ok(val) => extract_i64(&val).unwrap_or(0),
             _ => 0,
         };
 
         // 3. Playback Rate
         let rate = match Self::get_property_value(&conn, &target, "Rate").await {
-            Ok(Value::F64(r)) => r as f32,
+            Ok(val) => match unwrap_value_ref(&val) {
+                Value::F64(r) => *r as f32,
+                _ => 1.0,
+            },
             _ => 1.0,
         };
 
         // 4. Metadata dictionary
         let metadata = match Self::get_property_value(&conn, &target, "Metadata").await {
-            Ok(Value::Dict(dict)) => {
-                let mut meta_map: HashMap<String, Value<'static>> = HashMap::new();
-                for (k, v) in dict.into_iter() {
-                    if let Value::Str(key_str) = k {
-                        meta_map.insert(key_str.to_string(), v);
-                    }
-                }
-
-                let title = meta_map
-                    .get("xesam:title")
-                    .and_then(|v| match v {
-                        Value::Str(s) => Some(s.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-
-                let artist = meta_map.get("xesam:artist").and_then(|v| match v {
-                    Value::Array(arr) => {
-                        let artists: Vec<String> = arr
-                            .iter()
-                            .filter_map(|item| match item {
-                                Value::Str(s) => Some(s.to_string()),
-                                _ => None,
-                            })
-                            .collect();
-                        if artists.is_empty() {
-                            None
-                        } else {
-                            Some(artists.join(", "))
+            Ok(val) => {
+                let unwrapped = unwrap_value(val);
+                if let Value::Dict(dict) = unwrapped {
+                    let mut meta_map: HashMap<String, Value<'static>> = HashMap::new();
+                    for (k, v) in dict.into_iter() {
+                        if let Some(key_str) = extract_string(&k) {
+                            meta_map.insert(key_str, v);
                         }
                     }
-                    Value::Str(s) => Some(s.to_string()),
-                    _ => None,
-                });
 
-                let album = meta_map.get("xesam:album").and_then(|v| match v {
-                    Value::Str(s) => Some(s.to_string()),
-                    _ => None,
-                });
+                    let title = meta_map
+                        .get("xesam:title")
+                        .and_then(extract_string)
+                        .unwrap_or_default();
 
-                let duration_us = meta_map.get("mpris:length").and_then(|v| match v {
-                    Value::I64(len) if *len >= 0 => Some(*len as u64),
-                    Value::U64(len) => Some(*len),
-                    _ => None,
-                });
+                    let artist = meta_map
+                        .get("xesam:artist")
+                        .map(extract_string_array)
+                        .and_then(|arr| {
+                            if arr.is_empty() {
+                                None
+                            } else {
+                                Some(arr.join(", "))
+                            }
+                        });
 
-                if title.is_empty() && artist.is_none() {
-                    None
+                    let album = meta_map.get("xesam:album").and_then(extract_string);
+
+                    let duration_us = meta_map.get("mpris:length").and_then(extract_u64);
+
+                    if title.is_empty() && artist.is_none() {
+                        None
+                    } else {
+                        Some(TrackMetadata {
+                            title,
+                            artist,
+                            album,
+                            duration_us,
+                        })
+                    }
                 } else {
-                    Some(TrackMetadata {
-                        title,
-                        artist,
-                        album,
-                        duration_us,
-                    })
+                    None
                 }
             }
             _ => None,
@@ -340,16 +392,19 @@ impl MediaController for LinuxMediaController {
 
         // Extract spotify:track:xxx or url if available
         let mut spotify_uri = None;
-        if let Ok(Value::Dict(dict)) = Self::get_property_value(&conn, &target, "Metadata").await {
-            for (k, v) in dict.into_iter() {
-                if let Value::Str(ref key_str) = k
-                    && (key_str == "xesam:url" || key_str == "mpris:trackid")
-                    && let Value::Str(val_str) = v
-                    && (val_str.contains("spotify:track:")
-                        || val_str.starts_with("https://open.spotify.com/track/"))
-                {
-                    spotify_uri = Some(val_str.to_string());
-                    break;
+        if let Ok(val) = Self::get_property_value(&conn, &target, "Metadata").await {
+            let unwrapped = unwrap_value(val);
+            if let Value::Dict(dict) = unwrapped {
+                for (k, v) in dict.into_iter() {
+                    if let Some(key_str) = extract_string(&k)
+                        && (key_str == "xesam:url" || key_str == "mpris:trackid")
+                        && let Some(val_str) = extract_string(&v).or_else(|| extract_track_id(&v))
+                        && (val_str.contains("spotify:track:")
+                            || val_str.starts_with("https://open.spotify.com/track/"))
+                    {
+                        spotify_uri = Some(val_str);
+                        break;
+                    }
                 }
             }
         }
@@ -414,16 +469,15 @@ impl MediaController for LinuxMediaController {
 
         // In MPRIS specification, SetPosition takes (o: TrackId, x: Position)
         let mut track_id = "/org/mpris/MediaPlayer2/CurrentTrack".to_string();
-        if let Ok(Value::Dict(dict)) = Self::get_property_value(&conn, &target, "Metadata").await {
-            for (k, v) in dict.into_iter() {
-                if let Value::Str(ref key_str) = k
-                    && key_str == "mpris:trackid"
-                {
-                    if let Value::ObjectPath(p) = v {
-                        track_id = p.to_string();
-                        break;
-                    } else if let Value::Str(s) = v {
-                        track_id = s.to_string();
+        if let Ok(val) = Self::get_property_value(&conn, &target, "Metadata").await {
+            let unwrapped = unwrap_value(val);
+            if let Value::Dict(dict) = unwrapped {
+                for (k, v) in dict.into_iter() {
+                    if let Some(key_str) = extract_string(&k)
+                        && key_str == "mpris:trackid"
+                        && let Some(id_str) = extract_track_id(&v)
+                    {
+                        track_id = id_str;
                         break;
                     }
                 }
@@ -482,7 +536,7 @@ impl MediaController for LinuxMediaController {
         let conn = Self::get_connection().await?;
         let target = self.find_target_player(&conn).await?;
         let vol_value = Self::get_property_value(&conn, &target, "Volume").await?;
-        match vol_value {
+        match unwrap_value_ref(&vol_value) {
             Value::F64(v) => Ok((v.clamp(0.0, 1.0) * 100.0).round() as u8),
             _ => Ok(100),
         }
@@ -501,5 +555,120 @@ impl MediaController for LinuxMediaController {
 
     fn supports_rate_control(&self) -> bool {
         self.supports_rate.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unwrap_value_nested_variants() {
+        let leaf = Value::Str("test_string".into());
+        let wrapped1 = Value::Value(Box::new(leaf));
+        let wrapped2 = Value::Value(Box::new(wrapped1));
+        let wrapped3 = Value::Value(Box::new(wrapped2));
+
+        assert_eq!(extract_string(&wrapped3), Some("test_string".to_string()));
+    }
+
+    #[test]
+    fn test_extract_string_array() {
+        let item1 = Value::Value(Box::new(Value::Str("Artist 1".into())));
+        let item2 = Value::Value(Box::new(Value::Str("Artist 2".into())));
+        let arr = Value::Value(Box::new(Value::Array(vec![item1, item2].into())));
+
+        let result = extract_string_array(&arr);
+        assert_eq!(result, vec!["Artist 1".to_string(), "Artist 2".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_i64_and_u64() {
+        let val_i64 = Value::Value(Box::new(Value::I64(42_000_000)));
+        let val_u64 = Value::Value(Box::new(Value::U64(180_000_000)));
+
+        assert_eq!(extract_i64(&val_i64), Some(42_000_000));
+        assert_eq!(extract_u64(&val_u64), Some(180_000_000));
+    }
+
+    #[test]
+    fn test_extract_track_id_object_path() {
+        let path = ObjectPath::try_from("/org/mpris/MediaPlayer2/Track/42").unwrap();
+        let val_path = Value::Value(Box::new(Value::ObjectPath(path)));
+
+        assert_eq!(
+            extract_track_id(&val_path),
+            Some("/org/mpris/MediaPlayer2/Track/42".to_string())
+        );
+    }
+
+    #[test]
+    fn test_mpris_synthetic_metadata_parsing() {
+        let title_val = Value::Value(Box::new(Value::Str("Never Gonna Give You Up".into())));
+        let artist_item = Value::Value(Box::new(Value::Str("Rick Astley".into())));
+        let artist_val = Value::Value(Box::new(Value::Array(vec![artist_item].into())));
+        let album_val = Value::Value(Box::new(Value::Str("Whenever You Need Somebody".into())));
+        let len_val = Value::Value(Box::new(Value::I64(213_000_000)));
+        let trackid_path =
+            ObjectPath::try_from("/com/spotify/track/4cOdK2wGLETKBW3PvgPWqT").unwrap();
+        let trackid_val = Value::Value(Box::new(Value::ObjectPath(trackid_path)));
+
+        let s_sig = zbus::zvariant::Signature::from_bytes(b"s").unwrap();
+        let v_sig = zbus::zvariant::Signature::from_bytes(b"v").unwrap();
+        let mut dict = zbus::zvariant::Dict::new(&s_sig, &v_sig);
+        dict.append(Value::Str("xesam:title".into()), title_val)
+            .unwrap();
+        dict.append(Value::Str("xesam:artist".into()), artist_val)
+            .unwrap();
+        dict.append(Value::Str("xesam:album".into()), album_val)
+            .unwrap();
+        dict.append(Value::Str("mpris:length".into()), len_val)
+            .unwrap();
+        dict.append(Value::Str("mpris:trackid".into()), trackid_val)
+            .unwrap();
+
+        let meta_dict_value = Value::Value(Box::new(Value::Dict(dict)));
+        let unwrapped = unwrap_value(meta_dict_value);
+
+        if let Value::Dict(dict) = unwrapped {
+            let mut meta_map: HashMap<String, Value<'static>> = HashMap::new();
+            for (k, v) in dict.into_iter() {
+                if let Some(key_str) = extract_string(&k) {
+                    meta_map.insert(key_str, v);
+                }
+            }
+
+            let title = meta_map
+                .get("xesam:title")
+                .and_then(extract_string)
+                .unwrap_or_default();
+            assert_eq!(title, "Never Gonna Give You Up");
+
+            let artist = meta_map
+                .get("xesam:artist")
+                .map(extract_string_array)
+                .and_then(|arr| {
+                    if arr.is_empty() {
+                        None
+                    } else {
+                        Some(arr.join(", "))
+                    }
+                });
+            assert_eq!(artist, Some("Rick Astley".to_string()));
+
+            let album = meta_map.get("xesam:album").and_then(extract_string);
+            assert_eq!(album, Some("Whenever You Need Somebody".to_string()));
+
+            let duration_us = meta_map.get("mpris:length").and_then(extract_u64);
+            assert_eq!(duration_us, Some(213_000_000));
+
+            let track_id = meta_map.get("mpris:trackid").and_then(extract_track_id);
+            assert_eq!(
+                track_id,
+                Some("/com/spotify/track/4cOdK2wGLETKBW3PvgPWqT".to_string())
+            );
+        } else {
+            panic!("Expected Value::Dict after unwrapping");
+        }
     }
 }
