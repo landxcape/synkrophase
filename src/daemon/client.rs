@@ -21,21 +21,38 @@ pub struct IpcClient;
 impl IpcClient {
     /// Attempts to send an IPC command to the daemon. Returns `None` if the daemon is not running.
     pub async fn send_command(
-        _method: &str,
-        _params: serde_json::Value,
+        method: &str,
+        params: serde_json::Value,
     ) -> Result<Option<serde_json::Value>> {
-        #[cfg(not(unix))]
-        {
-            Ok(None)
-        }
-
         #[cfg(unix)]
         {
             let paths = match DaemonPaths::default_paths() {
                 Ok(p) => p,
                 Err(_) => return Ok(None),
             };
+            Self::send_command_with_paths(&paths, method, params).await
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (method, params);
+            Ok(None)
+        }
+    }
 
+    /// Attempts to send an IPC command to the daemon using specific DaemonPaths.
+    pub async fn send_command_with_paths(
+        paths: &DaemonPaths,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
+        #[cfg(not(unix))]
+        {
+            let _ = (paths, _method, _params);
+            Ok(None)
+        }
+
+        #[cfg(unix)]
+        {
             if !paths.is_running() || !paths.socket_path.exists() {
                 return Ok(None);
             }

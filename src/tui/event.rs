@@ -1,14 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::app::{InputMode, TuiApp};
+use super::backend::TuiBackend;
 use crate::error::Result;
 use crate::protocol::messages::{PlaybackAction, Role};
-use crate::session::engine::{EngineCommand, SynkroEngine};
 
 pub async fn handle_key_event(
     app: &mut TuiApp,
     key: KeyEvent,
-    engine: &SynkroEngine,
+    backend: &dyn TuiBackend,
 ) -> Result<()> {
     match app.input_mode {
         InputMode::Normal => match key.code {
@@ -22,6 +22,7 @@ pub async fn handle_key_event(
                 } else if app.log_scroll_offset > 0 {
                     app.reset_log_scroll();
                 } else {
+                    let exit_label = if app.is_attached { "detach" } else { "exit" };
                     let now = std::time::Instant::now();
                     if let Some(prev) = app.last_esc_press {
                         if now.duration_since(prev) <= std::time::Duration::from_millis(1500) {
@@ -30,14 +31,14 @@ pub async fn handle_key_event(
                             app.last_esc_press = Some(now);
                             app.add_log(
                                 "System".to_string(),
-                                "Press [Esc] again to exit (or press [q])".to_string(),
+                                format!("Press [Esc] again to {exit_label} (or press [q])"),
                             );
                         }
                     } else {
                         app.last_esc_press = Some(now);
                         app.add_log(
                             "System".to_string(),
-                            "Press [Esc] again to exit (or press [q])".to_string(),
+                            format!("Press [Esc] again to {exit_label} (or press [q])"),
                         );
                     }
                 }
@@ -67,34 +68,39 @@ pub async fn handle_key_event(
                 } else {
                     PlaybackAction::Play
                 };
-                engine.send_command(EngineCommand::PlaybackAction(action))?;
+                backend.send_playback_action(action).await?;
             }
             KeyCode::Left => {
                 // Seek -5s
                 let new_pos = (app.playback.position_us - 5_000_000).max(0);
-                engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Seek {
-                    target_position_us: new_pos,
-                }))?;
+                backend
+                    .send_playback_action(PlaybackAction::Seek {
+                        target_position_us: new_pos,
+                    })
+                    .await?;
             }
             KeyCode::Right => {
                 // Seek +5s
                 let new_pos = app.playback.position_us + 5_000_000;
-                engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Seek {
-                    target_position_us: new_pos,
-                }))?;
+                backend
+                    .send_playback_action(PlaybackAction::Seek {
+                        target_position_us: new_pos,
+                    })
+                    .await?;
             }
             KeyCode::Char('n') => {
-                engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::NextTrack))?;
+                backend.send_playback_action(PlaybackAction::NextTrack).await?;
             }
             KeyCode::Char('p') => {
-                engine
-                    .send_command(EngineCommand::PlaybackAction(PlaybackAction::PreviousTrack))?;
+                backend
+                    .send_playback_action(PlaybackAction::PreviousTrack)
+                    .await?;
             }
             KeyCode::Char('v') => {
-                engine.send_command(EngineCommand::SyncVolume(None))?;
+                backend.send_volume(None).await?;
             }
             KeyCode::Char('c') => {
-                copy_invitation_command(app);
+                copy_invitation_command(app, backend).await;
             }
             KeyCode::Char('?') | KeyCode::Char('h') => {
                 app.show_help = !app.show_help;
@@ -122,9 +128,9 @@ pub async fn handle_key_event(
                 }
 
                 if let Some(cmd) = text.strip_prefix('/') {
-                    handle_slash_command(app, cmd, engine).await?;
+                    handle_slash_command(app, cmd, backend).await?;
                 } else {
-                    engine.send_command(EngineCommand::SendChat(text))?;
+                    backend.send_chat(text).await?;
                 }
             }
             KeyCode::Backspace => {
@@ -143,7 +149,11 @@ pub async fn handle_key_event(
     Ok(())
 }
 
-async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine) -> Result<()> {
+async fn handle_slash_command(
+    app: &mut TuiApp,
+    cmd: &str,
+    backend: &dyn TuiBackend,
+) -> Result<()> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.is_empty() {
         return Ok(());
@@ -151,26 +161,30 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
 
     match parts[0] {
         "play" | "resume" => {
-            engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Play))?;
+            backend.send_playback_action(PlaybackAction::Play).await?;
         }
         "pause" => {
-            engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Pause))?;
+            backend.send_playback_action(PlaybackAction::Pause).await?;
         }
         "seek" => {
             if parts.len() > 1
                 && let Ok(sec) = parts[1].parse::<f64>()
             {
                 let pos_us = (sec * 1_000_000.0) as i64;
-                engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::Seek {
-                    target_position_us: pos_us,
-                }))?;
+                backend
+                    .send_playback_action(PlaybackAction::Seek {
+                        target_position_us: pos_us,
+                    })
+                    .await?;
             }
         }
         "next" | "skip" => {
-            engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::NextTrack))?;
+            backend.send_playback_action(PlaybackAction::NextTrack).await?;
         }
         "prev" | "previous" => {
-            engine.send_command(EngineCommand::PlaybackAction(PlaybackAction::PreviousTrack))?;
+            backend
+                .send_playback_action(PlaybackAction::PreviousTrack)
+                .await?;
         }
         "volume" | "vol" => {
             let target_vol = if parts.len() > 1 {
@@ -178,28 +192,32 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
             } else {
                 None
             };
-            engine.send_command(EngineCommand::SyncVolume(target_vol))?;
+            backend.send_volume(target_vol).await?;
         }
         "sync" => {
-            let offset = engine.clock().offset();
             let role_str = if app.is_leader {
-                "Leader (Local)"
+                "Leader"
             } else {
                 "Follower"
             };
-            let formatted_offset = crate::clock::format_offset_smart(offset);
+            let formatted_offset = crate::clock::format_offset_smart(app.drift.offset_us);
+            let delay_ms = app
+                .controller
+                .as_ref()
+                .map(|c| c.estimated_actuation_delay_us() / 1000)
+                .unwrap_or(0);
             app.add_log(
                 "System".to_string(),
                 format!(
                     "Clock Sync Health: Offset: {} | Role: {} | Actuation Delay: ~{}ms",
                     formatted_offset,
                     role_str,
-                    app.controller.estimated_actuation_delay_us() / 1000
+                    delay_ms
                 ),
             );
         }
         "copy" | "share" | "invitation" | "join-cmd" => {
-            copy_invitation_command(app);
+            copy_invitation_command(app, backend).await;
         }
         "transfer" => {
             if parts.len() < 2 {
@@ -223,7 +241,7 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
 
             match matched_peer {
                 Some(target) => {
-                    engine.send_command(EngineCommand::TransferLeadership(target.device_id))?;
+                    backend.transfer_leadership(target.device_id).await?;
                 }
                 None => {
                     app.add_log(
@@ -271,10 +289,7 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
 
             match matched_peer {
                 Some(target) => {
-                    engine.send_command(EngineCommand::AssignRole {
-                        target: target.device_id,
-                        new_role,
-                    })?;
+                    backend.assign_role(target.device_id, new_role).await?;
                 }
                 None => {
                     app.add_log(
@@ -283,6 +298,11 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
                     );
                 }
             }
+        }
+        "shutdown" => {
+            backend.shutdown().await?;
+            app.should_shutdown_daemon = true;
+            app.should_quit = true;
         }
         "help" | "?" => {
             app.show_help = !app.show_help;
@@ -300,7 +320,7 @@ async fn handle_slash_command(app: &mut TuiApp, cmd: &str, engine: &SynkroEngine
     Ok(())
 }
 
-fn copy_invitation_command(app: &mut TuiApp) {
+async fn copy_invitation_command(app: &mut TuiApp, backend: &dyn TuiBackend) {
     if let Some(inv) = &app.invitation {
         match inv.copy_to_clipboard() {
             Ok(()) => {
@@ -308,6 +328,22 @@ fn copy_invitation_command(app: &mut TuiApp) {
                     "System".to_string(),
                     "Join command copied to clipboard!".to_string(),
                 );
+                return;
+            }
+            Err(err) => {
+                app.add_log(
+                    "System".to_string(),
+                    format!("Failed to copy to clipboard: {err}"),
+                );
+                return;
+            }
+        }
+    }
+
+    if let Ok(Some(cmd)) = backend.get_invitation_command().await {
+        match crate::session::invitation::copy_text_to_clipboard(&cmd) {
+            Ok(()) => {
+                app.add_log("System".to_string(), format!("Copied '{cmd}' to clipboard!"));
             }
             Err(err) => {
                 app.add_log(
@@ -317,21 +353,8 @@ fn copy_invitation_command(app: &mut TuiApp) {
             }
         }
     } else {
-        // Fallback for follower or when invitation is not set
         let cmd = format!("synkro join {}", app.room_code);
-        match crate::session::invitation::copy_text_to_clipboard(&cmd) {
-            Ok(()) => {
-                app.add_log(
-                    "System".to_string(),
-                    format!("Copied '{cmd}' to clipboard!"),
-                );
-            }
-            Err(err) => {
-                app.add_log(
-                    "System".to_string(),
-                    format!("Failed to copy to clipboard: {err}"),
-                );
-            }
-        }
+        let _ = crate::session::invitation::copy_text_to_clipboard(&cmd);
+        app.add_log("System".to_string(), format!("Copied '{cmd}' to clipboard!"));
     }
 }

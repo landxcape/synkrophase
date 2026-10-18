@@ -1,4 +1,5 @@
 pub mod app;
+pub mod backend;
 pub mod event;
 pub mod ui;
 
@@ -15,10 +16,10 @@ use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
 
+pub use app::{AppEvent, TuiApp};
+pub use backend::{IpcBackend, LocalEngineBackend, TuiBackend};
 use crate::error::Result;
 use crate::session::engine::SynkroEngine;
-
-pub use app::{AppEvent, TuiApp};
 
 pub async fn run_tui(
     engine: Arc<SynkroEngine>,
@@ -31,8 +32,8 @@ pub async fn run_tui(
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let crossterm_backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(crossterm_backend)?;
 
     let session = engine.session();
     let controller = engine.controller();
@@ -49,6 +50,8 @@ pub async fn run_tui(
         event_tx.clone(),
     );
     app.invitation = invitation;
+
+    let backend = LocalEngineBackend::new(Arc::clone(&engine));
 
     // Initial state query
     if let Ok(state) = controller.get_playback_state().await {
@@ -82,20 +85,21 @@ pub async fn run_tui(
     });
 
     while !app.should_quit {
-        // Update peer list and role dynamically from session registry
-        let mut members: Vec<_> = app
-            .session
-            .all_alive_peers()
-            .into_iter()
-            .map(|(_, e)| e.info)
-            .collect();
-        members.push(app.session.self_info());
-        // Deduplicate in case self was somehow recorded in peers
-        members.sort_by_key(|p| p.device_id);
-        members.dedup_by_key(|p| p.device_id);
-        app.peers = members;
-        app.role = app.session.role();
-        app.is_leader = app.session.is_leader();
+        // Update peer list and role dynamically from session registry if local
+        if let Some(sess) = &app.session {
+            let mut members: Vec<_> = sess
+                .all_alive_peers()
+                .into_iter()
+                .map(|(_, e)| e.info)
+                .collect();
+            members.push(sess.self_info());
+            // Deduplicate in case self was somehow recorded in peers
+            members.sort_by_key(|p| p.device_id);
+            members.dedup_by_key(|p| p.device_id);
+            app.peers = members;
+            app.role = sess.role();
+            app.is_leader = sess.is_leader();
+        }
 
         terminal.draw(|f| ui::render(f, &app))?;
 
@@ -103,7 +107,7 @@ pub async fn run_tui(
             match event {
                 AppEvent::Tick => {}
                 AppEvent::Key(key) => {
-                    event::handle_key_event(&mut app, key, &engine).await?;
+                    event::handle_key_event(&mut app, key, &backend).await?;
                 }
                 AppEvent::Log { source, text } => {
                     app.add_log(source, text);

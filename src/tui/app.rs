@@ -68,12 +68,15 @@ pub struct TuiApp {
     pub invitation: Option<crate::session::invitation::RoomInvitation>,
 
     pub log_scroll_offset: usize,
-    pub session: Arc<SessionState>,
-    pub controller: Arc<dyn MediaController>,
+    pub session: Option<Arc<SessionState>>,
+    pub controller: Option<Arc<dyn MediaController>>,
+    pub is_attached: bool,
+    pub should_shutdown_daemon: bool,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
 }
 
 impl TuiApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         room_code: String,
         device_name: String,
@@ -104,10 +107,50 @@ impl TuiApp {
             input_buffer: String::new(),
             show_help: false,
             should_quit: false,
+            should_shutdown_daemon: false,
+            is_attached: false,
             last_esc_press: None,
             invitation: None,
-            session,
-            controller,
+            session: Some(session),
+            controller: Some(controller),
+            event_tx,
+        }
+    }
+
+    pub fn new_attached(
+        room_code: String,
+        device_name: String,
+        self_id: Uuid,
+        role: Role,
+        event_tx: mpsc::UnboundedSender<AppEvent>,
+    ) -> Self {
+        let is_leader = matches!(role, Role::Leader);
+        Self {
+            room_code,
+            device_name,
+            self_id,
+            role,
+            is_leader,
+            playback: PlaybackState::default(),
+            drift: DriftInfo::default(),
+            network: NetworkStats::default(),
+            peers: Vec::new(),
+            logs: vec![LogEntry {
+                timestamp: current_time_str(),
+                source: "System".to_string(),
+                text: "Attached to Synkrophase daemon. Ready.".to_string(),
+            }],
+            log_scroll_offset: 0,
+            input_mode: InputMode::Normal,
+            input_buffer: String::new(),
+            show_help: false,
+            should_quit: false,
+            should_shutdown_daemon: false,
+            is_attached: true,
+            last_esc_press: None,
+            invitation: None,
+            session: None,
+            controller: None,
             event_tx,
         }
     }

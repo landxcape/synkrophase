@@ -341,4 +341,37 @@ mod unix_tests {
         assert_eq!(resp.id, Some(2));
         assert!(resp.error.is_none());
     }
+
+    #[tokio::test]
+    async fn test_tui_backend_ipc_dispatch() {
+        let harness = spawn_test_server().await;
+        harness.paths.write_pid(std::process::id()).unwrap();
+
+        let backend = synkrophase::tui::IpcBackend::with_paths(harness.paths.clone());
+        use synkrophase::tui::TuiBackend;
+
+        backend
+            .send_playback_action(synkrophase::protocol::messages::PlaybackAction::Play)
+            .await
+            .unwrap();
+
+        backend
+            .send_playback_action(synkrophase::protocol::messages::PlaybackAction::Pause)
+            .await
+            .unwrap();
+
+        backend
+            .send_playback_action(synkrophase::protocol::messages::PlaybackAction::Seek {
+                target_position_us: 12_500_000,
+            })
+            .await
+            .unwrap();
+
+        backend.send_volume(Some(75)).await.unwrap();
+        backend.send_chat("Test chat from IPC backend".into()).await.unwrap();
+
+        let inv = backend.get_invitation_command().await.unwrap();
+        assert!(inv.is_some());
+        assert!(inv.unwrap().contains("ROOM_TEST"));
+    }
 }
