@@ -47,6 +47,7 @@ pub async fn handle_daemon_command(
         }
         DaemonCommands::Start { mode } => start_daemon_background(mode, &paths),
         DaemonCommands::Stop => stop_daemon(&paths).await,
+        DaemonCommands::Attach => crate::tui::run_attached_tui(paths).await,
         DaemonCommands::Status { json } => status_daemon(&paths, json).await,
         DaemonCommands::Logs { follow } => view_daemon_logs(&paths, follow),
     }

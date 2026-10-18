@@ -28,6 +28,20 @@ pub async fn run_join(
     leader_clock_port: u16,
     session_port: u16,
 ) -> Result<()> {
+    if let Ok(paths) = crate::daemon::DaemonPaths::default_paths()
+        && paths.is_running()
+    {
+        let pid_str = paths
+            .read_pid()
+            .ok()
+            .flatten()
+            .map(|p| format!(" (PID {p})"))
+            .unwrap_or_default();
+        return Err(crate::error::SynkroError::Config(format!(
+            "A Synkrophase daemon is already running{pid_str}. Run 'synkro attach' to open the interactive UI, or 'synkro daemon stop' first."
+        )));
+    }
+
     let (resolved_leader_addr, resolved_leader_id) =
         resolve_join_target(&room_code, leader_addr, leader_id)?;
 

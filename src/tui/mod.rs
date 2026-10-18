@@ -1,4 +1,5 @@
 pub mod app;
+pub mod attached;
 pub mod backend;
 pub mod event;
 pub mod ui;
@@ -17,6 +18,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
 
 pub use app::{AppEvent, TuiApp};
+pub use attached::run_attached_tui;
 pub use backend::{IpcBackend, LocalEngineBackend, TuiBackend};
 use crate::error::Result;
 use crate::session::engine::SynkroEngine;

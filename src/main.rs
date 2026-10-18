@@ -217,6 +217,10 @@ async fn main() -> Result<()> {
         Commands::Daemon { command } => {
             synkrophase::cli::handle_daemon_command(command, device, sync_config).await
         }
+        Commands::Attach => {
+            let paths = synkrophase::daemon::DaemonPaths::default_paths()?;
+            synkrophase::tui::run_attached_tui(paths).await
+        }
     }?;
 
     std::process::exit(0);
@@ -323,6 +327,19 @@ mod tests {
                 assert_eq!(room_code, Some("DEMO1".to_string()));
             }
             _ => panic!("Expected Daemon Start Host command"),
+        }
+
+        // Test Top-level Attach
+        let cli = Cli::try_parse_from(["synkro", "attach"]).unwrap();
+        assert!(matches!(cli.command, Commands::Attach));
+
+        // Test Daemon Subcommand Attach
+        let cli = Cli::try_parse_from(["synkro", "daemon", "attach"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Attach,
+            } => {}
+            _ => panic!("Expected Daemon Attach command"),
         }
     }
 }

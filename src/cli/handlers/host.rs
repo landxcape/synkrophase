@@ -21,6 +21,20 @@ pub async fn run_host(
     session_port: u16,
     no_copy: bool,
 ) -> Result<()> {
+    if let Ok(paths) = crate::daemon::DaemonPaths::default_paths()
+        && paths.is_running()
+    {
+        let pid_str = paths
+            .read_pid()
+            .ok()
+            .flatten()
+            .map(|p| format!(" (PID {p})"))
+            .unwrap_or_default();
+        return Err(crate::error::SynkroError::Config(format!(
+            "A Synkrophase daemon is already running{pid_str}. Run 'synkro attach' to open the interactive UI, or 'synkro daemon stop' first."
+        )));
+    }
+
     let clock_socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
         Ipv4Addr::UNSPECIFIED,
         clock_port,

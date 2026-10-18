@@ -111,6 +111,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: DaemonCommands,
     },
+    /// Attach the interactive TUI dashboard to a running background daemon.
+    Attach,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -127,6 +129,8 @@ pub enum DaemonCommands {
     },
     /// Stop a running background daemon.
     Stop,
+    /// Attach the interactive TUI dashboard to a running background daemon.
+    Attach,
     /// Query status of a running daemon over IPC.
     Status {
         /// Output status in raw JSON format.

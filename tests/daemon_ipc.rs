@@ -374,4 +374,21 @@ mod unix_tests {
         assert!(inv.is_some());
         assert!(inv.unwrap().contains("ROOM_TEST"));
     }
+
+    #[tokio::test]
+    async fn test_attached_tui_fails_when_daemon_not_running() {
+        let short_id = &Uuid::new_v4().to_string()[..8];
+        let temp_dir = std::path::PathBuf::from(format!("/tmp/synkro-test-{short_id}"));
+        let paths = DaemonPaths {
+            socket_path: temp_dir.join("synkro.sock"),
+            pid_path: temp_dir.join("daemon.pid"),
+            log_path: temp_dir.join("daemon.log"),
+            base_dir: temp_dir,
+        };
+
+        let res = synkrophase::tui::run_attached_tui(paths).await;
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("No running Synkrophase daemon found"));
+    }
 }
