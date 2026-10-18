@@ -3,6 +3,20 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-10-18
+
+### Fixed
+- **Dynamic Role Updates in TUI**: Added `TuiApp::update_peer_list` to dynamically re-evaluate and update `self.role` and `self.is_leader` upon receiving peer updates, fixing stale role badges after leadership transfers or promotions in attached and foreground runners.
+- **Volume Range Validation at IPC Boundary**: Enforced strict `0..=100` range validation on the `"volume"` IPC command handler, rejecting out-of-range values with `400 Bad Request` and preventing integer wrap-around.
+- **Attached TUI Disconnection Feedback**: Emitted a prominent warning in the activity log when the daemon IPC connection terminates or drops, preventing the dashboard from silently idling.
+
+### Added
+- **Positional Room Code for Host**: `synkro host` now supports passing room codes positionally (`synkro host MYROOM`) as well as via `--room-code MYROOM` or generating a random code when omitted.
+
+### Documentation
+- **Platform Capability Matrix**: Added an explicit capability matrix distinguishing full cross-platform player sync and interactive TUI (macOS, Linux, Windows) from Unix-only background daemon IPC.
+- **Acoustic Deadband Nuance**: Refined summary descriptions to emphasize targeted playback deadband alignment rather than sample-accurate phase lock.
+
 ## [0.8.0] - 2026-10-18
 
 ### Added

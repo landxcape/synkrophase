@@ -46,6 +46,16 @@ Instead of transmitting heavy audio files, Synkrophase acts as a lightweight con
 | **Linux** | Spotify | MPRIS D-Bus (`org.mpris.MediaPlayer2.spotify`) | Requires active D-Bus user session |
 | **Windows** | Spotify | WinRT GSMTC | Requires native desktop Spotify application |
 
+### Platform Capabilities Matrix
+
+| Feature / Mode | macOS | Linux | Windows |
+| :--- | :---: | :---: | :---: |
+| **Media Player Control & Sync** | Supported | Supported | Supported |
+| **PTP Clock Synchronization** | Supported | Supported | Supported |
+| **Interactive TUI Dashboard** (`synkro host` / `join`) | Supported | Supported | Supported |
+| **Headless Background Daemon** (`synkro daemon start`) | Supported | Supported | *Planned* (Unix-only socket) |
+| **Interactive Daemon Attachment** (`synkro attach`) | Supported | Supported | *Planned* (Unix-only socket) |
+
 > **Web Player Compatibility**: Synkrophase communicates with desktop media controllers. Web-browser tabs (such as `open.spotify.com`) do not expose OS-level controller APIs and cannot be synchronized. Always use the installed desktop client.
 
 ---
@@ -193,6 +203,8 @@ synkro daemon stop
 ```
 
 > **Detaching**: When attached to a running daemon via `synkro attach`, pressing **`q`** or **`Esc`** cleanly detaches the TUI and returns to your shell, leaving the background daemon running undisturbed. To shut down the daemon directly from the attached TUI, type `/shutdown`.
+
+> **Platform Support**: Background daemon mode and `synkro attach` communicate over Unix domain sockets and are currently supported on **macOS** and **Linux**. On Windows, run sessions in the interactive terminal dashboard (`synkro host` / `synkro join`). Windows Named Pipe daemon support is planned for a future milestone.
 
 #### Status Bar Integration (JSON Output)
 Pass `--json` to `synkro daemon status` to output structured JSON for Waybar, SketchyBar, polybar, or shell scripts:
