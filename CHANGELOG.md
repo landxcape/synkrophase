@@ -3,6 +3,20 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-18
+
+### Added
+- **Interactive TUI Daemon Attachment (`synkro attach`)**: Added `synkro attach` and `synkro daemon attach` commands to attach the full interactive Ratatui dashboard to a running background daemon over Unix domain socket IPC (`synkro.sock`).
+- **Unified TUI Abstraction (`TuiBackend`)**: Unified command dispatch across in-process foreground sessions (`LocalEngineBackend`) and attached daemon sessions (`IpcBackend`), sharing identical widgets, keybindings, progress tracking, and chat buffer.
+- **IPC Real-Time Event Streaming**: Extended `IpcServer` with `broadcast_app_event` to stream `playback_update`, `peer_update`, `drift_update`, `network_update`, and room `log`/chat messages to connected subscribers. Periodic 200ms status polling activates only when subscribers are connected.
+- **Clean Detach Lifecycle**: Pressing `q` or `Esc` in attached mode detaches cleanly, leaving the background daemon running undisturbed. An explicit `/shutdown` slash command allows remote daemon shutdown.
+- **Role-Gated Bidirectional Native Player State Synchronization**: Native player controls (play, pause, scrub) initiated in Spotify or Apple Music by the `Leader` or `Moderator` propagate room-wide as scheduled `PlaybackIntent`s and authoritative `SyncAnchor`s. Read-only `Listener` nodes are rejected by leader RBAC.
+- **Active Daemon Guardrails**: `synkro host` and `synkro join` detect running background daemons on startup and abort with an informative message pointing to `synkro attach`.
+
+### Fixed
+- **Play/Pause Anchor Reconciliation**: `DriftEvaluator` now pauses the local player when the incoming anchor is paused, resumes when playing, and aligns paused playback position discrepancies exceeding 200ms.
+- **Joiner Initial Playback State**: Leader persists its authoritative `SyncAnchor` in `SessionState` so newly joined followers synchronize track and play/pause status immediately upon `JoinAccepted`.
+
 ## [0.7.4] - 2026-10-15
 
 ### Added

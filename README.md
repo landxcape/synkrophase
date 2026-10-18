@@ -276,6 +276,9 @@ synkro daemon start host MYROOM
 # Or join a room in the background
 synkro daemon start join MYROOM
 
+# Attach the interactive TUI dashboard to the active daemon
+synkro attach
+
 # Inspect live daemon status
 synkro daemon status
 
@@ -285,6 +288,8 @@ synkro daemon logs -f
 # Stop the daemon
 synkro daemon stop
 ```
+
+> **Detaching**: When running `synkro attach`, pressing **`q`** or **`Esc`** cleanly detaches the TUI and returns to your shell, leaving the background daemon running undisturbed. To stop the daemon from within the attached TUI, run `/shutdown`.
 
 ### Status Output for Scripts and Status Bars
 Add `--json` to `synkro daemon status` to output structured JSON for integration with Waybar, SketchyBar, polybar, or custom shell scripts:
@@ -327,6 +332,7 @@ synkro volume 75               # Set room volume to 75%
 synkro volume                  # Mirror current host volume to room
 
 # Room Telemetry & Collaboration
+synkro attach                  # Attach interactive dashboard to running daemon
 synkro status                  # Inspect local media player status
 synkro sync                    # View live room sync offsets and drift
 synkro debug                   # Output raw session JSON status
