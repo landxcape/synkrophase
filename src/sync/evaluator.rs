@@ -301,8 +301,40 @@ impl DriftEvaluator {
     }
 
     pub async fn evaluate_and_reconcile(&self, anchor: &SyncAnchor) -> Result<DriftAction> {
+        let t_start = self.clock.reference_now();
+        let mut local_state = self.controller.get_playback_state().await?;
+        let t_end = self.clock.reference_now();
+
         if !anchor.is_playing {
+            // Leader is paused: ensure local follower player is paused
+            if local_state.is_playing {
+                tracing::info!("Leader is paused; pausing local follower playback");
+                let _ = self.controller.pause().await;
+            }
+
+            // If paused position differs significantly (>200ms), align follower position
+            let pos_diff = (local_state.position_us - anchor.media_position_us).abs();
+            if pos_diff > 200_000 {
+                tracing::info!(
+                    diff_ms = pos_diff / 1000,
+                    target_pos_ms = anchor.media_position_us / 1000,
+                    "Aligning paused follower timeline position"
+                );
+                let _ = self.controller.seek_to(anchor.media_position_us).await;
+            }
+
+            *self.last_zone.lock().unwrap() = 1;
+            *self.consecutive_outliers.lock().unwrap() = 0;
+            *self.zone2_started_at.lock().unwrap() = None;
+            *self.nudge_started_at.lock().unwrap() = None;
             return Ok(DriftAction::InSync { drift_us: 0 });
+        }
+
+        // Leader is playing: ensure local follower player is playing
+        if !local_state.is_playing {
+            tracing::info!("Leader is playing; resuming local follower playback");
+            let _ = self.controller.play().await;
+            local_state.is_playing = true;
         }
 
         // Buffering grace period check
@@ -339,10 +371,6 @@ impl DriftEvaluator {
                 return Ok(DriftAction::InSync { drift_us: 0 });
             }
         }
-
-        let t_start = self.clock.reference_now();
-        let local_state = self.controller.get_playback_state().await?;
-        let t_end = self.clock.reference_now();
 
         // Track Discontinuity Guard: do not seek or reconcile if playing a different song
         if let (Some(anchor_title), Some(local_meta)) = (&anchor.track_title, &local_state.metadata)

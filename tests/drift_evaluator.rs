@@ -638,3 +638,71 @@ async fn test_closed_loop_seek_priming_clamp_bounds() {
     let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
     assert_eq!(evaluator.seek_priming_lead_us(), 0);
 }
+
+#[tokio::test]
+async fn test_evaluator_pauses_local_player_when_anchor_is_paused() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.play().await.unwrap();
+    controller.seek_to(10_000_000).await.unwrap();
+    assert!(controller.get_playback_state().await.unwrap().is_playing);
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: false,
+        track_title: None,
+    };
+
+    let action = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(matches!(action, DriftAction::InSync { .. }));
+    assert!(!controller.get_playback_state().await.unwrap().is_playing);
+}
+
+#[tokio::test]
+async fn test_evaluator_resumes_local_player_when_anchor_is_playing() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.pause().await.unwrap();
+    controller.seek_to(10_000_000).await.unwrap();
+    assert!(!controller.get_playback_state().await.unwrap().is_playing);
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(controller.get_playback_state().await.unwrap().is_playing);
+}
+
+#[tokio::test]
+async fn test_evaluator_aligns_paused_position_when_both_paused() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    controller.pause().await.unwrap();
+    controller.seek_to(10_000_000).await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 15_000_000,
+        playback_rate: 1.0,
+        is_playing: false,
+        track_title: None,
+    };
+
+    let _ = evaluator.evaluate_and_reconcile(&anchor).await.unwrap();
+    assert!(!controller.get_playback_state().await.unwrap().is_playing);
+    assert_eq!(
+        controller.get_playback_state().await.unwrap().position_us,
+        15_000_000
+    );
+}
+
