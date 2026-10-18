@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -479,6 +481,119 @@ async fn test_listener_intent_rejected_by_leader() {
         "Leader should have replied with Permission Denied notification to Listener"
     );
 }
+
+#[tokio::test]
+async fn test_join_accepted_synchronizes_follower_initial_playback() {
+    let host_id = Uuid::new_v4();
+    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+
+    let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let host_addr = host_socket.local_addr().unwrap();
+
+    let host_controller = Arc::new(MockMediaController::new());
+    host_controller.play().await.unwrap();
+    host_controller.seek_to(25_000_000).await.unwrap();
+
+    let host_clock_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let host_clock = Arc::new(ClockSync::new(
+        host_clock_socket,
+        SyncConfig::default(),
+        host_id,
+    ));
+
+    let host_playback = Arc::new(MediaControllerPlaybackAdapter::new(host_controller.clone()));
+    let broadcaster = LeaderAnchorBroadcaster::new(
+        host_session.clone(),
+        host_clock.clone(),
+        host_playback,
+        SyncConfig::default(),
+    )
+    .with_controller(host_controller.clone());
+
+    // Generate and persist current anchor on host
+    let _ = broadcaster.build_anchor_envelope(host_id).await.unwrap();
+    assert!(host_session.latest_sync_anchor().is_some());
+
+    let host_runtime = Arc::new(
+        synkrophase::session::runtime::SessionMessageRuntime::new(
+            host_session.clone(),
+            "Host".into(),
+        )
+        .with_controller(host_controller.clone()),
+    );
+
+    let hr = host_runtime.clone();
+    let hs = host_socket.clone();
+    let host_task = tokio::spawn(async move {
+        let _ = hr.run_receive_loop(hs).await;
+    });
+
+    // Follower setup
+    let follower_id = Uuid::new_v4();
+    let follower_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+
+    let follower_session = Arc::new(SessionState::from_join(
+        "ROOM1".into(),
+        follower_id,
+        "Follower".into(),
+        host_id,
+        host_addr,
+        vec![],
+        Default::default(),
+    ));
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    let follower_clock_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let follower_clock = Arc::new(ClockSync::new(
+        follower_clock_socket,
+        SyncConfig::default(),
+        follower_id,
+    ));
+
+    let follower_runtime = Arc::new(
+        synkrophase::session::runtime::SessionMessageRuntime::new(
+            follower_session.clone(),
+            "Follower".into(),
+        )
+        .with_controller(follower_controller.clone())
+        .with_clock(follower_clock.clone()),
+    );
+
+    let fr = follower_runtime.clone();
+    let fs = follower_socket.clone();
+    let follower_task = tokio::spawn(async move {
+        let _ = fr.run_receive_loop(fs).await;
+    });
+
+    // Send JoinRequest to host
+    let join_req = Envelope {
+        sender: follower_id,
+        payload: Message::JoinRequest {
+            room_code: "ROOM1".into(),
+            name: "Follower".into(),
+        },
+    };
+    let bytes = synkrophase::protocol::messages::serialize(&join_req).unwrap();
+    follower_socket.send_to(&bytes, host_addr).await.unwrap();
+
+    // Allow exchange and reconciliation
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let follower_state = follower_controller.get_playback_state().await.unwrap();
+    host_task.abort();
+    follower_task.abort();
+
+    assert!(
+        follower_state.is_playing,
+        "Follower should have started playing upon receiving JoinAccepted with active anchor"
+    );
+    assert!(
+        follower_state.position_us >= 25_000_000,
+        "Follower position should have synchronized to leader timeline (>= 25s), got {}",
+        follower_state.position_us
+    );
+}
+
 
 
 

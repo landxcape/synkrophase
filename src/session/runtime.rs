@@ -304,15 +304,17 @@ impl SessionMessageRuntime {
                     self.session.accept_sync_anchor(anchor);
                 }
 
-                // Initial Playback Reconciliation: if room has a current track, reconcile local playback
-                if let Some(track) = current_track
-                    && let Some(controller) = self.controller.as_ref().map(Arc::clone)
+                // Initial Playback Reconciliation: if room has a current track or anchor, reconcile local playback
+                if let Some(controller) = self.controller.as_ref().map(Arc::clone)
+                    && (current_track.is_some() || current_anchor.is_some())
                 {
                     let anchor_opt = current_anchor;
                     let clock_opt = self.clock.as_ref().map(Arc::clone);
                     let evaluator_opt = self.drift_evaluator.as_ref().map(Arc::clone);
                     tokio::spawn(async move {
-                        let _ = controller.load_track(&track).await;
+                        if let Some(ref track) = current_track {
+                            let _ = controller.load_track(track).await;
+                        }
                         if let Some(anchor) = anchor_opt {
                             if anchor.is_playing {
                                 let _ = controller.play().await;
