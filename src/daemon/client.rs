@@ -7,7 +7,6 @@ use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::time::timeout;
 
-#[cfg(unix)]
 use crate::daemon::paths::DaemonPaths;
 #[cfg(unix)]
 use crate::daemon::protocol::{IpcRequest, IpcResponse};

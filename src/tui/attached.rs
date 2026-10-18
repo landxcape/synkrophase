@@ -1,4 +1,6 @@
+#[cfg(unix)]
 use std::io::stdout;
+#[cfg(unix)]
 use std::time::Duration;
 
 #[cfg(unix)]
