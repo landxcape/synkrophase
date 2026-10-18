@@ -67,6 +67,9 @@ impl LeaderAnchorBroadcaster {
         let message = self
             .session
             .build_sync_anchor_message(sample_time, &status)?;
+        if let Message::SyncAnchor(ref anchor) = message {
+            self.session.set_current_anchor(anchor.clone());
+        }
         Ok(Envelope {
             sender,
             payload: message,

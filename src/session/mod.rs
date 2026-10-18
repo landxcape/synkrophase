@@ -335,6 +335,14 @@ impl SessionState {
         true
     }
 
+    /// Directly updates the current anchor. Used by the leader node to store its own active
+    /// playback anchor for new joiners without passing through network monotonic filtering.
+    pub fn set_current_anchor(&self, anchor: SyncAnchor) {
+        self.last_anchor_ref_time
+            .store(anchor.reference_time.max(1), Ordering::Release);
+        *self.current_anchor.write().unwrap() = Some(anchor);
+    }
+
     pub fn last_anchor_ref_time(&self) -> u64 {
         self.last_anchor_ref_time.load(Ordering::Acquire)
     }

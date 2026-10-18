@@ -486,3 +486,22 @@ async fn test_leader_and_follower_anchor_rejection_rules() {
         .await;
     assert_eq!(follower_session.latest_sync_anchor(), Some(anchor));
 }
+
+#[test]
+fn test_leader_set_current_anchor_persists_live_anchor() {
+    let host_id = Uuid::new_v4();
+    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    assert!(host_session.latest_sync_anchor().is_none());
+
+    let anchor = SyncAnchor {
+        reference_time: 10_000_000,
+        media_position_us: 45_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: Some("Numb".into()),
+    };
+
+    host_session.set_current_anchor(anchor.clone());
+    assert_eq!(host_session.latest_sync_anchor(), Some(anchor));
+}
+
