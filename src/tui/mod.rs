@@ -17,11 +17,11 @@ use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
 
+use crate::error::Result;
+use crate::session::engine::SynkroEngine;
 pub use app::{AppEvent, TuiApp};
 pub use attached::run_attached_tui;
 pub use backend::{IpcBackend, LocalEngineBackend, TuiBackend};
-use crate::error::Result;
-use crate::session::engine::SynkroEngine;
 
 pub async fn run_tui(
     engine: Arc<SynkroEngine>,

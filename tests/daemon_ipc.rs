@@ -14,9 +14,9 @@ mod unix_tests {
     use synkrophase::clock::sync::ClockSync;
     use synkrophase::config::SyncConfig;
     use synkrophase::controller::mock::MockMediaController;
+    use synkrophase::daemon::IpcServer;
     use synkrophase::daemon::paths::DaemonPaths;
     use synkrophase::daemon::protocol::{DaemonStatusSnapshot, IpcEvent, IpcRequest, IpcResponse};
-    use synkrophase::daemon::IpcServer;
     use synkrophase::protocol::messages::{PeerInfo, Role};
     use synkrophase::session::SessionState;
     use synkrophase::session::engine::SynkroEngine;
@@ -54,11 +54,18 @@ mod unix_tests {
         };
 
         let self_id = Uuid::new_v4();
-        let session = Arc::new(SessionState::new_leader("ROOM_TEST".into(), self_id, "TestDevice".into()));
+        let session = Arc::new(SessionState::new_leader(
+            "ROOM_TEST".into(),
+            self_id,
+            "TestDevice".into(),
+        ));
         let controller = Arc::new(MockMediaController::new());
         let clock_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let clock = Arc::new(ClockSync::new(clock_socket, SyncConfig::default(), self_id));
-        let scheduler = Arc::new(IntentScheduler::new(clock.clone() as _, controller.clone() as _));
+        let scheduler = Arc::new(IntentScheduler::new(
+            clock.clone() as _,
+            controller.clone() as _,
+        ));
         let session_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -124,7 +131,9 @@ mod unix_tests {
     #[tokio::test]
     async fn test_daemon_ipc_status_query() {
         let harness = spawn_test_server().await;
-        let stream = UnixStream::connect(&harness.paths.socket_path).await.unwrap();
+        let stream = UnixStream::connect(&harness.paths.socket_path)
+            .await
+            .unwrap();
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();
 
@@ -156,7 +165,9 @@ mod unix_tests {
     #[tokio::test]
     async fn test_daemon_ipc_event_streaming() {
         let harness = spawn_test_server().await;
-        let stream = UnixStream::connect(&harness.paths.socket_path).await.unwrap();
+        let stream = UnixStream::connect(&harness.paths.socket_path)
+            .await
+            .unwrap();
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();
 
@@ -219,7 +230,9 @@ mod unix_tests {
             last_seen: 12345,
             role: Role::Moderator,
         };
-        harness.server.broadcast_app_event(&AppEvent::PeerListUpdate(vec![peer.clone()]));
+        harness
+            .server
+            .broadcast_app_event(&AppEvent::PeerListUpdate(vec![peer.clone()]));
 
         let event_line3 = timeout(Duration::from_secs(2), lines.next_line())
             .await
@@ -234,7 +247,9 @@ mod unix_tests {
     #[tokio::test]
     async fn test_daemon_ipc_playback_actions() {
         let harness = spawn_test_server().await;
-        let stream = UnixStream::connect(&harness.paths.socket_path).await.unwrap();
+        let stream = UnixStream::connect(&harness.paths.socket_path)
+            .await
+            .unwrap();
         let (reader, mut writer) = stream.into_split();
         let mut lines = BufReader::new(reader).lines();
 
@@ -302,7 +317,9 @@ mod unix_tests {
 
         // First client connects, subscribes, and drops
         {
-            let stream = UnixStream::connect(&harness.paths.socket_path).await.unwrap();
+            let stream = UnixStream::connect(&harness.paths.socket_path)
+                .await
+                .unwrap();
             let (reader, mut writer) = stream.into_split();
             let mut lines = BufReader::new(reader).lines();
 
@@ -314,12 +331,16 @@ mod unix_tests {
             let mut line = serde_json::to_string(&req).unwrap();
             line.push('\n');
             writer.write_all(line.as_bytes()).await.unwrap();
-            let _ = timeout(Duration::from_secs(2), lines.next_line()).await.unwrap();
+            let _ = timeout(Duration::from_secs(2), lines.next_line())
+                .await
+                .unwrap();
             // Drop client stream here
         }
 
         // Second client connects immediately after first client disconnected
-        let stream2 = UnixStream::connect(&harness.paths.socket_path).await.unwrap();
+        let stream2 = UnixStream::connect(&harness.paths.socket_path)
+            .await
+            .unwrap();
         let (reader2, mut writer2) = stream2.into_split();
         let mut lines2 = BufReader::new(reader2).lines();
 
@@ -368,7 +389,10 @@ mod unix_tests {
             .unwrap();
 
         backend.send_volume(Some(75)).await.unwrap();
-        backend.send_chat("Test chat from IPC backend".into()).await.unwrap();
+        backend
+            .send_chat("Test chat from IPC backend".into())
+            .await
+            .unwrap();
 
         let inv = backend.get_invitation_command().await.unwrap();
         assert!(inv.is_some());

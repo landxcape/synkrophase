@@ -125,7 +125,8 @@ impl IpcServer {
                         }
                         let _ = poll_tx.send(IpcEvent {
                             event: "network_update".to_string(),
-                            data: serde_json::to_value(poll_clock.network_stats()).unwrap_or_default(),
+                            data: serde_json::to_value(poll_clock.network_stats())
+                                .unwrap_or_default(),
                         });
                         tick_counter = tick_counter.wrapping_add(1);
                         if tick_counter.is_multiple_of(5) {

@@ -18,14 +18,14 @@ use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::sync::mpsc;
 
+#[cfg(unix)]
+use crate::controller::{PlaybackState, TrackMetadata};
 use crate::daemon::paths::DaemonPaths;
+#[cfg(unix)]
+use crate::daemon::protocol::{DaemonStatusSnapshot, IpcEvent, IpcRequest, IpcResponse};
 use crate::error::Result;
 #[cfg(unix)]
 use crate::error::SynkroError;
-#[cfg(unix)]
-use crate::controller::{PlaybackState, TrackMetadata};
-#[cfg(unix)]
-use crate::daemon::protocol::{DaemonStatusSnapshot, IpcEvent, IpcRequest, IpcResponse};
 #[cfg(unix)]
 use crate::protocol::messages::Role;
 #[cfg(unix)]
@@ -71,31 +71,33 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
             method: "status".to_string(),
             params: serde_json::Value::Null,
         };
-        let mut msg = serde_json::to_string(&req)
-            .map_err(|e| SynkroError::Serialization(e.to_string()))?;
+        let mut msg =
+            serde_json::to_string(&req).map_err(|e| SynkroError::Serialization(e.to_string()))?;
         msg.push('\n');
         writer
             .write_all(msg.as_bytes())
             .await
             .map_err(|e| SynkroError::Network(std::io::Error::other(e.to_string())))?;
 
-        let status_line = match tokio::time::timeout(Duration::from_secs(3), lines.next_line()).await {
-            Ok(Ok(Some(line))) => line,
-            _ => {
-                return Err(SynkroError::Network(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "Timed out waiting for daemon status snapshot",
-                )));
-            }
-        };
+        let status_line =
+            match tokio::time::timeout(Duration::from_secs(3), lines.next_line()).await {
+                Ok(Ok(Some(line))) => line,
+                _ => {
+                    return Err(SynkroError::Network(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Timed out waiting for daemon status snapshot",
+                    )));
+                }
+            };
 
         let status_resp: IpcResponse = serde_json::from_str(&status_line)
             .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
         if let Some(err) = status_resp.error {
             return Err(SynkroError::PermissionDenied(err.message));
         }
-        let snapshot: DaemonStatusSnapshot = serde_json::from_value(status_resp.result.unwrap_or_default())
-            .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
+        let snapshot: DaemonStatusSnapshot =
+            serde_json::from_value(status_resp.result.unwrap_or_default())
+                .map_err(|e| SynkroError::Deserialization(e.to_string()))?;
 
         // 2. Subscribe to real-time events
         let sub_req = IpcRequest {
@@ -177,15 +179,21 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
                             let _ = event_tx_stream.send(AppEvent::Log { source, text });
                         }
                         "drift_update" => {
-                            let offset_us = ev.data.get("offset_us").and_then(|v| v.as_i64()).unwrap_or(0);
-                            let zone = ev.data.get("zone").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+                            let offset_us = ev
+                                .data
+                                .get("offset_us")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0);
+                            let zone =
+                                ev.data.get("zone").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
                             let status = ev
                                 .data
                                 .get("status")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            let _ = event_tx_stream.send(AppEvent::DriftUpdate(offset_us, zone, status));
+                            let _ = event_tx_stream
+                                .send(AppEvent::DriftUpdate(offset_us, zone, status));
                         }
                         "playback_update" => {
                             if let Ok(state) = serde_json::from_value::<PlaybackState>(ev.data) {
@@ -201,13 +209,13 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
                         }
                         "peer_update" => {
                             let peers_val = ev.data.get("peers").unwrap_or(&ev.data);
-                            if let Ok(peers) =
-                                serde_json::from_value::<Vec<crate::protocol::messages::PeerInfo>>(
-                                    peers_val.clone(),
-                                )
+                            if let Ok(peers) = serde_json::from_value::<
+                                Vec<crate::protocol::messages::PeerInfo>,
+                            >(peers_val.clone())
                             {
                                 if let Some(role_val) = ev.data.get("role")
-                                    && let Ok(role) = serde_json::from_value::<Role>(role_val.clone())
+                                    && let Ok(role) =
+                                        serde_json::from_value::<Role>(role_val.clone())
                                 {
                                     app_role_update(&event_tx_stream, role);
                                 }

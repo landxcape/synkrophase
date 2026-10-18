@@ -21,7 +21,11 @@ use synkrophase::sync::controller::MediaControllerPlaybackAdapter;
 #[tokio::test]
 async fn test_leader_native_player_pause_broadcasts_intent_and_anchor() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
 
     let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let follower_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -82,9 +86,11 @@ async fn test_leader_native_player_pause_broadcasts_intent_and_anchor() {
     let start = std::time::Instant::now();
 
     while start.elapsed() < Duration::from_secs(2) {
-        if let Ok(Ok((len, _))) =
-            tokio::time::timeout(Duration::from_millis(400), follower_socket.recv_from(&mut buf))
-                .await
+        if let Ok(Ok((len, _))) = tokio::time::timeout(
+            Duration::from_millis(400),
+            follower_socket.recv_from(&mut buf),
+        )
+        .await
         {
             if let Ok(Envelope {
                 payload: Message::Intent(intent),
@@ -109,7 +115,11 @@ async fn test_leader_native_player_pause_broadcasts_intent_and_anchor() {
 #[tokio::test]
 async fn test_leader_native_player_resume_broadcasts_play_intent() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
 
     let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let follower_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -166,9 +176,11 @@ async fn test_leader_native_player_resume_broadcasts_play_intent() {
     let start = std::time::Instant::now();
 
     while start.elapsed() < Duration::from_secs(2) {
-        if let Ok(Ok((len, _))) =
-            tokio::time::timeout(Duration::from_millis(400), follower_socket.recv_from(&mut buf))
-                .await
+        if let Ok(Ok((len, _))) = tokio::time::timeout(
+            Duration::from_millis(400),
+            follower_socket.recv_from(&mut buf),
+        )
+        .await
         {
             if let Ok(Envelope {
                 payload: Message::Intent(intent),
@@ -193,7 +205,11 @@ async fn test_leader_native_player_resume_broadcasts_play_intent() {
 #[tokio::test]
 async fn test_leader_native_player_scrub_broadcasts_seek_intent() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
 
     let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let follower_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -249,9 +265,11 @@ async fn test_leader_native_player_scrub_broadcasts_seek_intent() {
     let start = std::time::Instant::now();
 
     while start.elapsed() < Duration::from_secs(2) {
-        if let Ok(Ok((len, _))) =
-            tokio::time::timeout(Duration::from_millis(400), follower_socket.recv_from(&mut buf))
-                .await
+        if let Ok(Ok((len, _))) = tokio::time::timeout(
+            Duration::from_millis(400),
+            follower_socket.recv_from(&mut buf),
+        )
+        .await
         {
             if let Ok(Envelope {
                 payload: Message::Intent(intent),
@@ -278,7 +296,11 @@ async fn test_leader_native_player_scrub_broadcasts_seek_intent() {
 #[tokio::test]
 async fn test_moderator_zero_touch_pause_proposes_intent_to_leader() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
 
     let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let host_addr = host_socket.local_addr().unwrap();
@@ -404,7 +426,11 @@ async fn test_moderator_zero_touch_pause_proposes_intent_to_leader() {
 #[tokio::test]
 async fn test_listener_intent_rejected_by_leader() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
 
     let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let host_addr = host_socket.local_addr().unwrap();
@@ -425,12 +451,10 @@ async fn test_listener_intent_rejected_by_leader() {
         listener_addr,
     );
 
-    let host_runtime = Arc::new(
-        synkrophase::session::runtime::SessionMessageRuntime::new(
-            host_session.clone(),
-            "Host".into(),
-        ),
-    );
+    let host_runtime = Arc::new(synkrophase::session::runtime::SessionMessageRuntime::new(
+        host_session.clone(),
+        "Host".into(),
+    ));
 
     // Spawn host runtime receive loop
     let hr = host_runtime.clone();
@@ -458,9 +482,11 @@ async fn test_listener_intent_rejected_by_leader() {
     let start = std::time::Instant::now();
 
     while start.elapsed() < Duration::from_secs(2) {
-        if let Ok(Ok((len, _))) =
-            tokio::time::timeout(Duration::from_millis(400), listener_socket.recv_from(&mut buf))
-                .await
+        if let Ok(Ok((len, _))) = tokio::time::timeout(
+            Duration::from_millis(400),
+            listener_socket.recv_from(&mut buf),
+        )
+        .await
         {
             if let Ok(Envelope {
                 payload: Message::Notification { text },
@@ -485,7 +511,11 @@ async fn test_listener_intent_rejected_by_leader() {
 #[tokio::test]
 async fn test_join_accepted_synchronizes_follower_initial_playback() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
 
     let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let host_addr = host_socket.local_addr().unwrap();
@@ -593,7 +623,3 @@ async fn test_join_accepted_synchronizes_follower_initial_playback() {
         follower_state.position_us
     );
 }
-
-
-
-

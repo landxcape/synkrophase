@@ -490,7 +490,11 @@ async fn test_leader_and_follower_anchor_rejection_rules() {
 #[test]
 fn test_leader_set_current_anchor_persists_live_anchor() {
     let host_id = Uuid::new_v4();
-    let host_session = Arc::new(SessionState::new_leader("ROOM1".into(), host_id, "Host".into()));
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
     assert!(host_session.latest_sync_anchor().is_none());
 
     let anchor = SyncAnchor {
@@ -504,4 +508,3 @@ fn test_leader_set_current_anchor_persists_live_anchor() {
     host_session.set_current_anchor(anchor.clone());
     assert_eq!(host_session.latest_sync_anchor(), Some(anchor));
 }
-

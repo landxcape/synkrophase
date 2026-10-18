@@ -35,7 +35,10 @@ impl FollowerZeroTouchMonitor {
 
     pub async fn run_monitor_loop(&self) -> Result<()> {
         let initial_state = self.controller.get_playback_state().await.ok();
-        let mut last_playing = initial_state.as_ref().map(|s| s.is_playing).unwrap_or(false);
+        let mut last_playing = initial_state
+            .as_ref()
+            .map(|s| s.is_playing)
+            .unwrap_or(false);
         let mut last_sample_time = std::time::Instant::now();
         let mut last_sample_pos = initial_state.as_ref().map(|s| s.position_us).unwrap_or(0);
         let mut last_track = initial_state

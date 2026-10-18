@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[cfg(unix)]
-use crate::daemon::paths::DaemonPaths;
-#[cfg(unix)]
 use crate::daemon::IpcClient;
+#[cfg(unix)]
+use crate::daemon::paths::DaemonPaths;
 use crate::error::Result;
 use crate::protocol::messages::{PlaybackAction, Role};
 use crate::session::engine::{EngineCommand, SynkroEngine};
@@ -38,7 +38,8 @@ impl LocalEngineBackend {
 #[async_trait]
 impl TuiBackend for LocalEngineBackend {
     async fn send_playback_action(&self, action: PlaybackAction) -> Result<()> {
-        self.engine.send_command(EngineCommand::PlaybackAction(action))
+        self.engine
+            .send_command(EngineCommand::PlaybackAction(action))
     }
 
     async fn send_volume(&self, level: Option<u8>) -> Result<()> {
@@ -50,7 +51,8 @@ impl TuiBackend for LocalEngineBackend {
     }
 
     async fn transfer_leadership(&self, target: Uuid) -> Result<()> {
-        self.engine.send_command(EngineCommand::TransferLeadership(target))
+        self.engine
+            .send_command(EngineCommand::TransferLeadership(target))
     }
 
     async fn assign_role(&self, target: Uuid, role: Role) -> Result<()> {
@@ -85,7 +87,9 @@ impl TuiBackend for LocalEngineBackend {
         } else {
             "unknown".to_string()
         };
-        Ok(Some(format!("synkro join {room_code} --leader-addr {leader_addr}")))
+        Ok(Some(format!(
+            "synkro join {room_code} --leader-addr {leader_addr}"
+        )))
     }
 }
 
@@ -106,7 +110,11 @@ impl IpcBackend {
     }
 
     #[cfg(unix)]
-    async fn send_ipc(&self, method: &str, params: serde_json::Value) -> Result<Option<serde_json::Value>> {
+    async fn send_ipc(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
         if let Some(p) = &self.paths {
             IpcClient::send_command_with_paths(p, method, params).await
         } else {
@@ -158,7 +166,9 @@ impl TuiBackend for IpcBackend {
     async fn send_chat(&self, text: String) -> Result<()> {
         #[cfg(unix)]
         {
-            let _ = self.send_ipc("chat", serde_json::json!({ "message": text })).await?;
+            let _ = self
+                .send_ipc("chat", serde_json::json!({ "message": text }))
+                .await?;
         }
         #[cfg(not(unix))]
         {
@@ -170,7 +180,12 @@ impl TuiBackend for IpcBackend {
     async fn transfer_leadership(&self, target: Uuid) -> Result<()> {
         #[cfg(unix)]
         {
-            let _ = self.send_ipc("transfer", serde_json::json!({ "target": target.to_string() })).await?;
+            let _ = self
+                .send_ipc(
+                    "transfer",
+                    serde_json::json!({ "target": target.to_string() }),
+                )
+                .await?;
         }
         #[cfg(not(unix))]
         {
@@ -187,10 +202,15 @@ impl TuiBackend for IpcBackend {
                 Role::Moderator => "moderator",
                 Role::Listener => "listener",
             };
-            let _ = self.send_ipc("assign_role", serde_json::json!({
-                "target": target.to_string(),
-                "role": role_str,
-            })).await?;
+            let _ = self
+                .send_ipc(
+                    "assign_role",
+                    serde_json::json!({
+                        "target": target.to_string(),
+                        "role": role_str,
+                    }),
+                )
+                .await?;
         }
         #[cfg(not(unix))]
         {

@@ -89,7 +89,9 @@ pub async fn handle_key_event(
                     .await?;
             }
             KeyCode::Char('n') => {
-                backend.send_playback_action(PlaybackAction::NextTrack).await?;
+                backend
+                    .send_playback_action(PlaybackAction::NextTrack)
+                    .await?;
             }
             KeyCode::Char('p') => {
                 backend
@@ -149,11 +151,7 @@ pub async fn handle_key_event(
     Ok(())
 }
 
-async fn handle_slash_command(
-    app: &mut TuiApp,
-    cmd: &str,
-    backend: &dyn TuiBackend,
-) -> Result<()> {
+async fn handle_slash_command(app: &mut TuiApp, cmd: &str, backend: &dyn TuiBackend) -> Result<()> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.is_empty() {
         return Ok(());
@@ -179,7 +177,9 @@ async fn handle_slash_command(
             }
         }
         "next" | "skip" => {
-            backend.send_playback_action(PlaybackAction::NextTrack).await?;
+            backend
+                .send_playback_action(PlaybackAction::NextTrack)
+                .await?;
         }
         "prev" | "previous" => {
             backend
@@ -195,11 +195,7 @@ async fn handle_slash_command(
             backend.send_volume(target_vol).await?;
         }
         "sync" => {
-            let role_str = if app.is_leader {
-                "Leader"
-            } else {
-                "Follower"
-            };
+            let role_str = if app.is_leader { "Leader" } else { "Follower" };
             let formatted_offset = crate::clock::format_offset_smart(app.drift.offset_us);
             let delay_ms = app
                 .controller
@@ -210,9 +206,7 @@ async fn handle_slash_command(
                 "System".to_string(),
                 format!(
                     "Clock Sync Health: Offset: {} | Role: {} | Actuation Delay: ~{}ms",
-                    formatted_offset,
-                    role_str,
-                    delay_ms
+                    formatted_offset, role_str, delay_ms
                 ),
             );
         }
@@ -343,7 +337,10 @@ async fn copy_invitation_command(app: &mut TuiApp, backend: &dyn TuiBackend) {
     if let Ok(Some(cmd)) = backend.get_invitation_command().await {
         match crate::session::invitation::copy_text_to_clipboard(&cmd) {
             Ok(()) => {
-                app.add_log("System".to_string(), format!("Copied '{cmd}' to clipboard!"));
+                app.add_log(
+                    "System".to_string(),
+                    format!("Copied '{cmd}' to clipboard!"),
+                );
             }
             Err(err) => {
                 app.add_log(
@@ -355,6 +352,9 @@ async fn copy_invitation_command(app: &mut TuiApp, backend: &dyn TuiBackend) {
     } else {
         let cmd = format!("synkro join {}", app.room_code);
         let _ = crate::session::invitation::copy_text_to_clipboard(&cmd);
-        app.add_log("System".to_string(), format!("Copied '{cmd}' to clipboard!"));
+        app.add_log(
+            "System".to_string(),
+            format!("Copied '{cmd}' to clipboard!"),
+        );
     }
 }
