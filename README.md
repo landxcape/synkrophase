@@ -178,6 +178,12 @@ While playing, followers continuously reconcile their local playback position ag
 
 A 2500ms post-seek settling window prevents repeated seeking while players prime their audio buffers. Closed-loop auto-calibration measures residual landing error on the first steady-state sample after settling, adjusting the buffer priming lead (0–350ms) for subsequent seeks.
 
+### Bidirectional Native Player Synchronization
+Synkrophase is not limited to commands issued through the CLI or TUI dashboard; it actively monitors the native desktop player (Spotify or Apple Music) in the background:
+- **Physical Control Propagation**: When a user with `Leader` or `Moderator` privileges plays, pauses, scrubs the timeline, or skips tracks directly inside Spotify or Apple Music, Synkrophase detects the transition immediately.
+- **Intent Synthesis**: The local engine converts the physical player action into a scheduled `PlaybackIntent` with clock-aligned execution and broadcasts updated authoritative `SyncAnchor`s across all LAN peers.
+- **Role-Gated RBAC**: Physical player actions by `Listener` nodes remain purely local and are rejected by the leader's RBAC gate, preventing accidental scrubs or skips from desynchronizing the room.
+
 ### Automatic Host Failover & Consistency Model
 If the host leaves or disconnects, the remaining peers automatically elect a new Leader using a deterministic UUID tie-break, keeping playback in sync without terminating the room. Timeline watermarks reset dynamically on failover so followers immediately synchronize against the new leader's clock.
 
@@ -192,9 +198,9 @@ Synkrophase supports three member roles:
 
 | Action / Capability | Leader (Host) | Moderator | Listener |
 | :--- | :---: | :---: | :---: |
-| Play / Pause | Yes | Yes | No |
-| Seek Timeline | Yes | Yes | No |
-| Skip Next / Previous | Yes | Yes | No |
+| Play / Pause (CLI, TUI, or Native Player) | Yes | Yes | No |
+| Seek Timeline (CLI, TUI, or Native Player) | Yes | Yes | No |
+| Skip Next / Previous (CLI, TUI, or Native Player) | Yes | Yes | No |
 | Sync Room Volume | Yes | Yes | No |
 | Send Chat Messages | Yes | Yes | Yes |
 | View Progress and Peer Offsets | Yes | Yes | Yes |

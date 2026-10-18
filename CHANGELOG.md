@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Active Daemon Guardrails**: `synkro host` and `synkro join` detect running background daemons on startup and abort with an informative message pointing to `synkro attach`.
 
 ### Fixed
+- **Windows MSVC Compilation**: Fixed cross-platform target builds by removing Unix-only gating on `DaemonPaths` in `IpcClient` and properly gating terminal I/O imports in the attached runner.
 - **Play/Pause Anchor Reconciliation**: `DriftEvaluator` now pauses the local player when the incoming anchor is paused, resumes when playing, and aligns paused playback position discrepancies exceeding 200ms.
 - **Joiner Initial Playback State**: Leader persists its authoritative `SyncAnchor` in `SessionState` so newly joined followers synchronize track and play/pause status immediately upon `JoinAccepted`.
 
