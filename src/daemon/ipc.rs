@@ -54,6 +54,42 @@ impl IpcServer {
         });
     }
 
+    pub fn broadcast_app_event(&self, event: &crate::tui::AppEvent) {
+        match event {
+            crate::tui::AppEvent::DriftUpdate(offset_us, zone, status) => {
+                self.record_drift_update(*offset_us, *zone, status.clone());
+            }
+            crate::tui::AppEvent::Log { source, text } => {
+                let _ = self.event_tx.send(IpcEvent {
+                    event: "log".to_string(),
+                    data: serde_json::json!({
+                        "source": source,
+                        "text": text,
+                    }),
+                });
+            }
+            crate::tui::AppEvent::PlaybackUpdate(state) => {
+                let _ = self.event_tx.send(IpcEvent {
+                    event: "playback_update".to_string(),
+                    data: serde_json::to_value(state).unwrap_or_default(),
+                });
+            }
+            crate::tui::AppEvent::NetworkUpdate(stats) => {
+                let _ = self.event_tx.send(IpcEvent {
+                    event: "network_update".to_string(),
+                    data: serde_json::to_value(stats).unwrap_or_default(),
+                });
+            }
+            crate::tui::AppEvent::PeerListUpdate(peers) => {
+                let _ = self.event_tx.send(IpcEvent {
+                    event: "peer_update".to_string(),
+                    data: serde_json::to_value(peers).unwrap_or_default(),
+                });
+            }
+            crate::tui::AppEvent::Tick | crate::tui::AppEvent::Key(_) => {}
+        }
+    }
+
     pub async fn run_server(self: Arc<Self>) -> Result<()> {
         #[cfg(unix)]
         {
@@ -72,6 +108,48 @@ impl IpcServer {
 
             tracing::info!(socket = ?self.paths.socket_path, "IPC domain socket listening");
 
+            let poll_tx = self.event_tx.clone();
+            let poll_controller = Arc::clone(&self.engine.controller());
+            let poll_clock = self.engine.clock();
+            let poll_session = self.engine.session();
+            let poller_task = tokio::spawn(async move {
+                let mut tick_counter: u32 = 0;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    if poll_tx.receiver_count() > 0 {
+                        if let Ok(state) = poll_controller.get_playback_state().await {
+                            let _ = poll_tx.send(IpcEvent {
+                                event: "playback_update".to_string(),
+                                data: serde_json::to_value(state).unwrap_or_default(),
+                            });
+                        }
+                        let _ = poll_tx.send(IpcEvent {
+                            event: "network_update".to_string(),
+                            data: serde_json::to_value(poll_clock.network_stats()).unwrap_or_default(),
+                        });
+                        tick_counter = tick_counter.wrapping_add(1);
+                        if tick_counter.is_multiple_of(5) {
+                            let mut members: Vec<_> = poll_session
+                                .all_alive_peers()
+                                .into_iter()
+                                .map(|(_, e)| e.info)
+                                .collect();
+                            members.push(poll_session.self_info());
+                            members.sort_by_key(|p| p.device_id);
+                            members.dedup_by_key(|p| p.device_id);
+                            let _ = poll_tx.send(IpcEvent {
+                                event: "peer_update".to_string(),
+                                data: serde_json::json!({
+                                    "peers": members,
+                                    "role": poll_session.role(),
+                                    "is_leader": poll_session.is_leader(),
+                                }),
+                            });
+                        }
+                    }
+                }
+            });
+
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
@@ -87,6 +165,7 @@ impl IpcServer {
                 }
             }
 
+            poller_task.abort();
             self.paths.clean_socket();
         }
 

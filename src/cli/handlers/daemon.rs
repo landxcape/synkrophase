@@ -533,9 +533,7 @@ async fn setup_host_daemon(
         let srv = Arc::clone(&ipc_server);
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
-                if let crate::tui::AppEvent::DriftUpdate(offset, zone, status) = event {
-                    srv.record_drift_update(offset, zone, status);
-                }
+                srv.broadcast_app_event(&event);
             }
         });
     }
@@ -742,9 +740,7 @@ async fn setup_join_daemon(
         let srv = Arc::clone(&ipc_server);
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
-                if let crate::tui::AppEvent::DriftUpdate(offset, zone, status) = event {
-                    srv.record_drift_update(offset, zone, status);
-                }
+                srv.broadcast_app_event(&event);
             }
         });
     }

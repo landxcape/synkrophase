@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::error::Result;
 use crate::protocol::messages::TrackIdentity;
 
@@ -12,7 +14,7 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrackMetadata {
     pub title: String,
     pub artist: Option<String>,
@@ -20,7 +22,7 @@ pub struct TrackMetadata {
     pub duration_us: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlaybackState {
     pub is_playing: bool,
     pub position_us: i64,
