@@ -234,6 +234,14 @@ pub async fn run_join(
     );
     let engine = Arc::new(engine);
 
+    // Zero-touch follower physical player monitor (for Moderators)
+    let zero_touch_worker = {
+        let monitor = crate::daemon::FollowerZeroTouchMonitor::new(Arc::clone(&engine));
+        tokio::spawn(async move {
+            let _ = monitor.run_monitor_loop().await;
+        })
+    };
+
     // Command dispatcher task
     let engine_cmd_worker = {
         let engine = Arc::clone(&engine);
@@ -259,6 +267,7 @@ pub async fn run_join(
     )
     .await;
 
+    zero_touch_worker.abort();
     engine_cmd_worker.abort();
     let _ = engine.shutdown().await;
 

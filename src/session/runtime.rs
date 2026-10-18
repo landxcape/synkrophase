@@ -931,6 +931,21 @@ impl SessionMessageRuntime {
             }
             Message::Intent(mut intent) => {
                 if self.session.is_leader() && envelope.sender != self.session.self_id() {
+                    let role = sender_role.unwrap_or(Role::Listener);
+                    if role < Role::Moderator {
+                        let _ = Self::send_message(
+                            socket,
+                            self.session.self_id(),
+                            src,
+                            Message::Notification {
+                                text: "Permission Denied: Only Moderators can control playback."
+                                    .into(),
+                            },
+                        )
+                        .await;
+                        return Ok(());
+                    }
+
                     // Follower requested an intent! Leader schedules it for T+lead_time on the synced clock
                     let now = if let Some(clock) = &self.clock {
                         clock.reference_now()
