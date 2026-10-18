@@ -31,7 +31,9 @@ pub enum Commands {
     Status,
     /// Start a session and broadcast sync anchors as the leader.
     Host {
-        /// Optional room code. If omitted, a code is generated.
+        /// Optional room code. If omitted, a random code is generated.
+        room: Option<String>,
+        /// Optional room code flag.
         #[arg(long)]
         room_code: Option<String>,
         /// UDP port for clock sync responder.

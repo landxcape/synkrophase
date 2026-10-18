@@ -41,13 +41,24 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Host {
+            room,
             room_code,
             clock_port,
             session_port,
             no_copy,
         } => {
-            let room = room_code.unwrap_or_else(|| generated_room_code(device.device_id));
-            run_host(device, sync_config, room, clock_port, session_port, no_copy).await
+            let selected_room = room
+                .or(room_code)
+                .unwrap_or_else(|| generated_room_code(device.device_id));
+            run_host(
+                device,
+                sync_config,
+                selected_room,
+                clock_port,
+                session_port,
+                no_copy,
+            )
+            .await
         }
         Commands::Join {
             room_code,
@@ -260,10 +271,17 @@ mod tests {
         let cli = Cli::try_parse_from(["synkro", "status"]).unwrap();
         assert!(matches!(cli.command, Commands::Status));
 
-        // Test Host
+        // Test Host with flag
         let cli = Cli::try_parse_from(["synkro", "host", "--room-code", "ABCDEF"]).unwrap();
         match cli.command {
             Commands::Host { room_code, .. } => assert_eq!(room_code, Some("ABCDEF".to_string())),
+            _ => panic!("Expected Host command"),
+        }
+
+        // Test Host with positional argument
+        let cli = Cli::try_parse_from(["synkro", "host", "MYROOM"]).unwrap();
+        match cli.command {
+            Commands::Host { room, .. } => assert_eq!(room, Some("MYROOM".to_string())),
             _ => panic!("Expected Host command"),
         }
 
