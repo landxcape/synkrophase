@@ -196,15 +196,15 @@ impl TuiApp {
     }
 
     pub fn update_peer_list(&mut self, peers: Vec<PeerInfo>) {
-        if let Some(my_info) = peers.iter().find(|p| p.device_id == self.self_id) {
-            if self.role != my_info.role {
-                self.add_log(
-                    "System".to_string(),
-                    format!("Role updated: {:?} -> {:?}", self.role, my_info.role),
-                );
-                self.role = my_info.role;
-                self.is_leader = matches!(my_info.role, Role::Leader);
-            }
+        if let Some(my_info) = peers.iter().find(|p| p.device_id == self.self_id)
+            && self.role != my_info.role
+        {
+            self.add_log(
+                "System".to_string(),
+                format!("Role updated: {:?} -> {:?}", self.role, my_info.role),
+            );
+            self.role = my_info.role;
+            self.is_leader = matches!(my_info.role, Role::Leader);
         }
         self.peers = peers;
     }
