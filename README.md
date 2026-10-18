@@ -5,7 +5,7 @@
 
 Synkrophase synchronizes media playback across multiple computers on the same local network without streaming audio over the wire.
 
-Instead of transmitting heavy audio files, Synkrophase acts as a lightweight control-plane orchestrator: it coordinates each device's native media player directly, maintaining microsecond-accurate monotonic clock alignment and sub-80ms playback phase lock via local UDP.
+Instead of transmitting heavy audio files, Synkrophase acts as a lightweight control-plane orchestrator: it coordinates each device's native media player directly, maintaining microsecond-accurate monotonic clock alignment and a targeted sub-80ms playback deadband via local UDP.
 
 ```text
 ╭ Synkrophase • Room: TESTROOM • Role: [LEADER] • Device: Host ────────────────╮

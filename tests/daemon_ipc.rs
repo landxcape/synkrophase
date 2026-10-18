@@ -415,4 +415,73 @@ mod unix_tests {
         let err_msg = res.unwrap_err().to_string();
         assert!(err_msg.contains("No running Synkrophase daemon found"));
     }
+
+    #[tokio::test]
+    async fn test_daemon_ipc_volume_validation() {
+        let harness = spawn_test_server().await;
+        let stream = UnixStream::connect(&harness.paths.socket_path)
+            .await
+            .unwrap();
+        let (reader, mut writer) = stream.into_split();
+        let mut lines = BufReader::new(reader).lines();
+
+        // 1. Valid volume (50) -> 200 OK
+        let req_valid = IpcRequest {
+            id: Some(1),
+            method: "volume".to_string(),
+            params: serde_json::json!({ "level": 50 }),
+        };
+        let mut line = serde_json::to_string(&req_valid).unwrap();
+        line.push('\n');
+        writer.write_all(line.as_bytes()).await.unwrap();
+
+        let resp_line = timeout(Duration::from_secs(2), lines.next_line())
+            .await
+            .expect("timeout")
+            .unwrap()
+            .unwrap();
+        let resp: IpcResponse = serde_json::from_str(&resp_line).unwrap();
+        assert_eq!(resp.id, Some(1));
+        assert!(resp.error.is_none());
+
+        // 2. Out-of-bounds volume (150) -> 400 Bad Request
+        let req_invalid = IpcRequest {
+            id: Some(2),
+            method: "volume".to_string(),
+            params: serde_json::json!({ "level": 150 }),
+        };
+        let mut line = serde_json::to_string(&req_invalid).unwrap();
+        line.push('\n');
+        writer.write_all(line.as_bytes()).await.unwrap();
+
+        let resp_line = timeout(Duration::from_secs(2), lines.next_line())
+            .await
+            .expect("timeout")
+            .unwrap()
+            .unwrap();
+        let resp: IpcResponse = serde_json::from_str(&resp_line).unwrap();
+        assert_eq!(resp.id, Some(2));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, 400);
+        assert!(resp.error.unwrap().message.contains("between 0 and 100"));
+
+        // 3. Null volume -> 200 OK (mirrors host volume)
+        let req_null = IpcRequest {
+            id: Some(3),
+            method: "volume".to_string(),
+            params: serde_json::json!({ "level": null }),
+        };
+        let mut line = serde_json::to_string(&req_null).unwrap();
+        line.push('\n');
+        writer.write_all(line.as_bytes()).await.unwrap();
+
+        let resp_line = timeout(Duration::from_secs(2), lines.next_line())
+            .await
+            .expect("timeout")
+            .unwrap()
+            .unwrap();
+        let resp: IpcResponse = serde_json::from_str(&resp_line).unwrap();
+        assert_eq!(resp.id, Some(3));
+        assert!(resp.error.is_none());
+    }
 }

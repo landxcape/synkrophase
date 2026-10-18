@@ -126,7 +126,7 @@ pub async fn run_tui(
                     app.network = stats;
                 }
                 AppEvent::PeerListUpdate(peers) => {
-                    app.peers = peers;
+                    app.update_peer_list(peers);
                 }
             }
         }

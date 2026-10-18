@@ -316,11 +316,38 @@ impl IpcServer {
                 )
             }
             "volume" => {
-                let level = req
-                    .params
-                    .get("level")
-                    .and_then(|v| v.as_u64())
-                    .map(|l| l as u8);
+                let level = if let Some(val) = req.params.get("level") {
+                    if val.is_null() {
+                        None
+                    } else if let Some(lvl) = val.as_u64() {
+                        if lvl > 100 {
+                            return IpcResponse::err(
+                                req.id,
+                                400,
+                                "Volume level must be between 0 and 100",
+                            );
+                        }
+                        Some(lvl as u8)
+                    } else if let Some(lvl_i) = val.as_i64() {
+                        if !(0..=100).contains(&lvl_i) {
+                            return IpcResponse::err(
+                                req.id,
+                                400,
+                                "Volume level must be between 0 and 100",
+                            );
+                        }
+                        Some(lvl_i as u8)
+                    } else {
+                        return IpcResponse::err(
+                            req.id,
+                            400,
+                            "Volume level must be an integer between 0 and 100",
+                        );
+                    }
+                } else {
+                    None
+                };
+
                 if let Err(e) = self.engine.send_command(EngineCommand::SyncVolume(level)) {
                     return IpcResponse::err(req.id, 500, e.to_string());
                 }

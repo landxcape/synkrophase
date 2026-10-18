@@ -215,12 +215,6 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
                                 Vec<crate::protocol::messages::PeerInfo>,
                             >(peers_val.clone())
                             {
-                                if let Some(role_val) = ev.data.get("role")
-                                    && let Ok(role) =
-                                        serde_json::from_value::<Role>(role_val.clone())
-                                {
-                                    app_role_update(&event_tx_stream, role);
-                                }
                                 let _ = event_tx_stream.send(AppEvent::PeerListUpdate(peers));
                             }
                         }
@@ -228,6 +222,11 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
                     }
                 }
             }
+            let _ = event_tx_stream.send(AppEvent::Log {
+                source: "Daemon".to_string(),
+                text: "Connection lost: Daemon terminated or socket closed. Press 'q' to exit."
+                    .to_string(),
+            });
         });
 
         let mut reader = EventStream::new();
@@ -277,7 +276,7 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
                         app.network = stats;
                     }
                     AppEvent::PeerListUpdate(peers) => {
-                        app.peers = peers;
+                        app.update_peer_list(peers);
                     }
                 }
             }
@@ -310,9 +309,4 @@ pub async fn run_attached_tui(paths: DaemonPaths) -> Result<()> {
 
         Ok(())
     }
-}
-
-#[cfg(unix)]
-fn app_role_update(_tx: &mpsc::UnboundedSender<AppEvent>, _role: Role) {
-    // Role is reflected directly in peer list update
 }

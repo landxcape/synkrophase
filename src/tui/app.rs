@@ -194,6 +194,20 @@ impl TuiApp {
         }
         0.0
     }
+
+    pub fn update_peer_list(&mut self, peers: Vec<PeerInfo>) {
+        if let Some(my_info) = peers.iter().find(|p| p.device_id == self.self_id) {
+            if self.role != my_info.role {
+                self.add_log(
+                    "System".to_string(),
+                    format!("Role updated: {:?} -> {:?}", self.role, my_info.role),
+                );
+                self.role = my_info.role;
+                self.is_leader = matches!(my_info.role, Role::Leader);
+            }
+        }
+        self.peers = peers;
+    }
 }
 
 pub fn current_time_str() -> String {
@@ -265,5 +279,69 @@ mod tests {
         assert_eq!(app.log_scroll_offset, 2);
         app.add_log("Peer".to_string(), "new message".to_string());
         assert_eq!(app.log_scroll_offset, 3);
+    }
+
+    #[test]
+    fn test_update_peer_list_role_transition() {
+        let mut app = create_test_app();
+        assert_eq!(app.role, Role::Leader);
+        assert!(app.is_leader);
+
+        // Demoted to Listener
+        let peers = vec![PeerInfo {
+            device_id: app.self_id,
+            name: "Device".to_string(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: Role::Listener,
+        }];
+        app.update_peer_list(peers);
+        assert_eq!(app.role, Role::Listener);
+        assert!(!app.is_leader);
+        assert!(
+            app.logs
+                .last()
+                .unwrap()
+                .text
+                .contains("Role updated: Leader -> Listener")
+        );
+
+        // Promoted to Moderator
+        let peers = vec![PeerInfo {
+            device_id: app.self_id,
+            name: "Device".to_string(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: Role::Moderator,
+        }];
+        app.update_peer_list(peers);
+        assert_eq!(app.role, Role::Moderator);
+        assert!(!app.is_leader);
+        assert!(
+            app.logs
+                .last()
+                .unwrap()
+                .text
+                .contains("Role updated: Listener -> Moderator")
+        );
+
+        // Promoted to Leader
+        let peers = vec![PeerInfo {
+            device_id: app.self_id,
+            name: "Device".to_string(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: Role::Leader,
+        }];
+        app.update_peer_list(peers);
+        assert_eq!(app.role, Role::Leader);
+        assert!(app.is_leader);
+        assert!(
+            app.logs
+                .last()
+                .unwrap()
+                .text
+                .contains("Role updated: Moderator -> Leader")
+        );
     }
 }
