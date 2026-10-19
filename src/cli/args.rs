@@ -131,12 +131,12 @@ pub enum DaemonCommands {
     /// Run the daemon in foreground mode (for launchd/systemd or internal spawn).
     Run {
         #[command(subcommand)]
-        mode: DaemonRunMode,
+        mode: Option<DaemonRunMode>,
     },
     /// Spawn a detached background daemon process.
     Start {
         #[command(subcommand)]
-        mode: DaemonRunMode,
+        mode: Option<DaemonRunMode>,
     },
     /// Stop a running background daemon.
     Stop,

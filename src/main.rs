@@ -340,12 +340,34 @@ mod tests {
             Commands::Daemon {
                 command:
                     synkrophase::cli::args::DaemonCommands::Start {
-                        mode: synkrophase::cli::args::DaemonRunMode::Host { room_code, .. },
+                        mode: Some(synkrophase::cli::args::DaemonRunMode::Host { room_code, .. }),
                     },
             } => {
                 assert_eq!(room_code, Some("DEMO1".to_string()));
             }
             _ => panic!("Expected Daemon Start Host command"),
+        }
+
+        // Test Bare Daemon Start (defaults to None mode)
+        let cli = Cli::try_parse_from(["synkro", "daemon", "start"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Start { mode },
+            } => {
+                assert!(mode.is_none());
+            }
+            _ => panic!("Expected Bare Daemon Start command"),
+        }
+
+        // Test Bare Daemon Run (defaults to None mode)
+        let cli = Cli::try_parse_from(["synkro", "daemon", "run"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Run { mode },
+            } => {
+                assert!(mode.is_none());
+            }
+            _ => panic!("Expected Bare Daemon Run command"),
         }
 
         // Test Top-level Attach

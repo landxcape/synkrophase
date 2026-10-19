@@ -13,7 +13,9 @@ use tokio::net::UnixStream;
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use crate::cli::args::{DaemonCommands, DaemonRunMode};
+use crate::cli::args::{
+    DEFAULT_CLOCK_PORT, DEFAULT_SESSION_PORT, DaemonCommands, DaemonRunMode,
+};
 use crate::cli::handlers::common::{
     create_media_controller, resolve_join_target, run_heartbeat_loop, run_role_manager_loop,
     send_join_request,
@@ -43,9 +45,21 @@ pub async fn handle_daemon_command(
 
     match cmd {
         DaemonCommands::Run { mode } => {
+            let mode = mode.unwrap_or(DaemonRunMode::Host {
+                room_code: None,
+                clock_port: DEFAULT_CLOCK_PORT,
+                session_port: DEFAULT_SESSION_PORT,
+            });
             run_daemon_foreground(mode, device, sync_config, paths).await
         }
-        DaemonCommands::Start { mode } => start_daemon_background(mode, &paths),
+        DaemonCommands::Start { mode } => {
+            let mode = mode.unwrap_or(DaemonRunMode::Host {
+                room_code: None,
+                clock_port: DEFAULT_CLOCK_PORT,
+                session_port: DEFAULT_SESSION_PORT,
+            });
+            start_daemon_background(mode, &paths)
+        }
         DaemonCommands::Stop => stop_daemon(&paths).await,
         DaemonCommands::Attach => crate::tui::run_attached_tui(paths).await,
         DaemonCommands::Status { json } => status_daemon(&paths, json).await,
@@ -217,12 +231,27 @@ fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<(
         .spawn()
         .map_err(|e| SynkroError::Config(format!("Failed to spawn daemon process: {e}")))?;
 
+    // Verify socket readiness: poll for socket file up to 500ms
+    let start_wait = std::time::Instant::now();
+    let mut socket_ready = false;
+    while start_wait.elapsed() < Duration::from_millis(500) {
+        if paths.socket_path.exists() {
+            socket_ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
     println!(
         "Synkrophase daemon started in background (PID: {}).",
         child.id()
     );
     println!("Logs: {:?}", paths.log_path);
-    println!("Socket: {:?}", paths.socket_path);
+    if socket_ready {
+        println!("Socket: {:?} (Ready)", paths.socket_path);
+    } else {
+        println!("Socket: {:?} (Initializing)", paths.socket_path);
+    }
     Ok(())
 }
 
