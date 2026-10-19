@@ -108,9 +108,19 @@ Upon joining, Synkrophase automatically:
 
 ### Homebrew (macOS & Linux)
 
+You can choose whether to install only the terminal CLI/TUI engine or both the native macOS Menu Bar application and the CLI:
+
 ```bash
+# 1. Tap the repository
 brew tap landxcape/tap
+
+# Option A: Install CLI & TUI Engine ONLY (Formula)
+# Installs `synkro` command-line binary and background daemon:
 brew install landxcape/tap/synkrophase
+
+# Option B: Install BOTH the Native macOS Menu Bar App AND the CLI Engine (Cask)
+# Installs `Synkrophase.app` in /Applications and automatically pulls in `synkro` CLI as a dependency:
+brew install --cask landxcape/tap/synkrophase
 ```
 
 ### Pre-built Binaries (macOS, Linux, Windows)
@@ -257,7 +267,20 @@ synkro role <PEER> <ROLE>      # Set role ('moderator' or 'listener')
 
 ---
 
-### 4. Diagnostics & Auto-Repair (`synkro doctor`)
+### 4. Native Desktop GUI (macOS Menu Bar)
+
+For macOS users who prefer a graphical menu bar interface alongside or instead of the terminal TUI, Synkrophase has an official companion client: [**`landxcape/synkrophase-gui`**](https://github.com/landxcape/synkrophase-gui).
+
+Built with Swift 6 and SwiftUI, it lives in your macOS status bar as a Menu Bar Extra popover with behind-window liquid glass optical transparency, real-time track artwork, microsecond timeline scrubber, transport controls, and dynamic window expansion.
+
+```bash
+# Install the Native macOS Menu Bar App (automatically includes the synkro CLI/daemon):
+brew install --cask landxcape/tap/synkrophase
+```
+
+---
+
+### 5. Diagnostics & Auto-Repair (`synkro doctor`)
 
 Before hosting or joining a session, or if you encounter connection or automation issues, run `synkro doctor` to audit your local system environment:
 
