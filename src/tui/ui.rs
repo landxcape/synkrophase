@@ -30,22 +30,28 @@ pub fn render(frame: &mut Frame, app: &TuiApp) {
 }
 
 fn render_header(frame: &mut Frame, app: &TuiApp, area: ratatui::layout::Rect) {
-    let role_span = if app.is_leader {
-        Span::styled(
+    let role_span = match app.role {
+        crate::protocol::messages::Role::Leader => Span::styled(
             " [LEADER] ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Green)
                 .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled(
-            " [FOLLOWER] ",
+        ),
+        crate::protocol::messages::Role::Moderator => Span::styled(
+            " [MODERATOR] ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+        ),
+        crate::protocol::messages::Role::Listener => Span::styled(
+            " [LISTENER] ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-        )
+        ),
     };
 
     let header_line = Line::from(vec![
@@ -678,12 +684,16 @@ fn render_help_modal(frame: &mut Frame, area: ratatui::layout::Rect) {
             Span::raw("Assign role (leader, moderator, listener) to peer"),
         ]),
         Line::from(vec![
+            Span::styled("  /shutdown     ", Style::default().fg(Color::Red)),
+            Span::raw("Terminate daemon and stop session (attached mode)"),
+        ]),
+        Line::from(vec![
             Span::styled("  /help         ", Style::default().fg(Color::Green)),
             Span::raw("Toggle this help popup"),
         ]),
         Line::from(vec![
             Span::styled("  /quit, /exit  ", Style::default().fg(Color::Green)),
-            Span::raw("Gracefully disconnect"),
+            Span::raw("Gracefully disconnect / detach"),
         ]),
         Line::raw(""),
         Line::from(vec![Span::styled(
