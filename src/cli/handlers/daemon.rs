@@ -13,9 +13,7 @@ use tokio::net::UnixStream;
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use crate::cli::args::{
-    DEFAULT_CLOCK_PORT, DEFAULT_SESSION_PORT, DaemonCommands, DaemonRunMode,
-};
+use crate::cli::args::{DEFAULT_CLOCK_PORT, DEFAULT_SESSION_PORT, DaemonCommands, DaemonRunMode};
 use crate::cli::handlers::common::{
     create_media_controller, resolve_join_target, run_heartbeat_loop, run_role_manager_loop,
     send_join_request,
