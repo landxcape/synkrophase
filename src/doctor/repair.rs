@@ -32,58 +32,61 @@ pub async fn apply_repairs(report: &DoctorReport, paths: &DaemonPaths) -> Vec<St
                 }
             }
             "Media Player" => {
-                #[cfg(target_os = "macos")]
-                {
-                    let launched = std::process::Command::new("open")
-                        .arg("-a")
-                        .arg("Spotify")
-                        .status();
-
-                    match launched {
-                        Ok(s) if s.success() => {
-                            repairs.push("Launched desktop Spotify application".to_string());
-                            sleep(Duration::from_millis(500)).await;
-                        }
-                        _ => {
-                            if let Ok(ms) = std::process::Command::new("open")
-                                .arg("-a")
-                                .arg("Music")
-                                .status()
-                                && ms.success()
-                            {
-                                repairs
-                                    .push("Launched desktop Apple Music application".to_string());
-                                sleep(Duration::from_millis(500)).await;
-                            }
-                        }
-                    }
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    if std::process::Command::new("spotify").spawn().is_ok() {
-                        repairs.push("Spawned desktop Spotify process".to_string());
-                        sleep(Duration::from_millis(500)).await;
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    if std::process::Command::new("cmd")
-                        .args(["/c", "start", "spotify:"])
-                        .spawn()
-                        .is_ok()
-                    {
-                        repairs.push("Spawned Spotify URI launcher".to_string());
-                        sleep(Duration::from_millis(500)).await;
-                    }
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-                {
-                    // No-op for mock environments
-                }
+                repair_launch_player(&mut repairs).await;
             }
             _ => {}
         }
     }
 
     repairs
+}
+
+async fn repair_launch_player(repairs: &mut Vec<String>) {
+    #[cfg(target_os = "macos")]
+    {
+        let launched = std::process::Command::new("open")
+            .arg("-a")
+            .arg("Spotify")
+            .status();
+
+        match launched {
+            Ok(s) if s.success() => {
+                repairs.push("Launched desktop Spotify application".to_string());
+                sleep(Duration::from_millis(500)).await;
+            }
+            _ => {
+                if let Ok(ms) = std::process::Command::new("open")
+                    .arg("-a")
+                    .arg("Music")
+                    .status()
+                    && ms.success()
+                {
+                    repairs.push("Launched desktop Apple Music application".to_string());
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if std::process::Command::new("spotify").spawn().is_ok() {
+            repairs.push("Spawned desktop Spotify process".to_string());
+            sleep(Duration::from_millis(500)).await;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if std::process::Command::new("cmd")
+            .args(["/c", "start", "spotify:"])
+            .spawn()
+            .is_ok()
+        {
+            repairs.push("Spawned Spotify URI launcher".to_string());
+            sleep(Duration::from_millis(500)).await;
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = repairs;
+    }
 }
