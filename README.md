@@ -257,6 +257,30 @@ synkro role <PEER> <ROLE>      # Set role ('moderator' or 'listener')
 
 ---
 
+### 4. Diagnostics & Auto-Repair (`synkro doctor`)
+
+Before hosting or joining a session, or if you encounter connection or automation issues, run `synkro doctor` to audit your local system environment:
+
+```bash
+# Run interactive system diagnostics
+synkro doctor
+
+# Automatically repair fixable issues (stale sockets, missing directories, launch player)
+synkro doctor --fix
+
+# Output machine-readable JSON for status bars or scripts
+synkro doctor --json
+```
+
+The diagnostic suite audits:
+- **Media Controller & Permissions**: Verifies player responsiveness (Spotify / Apple Music), measures round-trip latency, and checks macOS AppleScript automation permissions.
+- **Network Interface & Monotonic Clock**: Detects active LAN IPv4 interfaces and tests OS high-resolution monotonic timer granularity ($< 50\text{ns}$).
+- **Port Availability**: Confirms UDP ports `5870` (PTP Clock) and `5871` (Session messaging) are free, intelligently recognizing ports held by an active Synkrophase background daemon.
+- **Multicast Discovery**: Checks mDNS multicast socket capabilities (`224.0.0.251:5353`).
+- **Daemon & IPC Health**: Detects stale socket files and orphaned PID locks from abnormal daemon terminations.
+
+---
+
 ## Roles and Permissions
 
 Synkrophase enforces role-based access control (RBAC) across all interfaces (TUI, CLI, and native player interactions):

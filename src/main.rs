@@ -232,6 +232,7 @@ async fn main() -> Result<()> {
             let paths = synkrophase::daemon::DaemonPaths::default_paths()?;
             synkrophase::tui::run_attached_tui(paths).await
         }
+        Commands::Doctor { fix, json } => synkrophase::doctor::run_doctor(fix, json).await,
     }?;
 
     std::process::exit(0);

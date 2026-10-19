@@ -3,6 +3,18 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-10-19
+
+### Added
+- **Diagnostic and Auto-Repair Suite (`synkro doctor`)**: Integrated a comprehensive pre-flight verification and remediation command:
+  - **Media Controller & Permissions Check**: Verifies active media players (Spotify / Apple Music) and measures controller round-trip latency. Detects macOS AppleScript TCC automation permission denials (`-1743`) with direct remediation advice.
+  - **Network & Monotonic Clock Check**: Inspects primary LAN IPv4 interfaces and measures high-resolution hardware monotonic timer granularity ($< 50\text{ns}$).
+  - **Port Availability Check**: Probes UDP ports `5870` (PTP Clock Sync) and `5871` (Session traffic). Intelligently recognizes when ports are occupied by an active Synkrophase background daemon, preventing false-positive conflicts.
+  - **Multicast Discovery Check**: Verifies UDP multicast loopback capabilities for mDNS peer discovery (`224.0.0.251:5353`), noting manual `--leader-addr` fallbacks.
+  - **Daemon & IPC Health Check**: Detects orphaned socket files (`synkro.sock`) and dead PID references when the background daemon terminates abruptly.
+- **Auto-Repair Engine (`synkro doctor --fix`)**: Automatically and safely resolves detected fixable environment issues, unlinking stale sockets, clearing orphaned PID locks, ensuring the daemon base directory exists, and launching media players.
+- **Machine-Readable Diagnostics (`synkro doctor --json`)**: Exports complete diagnostic check structures in formatted JSON for shell scripting, status bars (Waybar / SketchyBar), and automated CI pipelines.
+
 ## [0.8.1] - 2026-10-18
 
 ### Fixed

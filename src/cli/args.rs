@@ -115,6 +115,15 @@ pub enum Commands {
     },
     /// Attach the interactive TUI dashboard to a running background daemon.
     Attach,
+    /// Run system diagnostics and repair local configuration issues.
+    Doctor {
+        /// Automatically apply remediations for fixable issues.
+        #[arg(long)]
+        fix: bool,
+        /// Output diagnostics in raw JSON format.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
