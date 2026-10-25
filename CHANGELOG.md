@@ -3,6 +3,14 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-10-25
+
+### Added
+- **Explicit LAN IPv4 mDNS Advertisement**: `Discovery::register_session` now resolves and publishes the primary routable LAN IPv4 address instead of an empty string, preventing mDNS from advertising loopback or virtual interface addresses.
+- **Targeted Fast-Path Session Discovery**: Introduced `find_session_by_room` to immediately return upon resolving the target room code, eliminating the 2.0-second blocking timeout on discovery attempts.
+- **Port Auto-Defaulting on `--leader-addr`**: Added `parse_socket_addr_with_default_port` accepting standalone IPv4/IPv6 addresses (e.g. `192.168.1.50`) and automatically defaulting session traffic to port `5871`.
+- **Leader Address IPC Exposure**: `DaemonStatusSnapshot` now populates `leader_addr` for the active leader session, allowing connected clients and GUIs to format and share complete invite commands.
+
 ## [0.8.2] - 2026-10-19
 
 ### Added
