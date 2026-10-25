@@ -6,6 +6,18 @@ pub const DEFAULT_CLOCK_PORT: u16 = 5870;
 pub const DEFAULT_SESSION_PORT: u16 = 5871;
 pub const DEFAULT_LEAD_TIME_US: u64 = 350_000; // 350ms dynamic lead time for pre-dispatch & OS actuation
 
+fn parse_socket_addr_with_default_port(s: &str) -> std::result::Result<SocketAddr, String> {
+    if let Ok(addr) = s.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    if let Ok(ip) = s.parse::<std::net::IpAddr>() {
+        return Ok(SocketAddr::new(ip, DEFAULT_SESSION_PORT));
+    }
+    Err(format!(
+        "'{s}' is not a valid IPv4/IPv6 address or socket address (e.g. 192.168.1.50 or 192.168.1.50:5871)"
+    ))
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "synkro",
@@ -50,8 +62,8 @@ pub enum Commands {
     Join {
         /// Session room code.
         room_code: String,
-        /// Optional leader session address (ip:port). If omitted, mDNS discovery is used.
-        #[arg(long)]
+        /// Optional leader session address (ip:port or ip). If omitted, mDNS discovery is used.
+        #[arg(long, value_parser = parse_socket_addr_with_default_port)]
         leader_addr: Option<SocketAddr>,
         /// Optional leader UUID for manual join mode.
         #[arg(long)]
@@ -171,7 +183,7 @@ pub enum DaemonRunMode {
     Join {
         /// Session room code.
         room_code: String,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_socket_addr_with_default_port)]
         leader_addr: Option<SocketAddr>,
         #[arg(long)]
         leader_id: Option<Uuid>,
@@ -180,4 +192,26 @@ pub enum DaemonRunMode {
         #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
         session_port: u16,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_socket_addr_with_default_port() {
+        let with_port = parse_socket_addr_with_default_port("192.168.1.50:5871").unwrap();
+        assert_eq!(
+            with_port,
+            "192.168.1.50:5871".parse::<SocketAddr>().unwrap()
+        );
+
+        let without_port = parse_socket_addr_with_default_port("192.168.1.50").unwrap();
+        assert_eq!(
+            without_port,
+            SocketAddr::new("192.168.1.50".parse().unwrap(), DEFAULT_SESSION_PORT)
+        );
+
+        assert!(parse_socket_addr_with_default_port("not_an_ip").is_err());
+    }
 }

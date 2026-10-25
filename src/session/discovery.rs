@@ -34,12 +34,16 @@ impl Discovery {
 
     pub fn register_session(&self, room_code: &str, leader_id: Uuid, port: u16) -> Result<()> {
         let instance_name = format!("{room_code}.{leader_id}");
+        let host_ipv4 = match local_ip_address::local_ip() {
+            Ok(std::net::IpAddr::V4(ipv4)) => ipv4.to_string(),
+            _ => "".to_string(),
+        };
 
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
             &instance_name,
             &format!("{instance_name}.local."),
-            "",
+            &host_ipv4,
             port,
             None,
         )
@@ -71,6 +75,33 @@ impl Discovery {
         }
 
         Ok(sessions)
+    }
+
+    pub fn find_session_by_room(
+        &self,
+        target_room: &str,
+        timeout: Duration,
+    ) -> Result<Option<SessionInfo>> {
+        let receiver = self.daemon.browse(SERVICE_TYPE).map_err(to_network_error)?;
+        let start = std::time::Instant::now();
+
+        while start.elapsed() < timeout {
+            let remaining = timeout.saturating_sub(start.elapsed());
+            let step = remaining.min(Duration::from_millis(100));
+            match receiver.recv_timeout(step) {
+                Ok(ServiceEvent::ServiceResolved(info)) => {
+                    if let Some(session) = Self::resolved_to_session(&info)
+                        && session.room_code.eq_ignore_ascii_case(target_room)
+                    {
+                        return Ok(Some(session));
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn unregister(&self) -> Result<()> {
@@ -113,7 +144,11 @@ impl Discovery {
 }
 
 fn first_ip(info: &ResolvedService) -> Option<IpAddr> {
-    info.get_addresses_v4().into_iter().next().map(IpAddr::V4)
+    info.get_addresses_v4()
+        .into_iter()
+        .find(|ip| !ip.is_loopback())
+        .or_else(|| info.get_addresses_v4().into_iter().next())
+        .map(IpAddr::V4)
 }
 
 fn to_network_error<E>(error: E) -> crate::error::SynkroError

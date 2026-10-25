@@ -464,13 +464,29 @@ impl IpcServer {
             .and_then(|m| m.duration_us)
             .map(|us| (us as f64) / 1_000_000.0);
 
+        let leader_addr = if session.is_leader() {
+            if let Ok(ip) = local_ip_address::local_ip() {
+                let port = self
+                    .engine
+                    .socket()
+                    .local_addr()
+                    .map(|a| a.port())
+                    .unwrap_or(0);
+                Some(format!("{ip}:{port}"))
+            } else {
+                None
+            }
+        } else {
+            self.engine.leader_addr().map(|a| a.to_string())
+        };
+
         DaemonStatusSnapshot {
             room_code: session.room_code().to_string(),
             role: session.role(),
             self_id: session.self_id(),
             device_name: session.display_name(&session.self_id()),
             leader_id: Some(session.leader_id()),
-            leader_addr: self.engine.leader_addr().map(|a| a.to_string()),
+            leader_addr,
             is_playing: playback.is_playing,
             position_sec: (playback.position_us as f64) / 1_000_000.0,
             track_title,

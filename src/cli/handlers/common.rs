@@ -49,21 +49,18 @@ pub fn resolve_join_target(
         return Ok((addr, id));
     }
 
+    if let Some(addr) = leader_addr {
+        return Ok((addr, leader_id.unwrap_or_else(Uuid::new_v4)));
+    }
+
     let discovery = Discovery::new()?;
-    let discovered = discovery.find_sessions()?;
-    let found = discovered
-        .into_iter()
-        .find(|info| info.room_code == room_code);
+    let found = discovery.find_session_by_room(room_code, Duration::from_millis(2000))?;
     let _ = discovery.shutdown();
 
     if let Some(info) = found {
-        let addr = leader_addr.unwrap_or(info.leader_addr);
+        let addr = info.leader_addr;
         let id = leader_id.unwrap_or(info.leader_id);
         return Ok((addr, id));
-    }
-
-    if let Some(addr) = leader_addr {
-        return Ok((addr, leader_id.unwrap_or_else(Uuid::new_v4)));
     }
 
     Err(SynkroError::Network(std::io::Error::new(
