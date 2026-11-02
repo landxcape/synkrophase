@@ -1,7 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
@@ -23,6 +23,14 @@ pub mod runtime;
 
 pub use engine::{EngineCommand, SynkroEngine};
 
+#[derive(Debug, Clone)]
+pub struct ExpectedPlayerState {
+    pub is_playing: Option<bool>,
+    pub position_us: Option<i64>,
+    pub set_at: Instant,
+    pub timeout: Duration,
+}
+
 pub struct SessionState {
     room_code: String,
     self_id: Uuid,
@@ -30,6 +38,7 @@ pub struct SessionState {
     self_role: RwLock<Role>,
     leader_id: RwLock<Uuid>,
     is_join_confirmed: AtomicBool,
+    expected_player_state: Mutex<Option<ExpectedPlayerState>>,
     clock_offset_us: AtomicI64,
     peers: PeerRegistry,
     queue: QueueManager,
@@ -54,6 +63,7 @@ impl SessionState {
             self_role: RwLock::new(Role::Leader),
             leader_id: RwLock::new(self_id),
             is_join_confirmed: AtomicBool::new(true),
+            expected_player_state: Mutex::new(None),
             clock_offset_us: AtomicI64::new(0),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
@@ -78,6 +88,7 @@ impl SessionState {
             self_role: RwLock::new(Role::Listener),
             leader_id: RwLock::new(leader_id),
             is_join_confirmed: AtomicBool::new(false),
+            expected_player_state: Mutex::new(None),
             clock_offset_us: AtomicI64::new(0),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
@@ -95,6 +106,42 @@ impl SessionState {
         }
 
         session
+    }
+
+    pub fn expect_playback_state(&self, is_playing: Option<bool>, position_us: Option<i64>) {
+        let mut guard = self.expected_player_state.lock().unwrap();
+        *guard = Some(ExpectedPlayerState {
+            is_playing,
+            position_us,
+            set_at: Instant::now(),
+            timeout: Duration::from_millis(2500),
+        });
+    }
+
+    pub fn check_and_consume_expected(&self, is_playing: bool, position_us: i64) -> bool {
+        let mut guard = self.expected_player_state.lock().unwrap();
+        if let Some(expected) = guard.as_ref() {
+            if expected.set_at.elapsed() > expected.timeout {
+                *guard = None;
+                return false;
+            }
+
+            let playing_matches = match expected.is_playing {
+                Some(exp_playing) => exp_playing == is_playing,
+                None => true,
+            };
+
+            let position_matches = match expected.position_us {
+                Some(exp_pos) => (exp_pos - position_us).abs() < 1_500_000,
+                None => true,
+            };
+
+            if playing_matches && position_matches {
+                *guard = None;
+                return true;
+            }
+        }
+        false
     }
 
     pub fn is_join_confirmed(&self) -> bool {
@@ -435,5 +482,25 @@ mod tests {
         );
 
         assert!(session.is_join_confirmed());
+    }
+
+    #[test]
+    fn test_expected_player_state_echo_cancellation() {
+        let leader_id = Uuid::new_v4();
+        let session = SessionState::new_leader("ROOM1".into(), leader_id, "Host".into());
+
+        // Expect paused state
+        session.expect_playback_state(Some(false), None);
+
+        // Matching query consumes the expectation and returns true
+        assert!(session.check_and_consume_expected(false, 10_000_000));
+        // Second call returns false since expectation was consumed
+        assert!(!session.check_and_consume_expected(false, 10_000_000));
+
+        // Expect position seek to 45s
+        session.expect_playback_state(None, Some(45_000_000));
+        // Position within tolerance matches
+        assert!(session.check_and_consume_expected(true, 45_200_000));
+        assert!(!session.check_and_consume_expected(true, 45_200_000));
     }
 }
