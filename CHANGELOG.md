@@ -3,6 +3,13 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-11-02
+
+### Fixed
+- **Play/Pause and Scrub Echo Oscillation Suppression**: Resolved an infinite playback feedback loop where zero-touch OS player state polling (`FollowerZeroTouchMonitor` and `LeaderAnchorBroadcaster`) misidentified Synkrophase's own executed commands as manual user clicks in Spotify or Apple Music. Added echo-cancellation tracking via `ExpectedPlayerState` in `SessionState` that matches and consumes anticipated play/pause transitions and seeks with a 2.5-second expiration timeout and 1.5-second positional deadband.
+- **Decoupled Seek-from-Resume Deadband Guard**: Updated `IntentScheduler` to avoid issuing disruptive `seek_to` commands during resume actions when the local media position is already within a 300ms deadband of the target. This prevents decoder buffer flushing and erroneous scrub jumps during normal play/pause toggles.
+- **State-Transition Settling Window**: Integrated a 1,500ms buffering grace period into `DriftEvaluator` triggered upon leader play/pause transitions. This suppresses premature micro-seeks while local audio decoders and ring buffers prime.
+
 ## [0.8.4] - 2026-11-02
 
 ### Fixed
