@@ -705,3 +705,68 @@ async fn test_evaluator_aligns_paused_position_when_both_paused() {
         15_000_000
     );
 }
+
+#[tokio::test]
+async fn test_drift_evaluator_state_transition_arms_buffering_period() {
+    let clock = Arc::new(TestClock { now: 1_000_000 });
+    let controller = Arc::new(MockMediaController::new());
+    // Local player is paused at 9_500_000 us (500ms behind expected 10_000_000)
+    controller.seek_to(9_500_000).await.unwrap();
+    controller.pause().await.unwrap();
+
+    let evaluator = DriftEvaluator::new(clock, controller.clone(), 50_000);
+    let anchor1 = SyncAnchor {
+        reference_time: 900_000,
+        media_position_us: 9_900_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+    // Prime previous anchor while leader is already playing
+    let _ = evaluator.evaluate_and_reconcile(&anchor1).await.unwrap();
+
+    // Allow the initial discontinuity settling grace period (2500ms) to expire
+    tokio::time::sleep(std::time::Duration::from_millis(2600)).await;
+
+    // Now pause the follower locally (e.g. user or previous state)
+    controller.pause().await.unwrap();
+    controller.seek_to(9_500_000).await.unwrap();
+
+    let anchor2 = SyncAnchor {
+        reference_time: 1_000_000,
+        media_position_us: 10_000_000,
+        playback_rate: 1.0,
+        is_playing: true,
+        track_title: None,
+    };
+
+    // First evaluation after pausing: reconciles paused follower to playing
+    let first_action = evaluator.evaluate_and_reconcile(&anchor2).await.unwrap();
+    match first_action {
+        DriftAction::InSync { .. } => {}
+        _ => panic!(
+            "Expected InSync due to buffering grace period on resume, got {:?}",
+            first_action
+        ),
+    }
+
+    let state = controller.get_playback_state().await.unwrap();
+    assert!(state.is_playing);
+
+    // Second evaluation after state transition: buffering settling period must suppress MicroSeek
+    let second_action = evaluator.evaluate_and_reconcile(&anchor2).await.unwrap();
+    match second_action {
+        DriftAction::InSync { .. } => {}
+        _ => panic!(
+            "Expected InSync due to buffering grace period on resume, got {:?}",
+            second_action
+        ),
+    }
+    match second_action {
+        DriftAction::InSync { .. } => {}
+        _ => panic!(
+            "Expected InSync due to buffering grace period on resume, got {:?}",
+            second_action
+        ),
+    }
+}

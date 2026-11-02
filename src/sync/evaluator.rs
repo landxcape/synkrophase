@@ -102,6 +102,10 @@ impl DriftEvaluator {
         self.trigger_immediate();
     }
 
+    pub fn set_buffering_period(&self, duration: Duration) {
+        self.enter_buffering(duration);
+    }
+
     pub fn notify_handle(&self) -> Arc<Notify> {
         Arc::clone(&self.notify_event)
     }
@@ -310,6 +314,7 @@ impl DriftEvaluator {
             if local_state.is_playing {
                 tracing::info!("Leader is paused; pausing local follower playback");
                 let _ = self.controller.pause().await;
+                self.enter_buffering(Duration::from_millis(1500));
             }
 
             // If paused position differs significantly (>200ms), align follower position
@@ -335,6 +340,7 @@ impl DriftEvaluator {
             tracing::info!("Leader is playing; resuming local follower playback");
             let _ = self.controller.play().await;
             local_state.is_playing = true;
+            self.enter_buffering(Duration::from_millis(1500));
         }
 
         // Buffering grace period check
