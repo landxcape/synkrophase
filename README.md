@@ -88,14 +88,16 @@ synkro host MYROOM
 
 *(If you omit `MYROOM`, Synkrophase automatically generates a random room code).*
 
-On launch, Synkrophase starts the interactive dashboard and **automatically copies the join command (`synkro join MYROOM`) to your clipboard** to share with LAN peers. (Pass `--no-copy` to disable clipboard copying).
+On launch, Synkrophase starts the interactive dashboard and **automatically copies the complete join invitation command (`synkro join MYROOM --leader-addr <IP:PORT>`) to your clipboard** to share with LAN peers. Including the direct host IP guarantees instant connection even on Wi-Fi networks where router AP/client isolation blocks multicast mDNS discovery. (Pass `--no-copy` to disable clipboard copying).
 
 ### 3. Join a Room (Follower)
-On another computer on the same local network:
+On another computer on the same local network, simply paste the copied command or run:
 
 ```bash
-synkro join MYROOM
+synkro join MYROOM --leader-addr 192.168.1.50:5871
 ```
+
+*(If on an unrestricted LAN with multicast enabled, `synkro join MYROOM` will also discover the leader via mDNS automatically).*
 
 Upon joining, Synkrophase automatically:
 1. Synchronizes its internal clock with the host via UDP PTP exchange.
@@ -193,11 +195,14 @@ Press `/` in the dashboard to open the command prompt:
 Synkrophase can run as a detached, zero-touch background daemon without keeping a terminal window open:
 
 ```bash
-# Start a room in the background as leader
+# Start a room in the background as leader (automatically copies join invite to clipboard)
 synkro daemon start host MYROOM
 
 # Or join an existing room in the background as follower
-synkro daemon start join MYROOM
+synkro daemon start join MYROOM --leader-addr 192.168.1.50:5871
+
+# List connected peers, roles, and clock offsets in the daemon session
+synkro daemon peers
 
 # Attach the interactive TUI dashboard to the active daemon
 synkro attach
@@ -257,6 +262,7 @@ synkro volume                  # Mirror current host volume to room
 
 # Room Telemetry & Collaboration
 synkro status                  # Inspect local media player status
+synkro peers                   # List online peers, roles, and clock offsets
 synkro sync                    # View live room sync offsets and drift
 synkro debug                   # Output raw session JSON status
 synkro share                   # Copy room join command to clipboard
@@ -418,7 +424,8 @@ If room discovery does not find your host (common when Wi-Fi routers have **Clie
 ### Global Options
 Available on all commands:
 - `--name <NAME>`: Custom display name for this device in the room table.
-- `--ephemeral`: Use a temporary, randomized device ID (useful when testing multiple instances on a single machine).
+- `--ephemeral`: Use a temporary, randomized device ID (useful when running multiple instances on a single machine).
+- `--mock-controller`: Run with a headless simulated mock player (does not interact with OS Spotify or Apple Music, eliminating acoustic feedback loops during local multi-instance testing).
 
 ### `synkro host`
 ```bash
@@ -426,7 +433,7 @@ synkro host [ROOM_CODE] [OPTIONS]
 ```
 - `[ROOM_CODE]`: Optional room code. If omitted, a random 6-character code is generated.
 - `--room-code <ROOM_CODE>`: Alternative flag to specify custom room code.
-- `--no-copy`: Disable automatically copying the join invitation command to the system clipboard on launch.
+- `--no-copy`: Disable automatically copying the join invitation command (`synkro join <ROOM> --leader-addr <IP:PORT>`) to the system clipboard on launch.
 - `--clock-port <PORT>`: UDP port for clock synchronization responder [default: `5870`].
 - `--session-port <PORT>`: Local UDP port for session messaging [default: `5871`].
 
@@ -438,13 +445,27 @@ synkro join <ROOM_CODE> [OPTIONS]
 - `--leader-addr <IP:PORT>`: Direct IP and port of the host session, bypassing mDNS discovery.
 - `--leader-id <UUID>`: Optional leader UUID for manual directed joins.
 - `--leader-clock-port <PORT>`: Target leader clock synchronization port [default: `5870`].
-- `--session-port <PORT>`: Local UDP port for session messaging [default: `5871`].
+- `--session-port <PORT>`: Local UDP port for session messaging [default: `0` (dynamic ephemeral port allocation to avoid local port conflicts)].
+
+### `synkro peers`
+```bash
+synkro peers [OPTIONS]
+```
+- Queries the active foreground or daemon session and displays connected peers, roles, and clock offsets.
 
 ### `synkro daemon start`
 ```bash
-synkro daemon start host [ROOM_CODE] [--clock-port <PORT>] [--session-port <PORT>]
+synkro daemon start host [ROOM_CODE] [--no-copy] [--clock-port <PORT>] [--session-port <PORT>]
 synkro daemon start join <ROOM_CODE> [--leader-addr <IP:PORT>] [--session-port <PORT>]
 ```
+- `host`: Starts a background room. Automatically pre-generates the room code, resolves LAN IPv4, and copies `synkro join <ROOM> --leader-addr <IP:PORT>` to clipboard (unless `--no-copy` is passed).
+- `join`: Joins a background room. Automatically defaults `--session-port` to `0` (dynamic ephemeral allocation) and performs an automatic 5-attempt join confirmation handshake.
+
+### `synkro daemon peers`
+```bash
+synkro daemon peers
+```
+- Inspects the background daemon via Unix socket IPC and displays active peers.
 
 ---
 
