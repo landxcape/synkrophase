@@ -90,9 +90,10 @@ pub async fn run_join(
     });
 
     let controller = create_media_controller();
-    let scheduler = Arc::new(IntentScheduler::new(
+    let scheduler = Arc::new(IntentScheduler::with_session(
         Arc::clone(&clock) as Arc<dyn crate::sync::controller::ClockSource>,
         Arc::clone(&controller),
+        Arc::clone(&session),
     ));
 
     let drift_evaluator = Arc::new(DriftEvaluator::new(

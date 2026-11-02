@@ -357,9 +357,10 @@ async fn test_moderator_zero_touch_pause_proposes_intent_to_leader() {
         follower_id,
     ));
 
-    let follower_scheduler = Arc::new(synkrophase::sync::scheduler::IntentScheduler::new(
+    let follower_scheduler = Arc::new(synkrophase::sync::scheduler::IntentScheduler::with_session(
         follower_clock.clone() as Arc<dyn synkrophase::sync::controller::ClockSource>,
         follower_controller.clone(),
+        follower_session.clone(),
     ));
 
     let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
@@ -486,9 +487,10 @@ async fn test_zero_touch_monitor_suppresses_expected_playback_command() {
         follower_id,
     ));
 
-    let follower_scheduler = Arc::new(synkrophase::sync::scheduler::IntentScheduler::new(
+    let follower_scheduler = Arc::new(synkrophase::sync::scheduler::IntentScheduler::with_session(
         follower_clock.clone() as Arc<dyn synkrophase::sync::controller::ClockSource>,
         follower_controller.clone(),
+        follower_session.clone(),
     ));
 
     let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();

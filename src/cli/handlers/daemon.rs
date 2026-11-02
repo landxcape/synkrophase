@@ -535,9 +535,10 @@ async fn setup_host_daemon(
         device.name.clone(),
     ));
     let controller = create_media_controller();
-    let scheduler = Arc::new(IntentScheduler::new(
+    let scheduler = Arc::new(IntentScheduler::with_session(
         Arc::clone(&clock) as _,
         Arc::clone(&controller),
+        Arc::clone(&session),
     ));
     let playback: Arc<dyn crate::sync::controller::PlaybackControl> =
         Arc::new(crate::sync::controller::NoopPlaybackControl::default());
@@ -701,9 +702,10 @@ async fn setup_join_daemon(
     });
 
     let controller = create_media_controller();
-    let scheduler = Arc::new(IntentScheduler::new(
+    let scheduler = Arc::new(IntentScheduler::with_session(
         Arc::clone(&clock) as _,
         Arc::clone(&controller),
+        Arc::clone(&session),
     ));
     let drift_evaluator = Arc::new(DriftEvaluator::new(
         Arc::clone(&clock) as _,

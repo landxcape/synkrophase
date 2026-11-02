@@ -61,9 +61,10 @@ pub async fn run_host(
     ));
 
     let controller = create_media_controller();
-    let scheduler = Arc::new(IntentScheduler::new(
+    let scheduler = Arc::new(IntentScheduler::with_session(
         Arc::clone(&clock) as Arc<dyn crate::sync::controller::ClockSource>,
         Arc::clone(&controller),
+        Arc::clone(&session),
     ));
 
     let playback: Arc<dyn PlaybackControl> = Arc::new(NoopPlaybackControl::default());

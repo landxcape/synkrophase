@@ -140,3 +140,102 @@ async fn test_intent_scheduler_predispatch_with_actuation_delay() {
     assert!(state.is_playing);
     assert_eq!(state.position_us, 5_000_000);
 }
+
+#[tokio::test]
+async fn test_intent_scheduler_resume_within_deadband_does_not_seek() {
+    let clock = Arc::new(TestClock::new(1_000_000));
+    let controller = Arc::new(MockMediaController::new());
+    controller
+        .set_track(Some(TrackMetadata {
+            title: "Song A".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(180_000_000),
+        }))
+        .await;
+    controller.set_position(45_100_000).await;
+
+    let scheduler = IntentScheduler::new(clock, controller.clone());
+
+    let intent = PlaybackIntent {
+        action: PlaybackAction::Play,
+        target_ref_time: 1_000_000,
+        position_us: 45_200_000,
+        track_title: Some("Song A".into()),
+    };
+
+    scheduler.execute_intent(&intent).await.unwrap();
+
+    let state = controller.get_playback_state().await.unwrap();
+    assert!(state.is_playing);
+    // Position should NOT have jumped to 45_200_000 because seek was bypassed within deadband
+    assert_eq!(state.position_us, 45_100_000);
+}
+
+#[tokio::test]
+async fn test_intent_scheduler_resume_outside_deadband_seeks() {
+    let clock = Arc::new(TestClock::new(1_000_000));
+    let controller = Arc::new(MockMediaController::new());
+    controller
+        .set_track(Some(TrackMetadata {
+            title: "Song A".into(),
+            artist: None,
+            album: None,
+            duration_us: Some(180_000_000),
+        }))
+        .await;
+    controller.set_position(10_000_000).await;
+
+    let scheduler = IntentScheduler::new(clock, controller.clone());
+
+    let intent = PlaybackIntent {
+        action: PlaybackAction::Play,
+        target_ref_time: 1_000_000,
+        position_us: 45_000_000,
+        track_title: Some("Song A".into()),
+    };
+
+    scheduler.execute_intent(&intent).await.unwrap();
+
+    let state = controller.get_playback_state().await.unwrap();
+    assert!(state.is_playing);
+    // Position should jump to 45_000_000 because delta exceeded deadband
+    assert_eq!(state.position_us, 45_000_000);
+}
+
+#[tokio::test]
+async fn test_intent_scheduler_registers_expected_playback_state() {
+    let clock = Arc::new(TestClock::new(1_000_000));
+    let controller = Arc::new(MockMediaController::new());
+    let session = Arc::new(synkrophase::session::SessionState::new_leader(
+        "test-room".into(),
+        uuid::Uuid::new_v4(),
+        "Leader".into(),
+    ));
+
+    let scheduler = IntentScheduler::with_session(clock, controller.clone(), session.clone());
+
+    // Execute Pause
+    let pause_intent = PlaybackIntent {
+        action: PlaybackAction::Pause,
+        target_ref_time: 1_000_000,
+        position_us: 10_000_000,
+        track_title: None,
+    };
+    scheduler.execute_intent(&pause_intent).await.unwrap();
+
+    // SessionState should consume expected state (is_playing: false)
+    assert!(session.check_and_consume_expected(false, 10_000_000));
+
+    // Execute Play
+    let play_intent = PlaybackIntent {
+        action: PlaybackAction::Play,
+        target_ref_time: 1_000_000,
+        position_us: 20_000_000,
+        track_title: None,
+    };
+    scheduler.execute_intent(&play_intent).await.unwrap();
+
+    // SessionState should consume expected state (is_playing: true)
+    assert!(session.check_and_consume_expected(true, 20_000_000));
+}

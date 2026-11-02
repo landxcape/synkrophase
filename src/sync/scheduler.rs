@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::controller::MediaController;
 use crate::error::Result;
 use crate::protocol::messages::{PlaybackAction, PlaybackIntent};
+use crate::session::SessionState;
 use crate::sync::controller::ClockSource;
 use crate::sync::tracer::TimelineTracer;
 
@@ -10,16 +11,38 @@ pub struct IntentScheduler {
     clock: Arc<dyn ClockSource>,
     controller: Arc<dyn MediaController>,
     tracer: TimelineTracer,
+    session: Option<Arc<SessionState>>,
 }
 
 impl IntentScheduler {
     pub fn new(clock: Arc<dyn ClockSource>, controller: Arc<dyn MediaController>) -> Self {
+        Self::with_session_opt(clock, controller, None)
+    }
+
+    pub fn with_session(
+        clock: Arc<dyn ClockSource>,
+        controller: Arc<dyn MediaController>,
+        session: Arc<SessionState>,
+    ) -> Self {
+        Self::with_session_opt(clock, controller, Some(session))
+    }
+
+    pub fn with_session_opt(
+        clock: Arc<dyn ClockSource>,
+        controller: Arc<dyn MediaController>,
+        session: Option<Arc<SessionState>>,
+    ) -> Self {
         let tracer = TimelineTracer::new(Arc::clone(&clock));
         Self {
             clock,
             controller,
             tracer,
+            session,
         }
+    }
+
+    pub fn set_session(&mut self, session: Arc<SessionState>) {
+        self.session = Some(session);
     }
 
     pub async fn execute_intent(&self, intent: &PlaybackIntent) -> Result<()> {
@@ -51,77 +74,64 @@ impl IntentScheduler {
         let actuation_delay_us = self.controller.estimated_actuation_delay_us();
         let fire_ref_time = intent.target_ref_time.saturating_sub(actuation_delay_us);
 
-        if fire_ref_time > now {
+        let overshoot_us = if fire_ref_time > now {
             // Arrived ahead of time: wait until deadline using timeline tracer
             self.tracer.wait_until_deadline(fire_ref_time).await;
-
-            match intent.action {
-                PlaybackAction::Play => {
-                    if intent.position_us > 0 {
-                        self.controller.seek_to(intent.position_us).await?;
-                    }
-                    self.controller.play().await?;
-                }
-                PlaybackAction::Pause => {
-                    self.controller.pause().await?;
-                }
-                PlaybackAction::Seek { target_position_us } => {
-                    self.controller.seek_to(target_position_us).await?;
-                }
-                PlaybackAction::NextTrack => {
-                    self.controller.next_track().await?;
-                }
-                PlaybackAction::PreviousTrack => {
-                    self.controller.previous_track().await?;
-                }
-            }
+            0
         } else if now <= intent.target_ref_time {
             // Fire immediately: between fire_ref_time and target_ref_time (partial actuation buffer)
-            match intent.action {
-                PlaybackAction::Play => {
-                    if intent.position_us > 0 {
-                        self.controller.seek_to(intent.position_us).await?;
-                    }
-                    self.controller.play().await?;
-                }
-                PlaybackAction::Pause => {
-                    self.controller.pause().await?;
-                }
-                PlaybackAction::Seek { target_position_us } => {
-                    self.controller.seek_to(target_position_us).await?;
-                }
-                PlaybackAction::NextTrack => {
-                    self.controller.next_track().await?;
-                }
-                PlaybackAction::PreviousTrack => {
-                    self.controller.previous_track().await?;
-                }
-            }
+            0
         } else {
             // Overdue arrival / mid-track join: target_ref_time was in the past
-            let overshoot_us = (now - intent.target_ref_time) as i64;
+            (now - intent.target_ref_time) as i64
+        };
 
-            match intent.action {
-                PlaybackAction::Play => {
-                    if intent.position_us > 0 {
-                        let compensated_position_us = intent.position_us + overshoot_us;
-                        self.controller.seek_to(compensated_position_us).await?;
-                    }
-                    self.controller.play().await?;
+        match intent.action {
+            PlaybackAction::Play => {
+                let target_position = if overshoot_us > 0 {
+                    intent.position_us + overshoot_us
+                } else {
+                    intent.position_us
+                };
+
+                let local_state = self.controller.get_playback_state().await.ok();
+                let local_pos = local_state.as_ref().map(|s| s.position_us).unwrap_or(0);
+                let delta = (local_pos - target_position).abs();
+
+                // Decouple seek from resume: only seek if position is specified and delta is outside deadband (300ms)
+                if target_position > 0 && delta > 300_000 {
+                    self.controller.seek_to(target_position).await?;
                 }
-                PlaybackAction::Pause => {
-                    self.controller.pause().await?;
+                self.controller.play().await?;
+
+                if let Some(session) = &self.session {
+                    session.expect_playback_state(Some(true), Some(target_position));
                 }
-                PlaybackAction::Seek { target_position_us } => {
-                    let compensated_position_us = target_position_us + overshoot_us;
-                    self.controller.seek_to(compensated_position_us).await?;
+            }
+            PlaybackAction::Pause => {
+                self.controller.pause().await?;
+
+                if let Some(session) = &self.session {
+                    session.expect_playback_state(Some(false), None);
                 }
-                PlaybackAction::NextTrack => {
-                    self.controller.next_track().await?;
+            }
+            PlaybackAction::Seek { target_position_us } => {
+                let final_target = if overshoot_us > 0 {
+                    target_position_us + overshoot_us
+                } else {
+                    target_position_us
+                };
+                self.controller.seek_to(final_target).await?;
+
+                if let Some(session) = &self.session {
+                    session.expect_playback_state(None, Some(final_target));
                 }
-                PlaybackAction::PreviousTrack => {
-                    self.controller.previous_track().await?;
-                }
+            }
+            PlaybackAction::NextTrack => {
+                self.controller.next_track().await?;
+            }
+            PlaybackAction::PreviousTrack => {
+                self.controller.previous_track().await?;
             }
         }
 
