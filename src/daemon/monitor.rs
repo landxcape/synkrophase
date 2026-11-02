@@ -67,21 +67,28 @@ impl FollowerZeroTouchMonitor {
 
             // 1. Play/Pause detection
             if state.is_playing != last_playing {
-                tracing::info!(
-                    was_playing = last_playing,
-                    now_playing = state.is_playing,
-                    "Zero-touch local player play/pause state change detected by Moderator"
-                );
-
-                let action = if state.is_playing {
-                    PlaybackAction::Play
+                if self.session.check_and_consume_expected(state.is_playing, state.position_us) {
+                    tracing::debug!(
+                        is_playing = state.is_playing,
+                        "Follower player play/pause matches expected command; echo suppressed"
+                    );
                 } else {
-                    PlaybackAction::Pause
-                };
+                    tracing::info!(
+                        was_playing = last_playing,
+                        now_playing = state.is_playing,
+                        "Zero-touch local player play/pause state change detected by Moderator"
+                    );
 
-                let _ = self
-                    .engine
-                    .send_command(EngineCommand::PlaybackAction(action));
+                    let action = if state.is_playing {
+                        PlaybackAction::Play
+                    } else {
+                        PlaybackAction::Pause
+                    };
+
+                    let _ = self
+                        .engine
+                        .send_command(EngineCommand::PlaybackAction(action));
+                }
                 last_playing = state.is_playing;
                 last_sample_time = now;
                 last_sample_pos = state.position_us;
@@ -95,15 +102,22 @@ impl FollowerZeroTouchMonitor {
                 let diff_us = (state.position_us - expected_pos_us).abs();
 
                 if diff_us > 1_500_000 {
-                    tracing::info!(
-                        jump_ms = diff_us / 1000,
-                        "Zero-touch timeline scrub detected by Moderator"
-                    );
-                    let _ = self.engine.send_command(EngineCommand::PlaybackAction(
-                        PlaybackAction::Seek {
-                            target_position_us: state.position_us,
-                        },
-                    ));
+                    if self.session.check_and_consume_expected(state.is_playing, state.position_us) {
+                        tracing::debug!(
+                            jump_ms = diff_us / 1000,
+                            "Follower position jump matches expected seek command; echo suppressed"
+                        );
+                    } else {
+                        tracing::info!(
+                            jump_ms = diff_us / 1000,
+                            "Zero-touch timeline scrub detected by Moderator"
+                        );
+                        let _ = self.engine.send_command(EngineCommand::PlaybackAction(
+                            PlaybackAction::Seek {
+                                target_position_us: state.position_us,
+                            },
+                        ));
+                    }
                 }
             }
 

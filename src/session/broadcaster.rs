@@ -142,36 +142,48 @@ impl LeaderAnchorBroadcaster {
 
                 // Condition 2: Play/pause state changed in player
                 if last_is_playing.is_some() && last_is_playing != Some(state.is_playing) {
-                    tracing::info!(
-                        is_playing = state.is_playing,
-                        "Leader play/pause state changed, broadcasting immediate anchor and playback intent"
-                    );
-                    should_broadcast = true;
-                    // Reset trajectory baseline upon resuming from pause to prevent false scrub detection
-                    if state.is_playing {
-                        last_sample_ref_time = now_ref;
-                        last_sample_pos_us = state.position_us;
-                    }
-
-                    let action = if state.is_playing {
-                        PlaybackAction::Play
+                    if self.session.check_and_consume_expected(state.is_playing, state.position_us) {
+                        tracing::debug!(
+                            is_playing = state.is_playing,
+                            "Leader player play/pause matches expected command; echo suppressed"
+                        );
+                        last_is_playing = Some(state.is_playing);
+                        if state.is_playing {
+                            last_sample_ref_time = now_ref;
+                            last_sample_pos_us = state.position_us;
+                        }
                     } else {
-                        PlaybackAction::Pause
-                    };
-                    let lead_time_us = if state.is_playing { 200_000 } else { 100_000 };
-                    let intent = PlaybackIntent {
-                        action,
-                        target_ref_time: now_ref + lead_time_us,
-                        position_us: state.position_us,
-                        track_title: current_track.clone(),
-                    };
-                    let intent_env = Envelope {
-                        sender,
-                        payload: Message::Intent(intent),
-                    };
-                    if let Ok(bytes) = serialize(&intent_env) {
-                        for addr in self.session.peer_socket_addrs() {
-                            let _ = socket.send_to(&bytes, addr).await;
+                        tracing::info!(
+                            is_playing = state.is_playing,
+                            "Leader play/pause state changed, broadcasting immediate anchor and playback intent"
+                        );
+                        should_broadcast = true;
+                        // Reset trajectory baseline upon resuming from pause to prevent false scrub detection
+                        if state.is_playing {
+                            last_sample_ref_time = now_ref;
+                            last_sample_pos_us = state.position_us;
+                        }
+
+                        let action = if state.is_playing {
+                            PlaybackAction::Play
+                        } else {
+                            PlaybackAction::Pause
+                        };
+                        let lead_time_us = if state.is_playing { 200_000 } else { 100_000 };
+                        let intent = PlaybackIntent {
+                            action,
+                            target_ref_time: now_ref + lead_time_us,
+                            position_us: state.position_us,
+                            track_title: current_track.clone(),
+                        };
+                        let intent_env = Envelope {
+                            sender,
+                            payload: Message::Intent(intent),
+                        };
+                        if let Ok(bytes) = serialize(&intent_env) {
+                            for addr in self.session.peer_socket_addrs() {
+                                let _ = socket.send_to(&bytes, addr).await;
+                            }
                         }
                     }
                 }
@@ -184,27 +196,34 @@ impl LeaderAnchorBroadcaster {
                     let diff_us = (state.position_us - expected_pos_us).abs();
 
                     if diff_us > 1_500_000 {
-                        tracing::info!(
-                            jump_ms = diff_us / 1000,
-                            "Leader manual scrub detected in player, broadcasting immediate anchor and seek intent"
-                        );
-                        should_broadcast = true;
+                        if self.session.check_and_consume_expected(state.is_playing, state.position_us) {
+                            tracing::debug!(
+                                jump_ms = diff_us / 1000,
+                                "Leader player position jump matches expected seek command; echo suppressed"
+                            );
+                        } else {
+                            tracing::info!(
+                                jump_ms = diff_us / 1000,
+                                "Leader manual scrub detected in player, broadcasting immediate anchor and seek intent"
+                            );
+                            should_broadcast = true;
 
-                        let intent = PlaybackIntent {
-                            action: PlaybackAction::Seek {
-                                target_position_us: state.position_us,
-                            },
-                            target_ref_time: now_ref + 200_000,
-                            position_us: state.position_us,
-                            track_title: current_track.clone(),
-                        };
-                        let intent_env = Envelope {
-                            sender,
-                            payload: Message::Intent(intent),
-                        };
-                        if let Ok(bytes) = serialize(&intent_env) {
-                            for addr in self.session.peer_socket_addrs() {
-                                let _ = socket.send_to(&bytes, addr).await;
+                            let intent = PlaybackIntent {
+                                action: PlaybackAction::Seek {
+                                    target_position_us: state.position_us,
+                                },
+                                target_ref_time: now_ref + 200_000,
+                                position_us: state.position_us,
+                                track_title: current_track.clone(),
+                            };
+                            let intent_env = Envelope {
+                                sender,
+                                payload: Message::Intent(intent),
+                            };
+                            if let Ok(bytes) = serialize(&intent_env) {
+                                for addr in self.session.peer_socket_addrs() {
+                                    let _ = socket.send_to(&bytes, addr).await;
+                                }
                             }
                         }
                     }
