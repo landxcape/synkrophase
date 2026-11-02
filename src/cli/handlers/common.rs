@@ -8,11 +8,12 @@ use uuid::Uuid;
 
 use crate::config::SyncConfig;
 use crate::controller::MediaController;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 #[cfg(target_os = "linux")]
 use crate::controller::linux::LinuxMediaController;
 #[cfg(target_os = "macos")]
 use crate::controller::macos::MacOsMediaController;
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 use crate::controller::mock::MockMediaController;
 #[cfg(target_os = "windows")]
 use crate::controller::windows::WindowsMediaController;
@@ -21,7 +22,19 @@ use crate::protocol::messages::{Envelope, Message, serialize};
 use crate::session::SessionState;
 use crate::session::discovery::Discovery;
 
+static USE_MOCK_CONTROLLER: AtomicBool = AtomicBool::new(false);
+
+pub fn set_use_mock_controller(enable: bool) {
+    USE_MOCK_CONTROLLER.store(enable, Ordering::Release);
+}
+
 pub fn create_media_controller() -> Arc<dyn MediaController> {
+    if USE_MOCK_CONTROLLER.load(Ordering::Acquire)
+        || std::env::var("SYNKRO_MOCK_CONTROLLER").is_ok()
+    {
+        return Arc::new(MockMediaController::new());
+    }
+
     #[cfg(target_os = "macos")]
     {
         Arc::new(MacOsMediaController::new())
@@ -85,6 +98,50 @@ pub async fn send_join_request(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_join_handshake(
+    socket: &UdpSocket,
+    sender: Uuid,
+    leader_addr: SocketAddr,
+    room_code: String,
+    name: String,
+    session: &Arc<SessionState>,
+    max_attempts: usize,
+    interval: Duration,
+) -> Result<()> {
+    for attempt in 1..=max_attempts {
+        send_join_request(socket, sender, leader_addr, room_code.clone(), name.clone()).await?;
+
+        let start = tokio::time::Instant::now();
+        while start.elapsed() < interval {
+            if session.is_join_confirmed() {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        if attempt < max_attempts {
+            tracing::warn!(
+                attempt,
+                max_attempts,
+                "Retrying join request to leader at {}",
+                leader_addr
+            );
+        }
+    }
+
+    if session.is_join_confirmed() {
+        Ok(())
+    } else {
+        Err(SynkroError::Network(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!(
+                "Join timed out: host at {leader_addr} did not respond to join request for room '{room_code}'"
+            ),
+        )))
+    }
+}
+
 pub async fn run_heartbeat_loop(
     session: Arc<SessionState>,
     socket: Arc<UdpSocket>,
@@ -146,7 +203,12 @@ pub async fn run_role_manager_loop(
                 }
             }
         } else {
-            // Follower monitoring: check if leader or other peers timed out
+            // Follower monitoring: check if leader or other peers timed out.
+            // Never trigger election or self-promotion while still in unconfirmed joining state.
+            if !session.is_join_confirmed() {
+                continue;
+            }
+
             let leader_id = session.leader_id();
             let expired = session.prune_and_appoint(timeout).0;
 

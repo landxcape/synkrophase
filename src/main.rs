@@ -9,6 +9,9 @@ use synkrophase::error::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if cli.mock_controller {
+        synkrophase::cli::handlers::common::set_use_mock_controller(true);
+    }
     let device = load_device_config(cli.name, cli.ephemeral)?;
     let sync_config = SyncConfig::default();
 
@@ -177,6 +180,7 @@ async fn main() -> Result<()> {
             );
             std::process::exit(1);
         }
+        Commands::Peers { json } => display_peers(json).await,
         Commands::Debug => {
             if let Ok(Some(res)) =
                 synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null)
@@ -261,6 +265,40 @@ async fn send_ipc_or_fail(
     }
 }
 
+async fn display_peers(json: bool) -> synkrophase::error::Result<()> {
+    if let Ok(Some(res)) =
+        synkrophase::daemon::IpcClient::send_command("status", serde_json::Value::Null).await
+        && let Ok(snapshot) =
+            serde_json::from_value::<synkrophase::daemon::DaemonStatusSnapshot>(res)
+    {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&snapshot.peers).unwrap_or_default()
+            );
+        } else {
+            println!("\n=== Connected Peers ({}) ===", snapshot.peers.len());
+            println!("  * {} ({:?}) [self]", snapshot.device_name, snapshot.role);
+            for peer in snapshot.peers {
+                if peer.name != snapshot.device_name {
+                    println!(
+                        "  - {} ({:?}) offset: {:+0.2}ms",
+                        peer.name,
+                        peer.role,
+                        (peer.clock_offset_us as f64) / 1000.0
+                    );
+                }
+            }
+            println!();
+        }
+        return Ok(());
+    }
+    eprintln!(
+        "Error: Synkrophase session is not running. Start with 'synkro host' or 'synkro daemon start'."
+    );
+    std::process::exit(1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +352,18 @@ mod tests {
             _ => panic!("Expected Transfer command"),
         }
 
+        // Test Peers
+        let cli = Cli::try_parse_from(["synkro", "peers"]).unwrap();
+        assert!(matches!(cli.command, Commands::Peers { json: false }));
+
+        let cli = Cli::try_parse_from(["synkro", "daemon", "peers", "--json"]).unwrap();
+        match cli.command {
+            Commands::Daemon {
+                command: synkrophase::cli::args::DaemonCommands::Peers { json },
+            } => assert!(json),
+            _ => panic!("Expected Daemon Peers command"),
+        }
+
         // Test Daemon Status
         let cli = Cli::try_parse_from(["synkro", "daemon", "status", "--json"]).unwrap();
         match cli.command {
@@ -341,6 +391,7 @@ mod tests {
                 command:
                     synkrophase::cli::args::DaemonCommands::Start {
                         mode: Some(synkrophase::cli::args::DaemonRunMode::Host { room_code, .. }),
+                        ..
                     },
             } => {
                 assert_eq!(room_code, Some("DEMO1".to_string()));
@@ -352,7 +403,7 @@ mod tests {
         let cli = Cli::try_parse_from(["synkro", "daemon", "start"]).unwrap();
         match cli.command {
             Commands::Daemon {
-                command: synkrophase::cli::args::DaemonCommands::Start { mode },
+                command: synkrophase::cli::args::DaemonCommands::Start { mode, .. },
             } => {
                 assert!(mode.is_none());
             }

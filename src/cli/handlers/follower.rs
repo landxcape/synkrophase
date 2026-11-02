@@ -7,8 +7,8 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 use super::common::{
-    create_media_controller, resolve_join_target, run_heartbeat_loop, run_role_manager_loop,
-    send_join_request,
+    create_media_controller, perform_join_handshake, resolve_join_target, run_heartbeat_loop,
+    run_role_manager_loop,
 };
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
@@ -100,15 +100,6 @@ pub async fn run_join(
         Arc::clone(&controller),
         50_000,
     ));
-
-    send_join_request(
-        &session_socket,
-        device.device_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
 
     let clock_task = {
         let clock = Arc::clone(&clock);
@@ -235,6 +226,24 @@ pub async fn run_join(
         drift_tui_task.abort_handle(),
         receive_task.abort_handle(),
     ];
+
+    if let Err(err) = perform_join_handshake(
+        &session_socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+        device.name.clone(),
+        &session,
+        5,
+        Duration::from_millis(500),
+    )
+    .await
+    {
+        for h in &abort_handles {
+            h.abort();
+        }
+        return Err(err);
+    }
 
     let (engine, mut command_rx) = crate::session::SynkroEngine::new(
         Arc::clone(&session),

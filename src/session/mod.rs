@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use uuid::Uuid;
@@ -29,6 +29,7 @@ pub struct SessionState {
     self_name: String,
     self_role: RwLock<Role>,
     leader_id: RwLock<Uuid>,
+    is_join_confirmed: AtomicBool,
     clock_offset_us: AtomicI64,
     peers: PeerRegistry,
     queue: QueueManager,
@@ -52,6 +53,7 @@ impl SessionState {
             self_name,
             self_role: RwLock::new(Role::Leader),
             leader_id: RwLock::new(self_id),
+            is_join_confirmed: AtomicBool::new(true),
             clock_offset_us: AtomicI64::new(0),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(QueueState::default()),
@@ -75,6 +77,7 @@ impl SessionState {
             self_name,
             self_role: RwLock::new(Role::Listener),
             leader_id: RwLock::new(leader_id),
+            is_join_confirmed: AtomicBool::new(false),
             clock_offset_us: AtomicI64::new(0),
             peers: PeerRegistry::new(),
             queue: QueueManager::new(queue_state),
@@ -92,6 +95,14 @@ impl SessionState {
         }
 
         session
+    }
+
+    pub fn is_join_confirmed(&self) -> bool {
+        self.is_join_confirmed.load(Ordering::Acquire)
+    }
+
+    pub fn mark_join_confirmed(&self) {
+        self.is_join_confirmed.store(true, Ordering::Release);
     }
 
     pub fn is_leader(&self) -> bool {
@@ -309,6 +320,7 @@ impl SessionState {
     ) {
         self.set_leader_id(leader_id);
         self.set_role(assigned_role);
+        self.mark_join_confirmed();
         for peer in peer_list {
             if peer.device_id != self.self_id {
                 if peer.device_id == leader_id {
@@ -382,5 +394,46 @@ impl SessionState {
             }
             _ => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_leader_join_confirmed_by_default() {
+        let leader_id = Uuid::new_v4();
+        let session = SessionState::new_leader("ROOM1".into(), leader_id, "Host".into());
+        assert!(session.is_join_confirmed());
+    }
+
+    #[test]
+    fn test_join_unconfirmed_until_accepted() {
+        let follower_id = Uuid::new_v4();
+        let leader_id = Uuid::new_v4();
+        let leader_addr = "127.0.0.1:5871".parse().unwrap();
+
+        let session = SessionState::from_join(
+            "ROOM1".into(),
+            follower_id,
+            "Follower".into(),
+            leader_id,
+            leader_addr,
+            vec![],
+            QueueState::default(),
+        );
+
+        assert!(!session.is_join_confirmed());
+
+        session.accept_join_accepted(
+            leader_id,
+            leader_addr,
+            vec![],
+            QueueState::default(),
+            Role::Listener,
+        );
+
+        assert!(session.is_join_confirmed());
     }
 }

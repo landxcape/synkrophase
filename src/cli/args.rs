@@ -33,6 +33,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub ephemeral: bool,
 
+    /// Use simulated in-memory media controller instead of native OS player (ideal for local multi-instance testing)
+    #[arg(long, global = true)]
+    pub mock_controller: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -71,8 +75,8 @@ pub enum Commands {
         /// Leader clock sync port.
         #[arg(long, default_value_t = DEFAULT_CLOCK_PORT)]
         leader_clock_port: u16,
-        /// Local UDP port for session traffic.
-        #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
+        /// Local UDP port for session traffic (defaults to 0 for automatic ephemeral port allocation).
+        #[arg(long, default_value_t = 0)]
         session_port: u16,
     },
     /// Send play intent across the room.
@@ -99,6 +103,12 @@ pub enum Commands {
     },
     /// Show live sync status and drift metrics.
     Sync,
+    /// List all connected peers in the active room.
+    Peers {
+        /// Output peers in raw JSON format.
+        #[arg(long)]
+        json: bool,
+    },
     /// Verbose sync metrics mode.
     Debug,
     /// Share / copy room invitation command to clipboard.
@@ -149,6 +159,9 @@ pub enum DaemonCommands {
     Start {
         #[command(subcommand)]
         mode: Option<DaemonRunMode>,
+        /// Disable automatically copying the join invitation command to system clipboard on launch.
+        #[arg(long)]
+        no_copy: bool,
     },
     /// Stop a running background daemon.
     Stop,
@@ -157,6 +170,12 @@ pub enum DaemonCommands {
     /// Query status of a running daemon over IPC.
     Status {
         /// Output status in raw JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List all connected peers in the active room.
+    Peers {
+        /// Output peers in raw JSON format.
         #[arg(long)]
         json: bool,
     },
@@ -189,7 +208,7 @@ pub enum DaemonRunMode {
         leader_id: Option<Uuid>,
         #[arg(long, default_value_t = DEFAULT_CLOCK_PORT)]
         leader_clock_port: u16,
-        #[arg(long, default_value_t = DEFAULT_SESSION_PORT)]
+        #[arg(long, default_value_t = 0)]
         session_port: u16,
     },
 }

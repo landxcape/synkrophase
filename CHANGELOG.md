@@ -3,6 +3,17 @@
 All notable changes to Synkrophase are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-11-02
+
+### Fixed
+- **Join Handshake & State Confirmation Guardrail**: Added `is_join_confirmed` state tracking in `SessionState` and implemented `perform_join_handshake` with automatic retries (5 attempts, 500ms intervals). Unconfirmed joiners are strictly barred from participating in failover elections, preventing joining nodes from erroneously promoting themselves to Leader and opening phantom rooms when packets are dropped or delayed.
+- **Follower Port Collision Resolution**: Changed default follower `session_port` to `0` (ephemeral allocation). Follower binds a dynamic port while the leader replies to packet source addresses (`src`), resolving `EADDRINUSE` port collisions when multiple instances run on the same network or host.
+- **Same-Machine Audio & State Loop Isolation**: Prevented multi-instance acoustic and timeline feedback loops by adding a simulated mock media controller engine (`--mock-controller`) and transient device identity generation (`--ephemeral`).
+
+### Added
+- **Daemon Start Room Invitation Clipboard Copy**: `synkro daemon start host` now pre-generates the room code, resolves the primary LAN IPv4 socket address, outputs the canonical invitation command to the terminal, and copies `synkro join <ROOM> --leader-addr <IP:PORT>` directly to the system clipboard upon launch (respects `--no-copy`).
+- **Dedicated `synkro peers` CLI Command**: Introduced a first-class `synkro peers` top-level command and `synkro daemon peers` alias to display online peers, roles, and clock offsets without verbose status data.
+
 ## [0.8.3] - 2026-10-25
 
 ### Added

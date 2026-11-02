@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use crate::cli::args::{DEFAULT_CLOCK_PORT, DEFAULT_SESSION_PORT, DaemonCommands, DaemonRunMode};
 use crate::cli::handlers::common::{
-    create_media_controller, resolve_join_target, run_heartbeat_loop, run_role_manager_loop,
-    send_join_request,
+    create_media_controller, perform_join_handshake, resolve_join_target, run_heartbeat_loop,
+    run_role_manager_loop,
 };
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
@@ -50,17 +50,18 @@ pub async fn handle_daemon_command(
             });
             run_daemon_foreground(mode, device, sync_config, paths).await
         }
-        DaemonCommands::Start { mode } => {
+        DaemonCommands::Start { mode, no_copy } => {
             let mode = mode.unwrap_or(DaemonRunMode::Host {
                 room_code: None,
                 clock_port: DEFAULT_CLOCK_PORT,
                 session_port: DEFAULT_SESSION_PORT,
             });
-            start_daemon_background(mode, &paths)
+            start_daemon_background(mode, &paths, &device, no_copy)
         }
         DaemonCommands::Stop => stop_daemon(&paths).await,
         DaemonCommands::Attach => crate::tui::run_attached_tui(paths).await,
         DaemonCommands::Status { json } => status_daemon(&paths, json).await,
+        DaemonCommands::Peers { json } => peers_daemon(&paths, json).await,
         DaemonCommands::Logs { follow } => view_daemon_logs(&paths, follow),
     }
 }
@@ -163,7 +164,12 @@ async fn run_daemon_foreground(
     Ok(())
 }
 
-fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<()> {
+fn start_daemon_background(
+    mode: DaemonRunMode,
+    paths: &DaemonPaths,
+    device: &DeviceConfig,
+    no_copy: bool,
+) -> Result<()> {
     if paths.is_running() {
         println!(
             "Synkrophase daemon is already running (PID: {}).",
@@ -175,6 +181,7 @@ fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<(
     paths.ensure_dir_exists()?;
     let exe = std::env::current_exe().map_err(|e| SynkroError::Config(e.to_string()))?;
 
+    let mut host_info = None;
     let mut args = vec!["daemon".to_string(), "run".to_string()];
     match mode {
         DaemonRunMode::Host {
@@ -182,14 +189,16 @@ fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<(
             clock_port,
             session_port,
         } => {
+            let room = room_code.unwrap_or_else(|| {
+                format!("ROOM{}", device.device_id.to_string()[..4].to_uppercase())
+            });
             args.push("host".to_string());
-            if let Some(r) = room_code {
-                args.push(r);
-            }
+            args.push(room.clone());
             args.push("--clock-port".to_string());
             args.push(clock_port.to_string());
             args.push("--session-port".to_string());
             args.push(session_port.to_string());
+            host_info = Some((room, session_port, clock_port));
         }
         DaemonRunMode::Join {
             room_code,
@@ -244,6 +253,28 @@ fn start_daemon_background(mode: DaemonRunMode, paths: &DaemonPaths) -> Result<(
         "Synkrophase daemon started in background (PID: {}).",
         child.id()
     );
+    if let Some((room, session_port, clock_port)) = host_info {
+        let lan_ip = local_ip_address::local_ip()
+            .ok()
+            .and_then(|ip| match ip {
+                std::net::IpAddr::V4(v4) if !v4.is_loopback() => Some(ip),
+                _ => None,
+            })
+            .unwrap_or(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let leader_addr = SocketAddr::new(lan_ip, session_port);
+        let invitation = crate::session::invitation::RoomInvitation::new(
+            room,
+            leader_addr,
+            session_port,
+            clock_port,
+        );
+        let cmd = invitation.cli_command();
+        if !no_copy && invitation.copy_to_clipboard().is_ok() {
+            println!("Room Invitation Command (Copied to clipboard!):\n  {cmd}");
+        } else {
+            println!("Room Invitation Command:\n  {cmd}");
+        }
+    }
     println!("Logs: {:?}", paths.log_path);
     if socket_ready {
         println!("Socket: {:?} (Ready)", paths.socket_path);
@@ -396,6 +427,48 @@ async fn status_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
 
         Ok(())
     }
+}
+
+async fn peers_daemon(paths: &DaemonPaths, json: bool) -> Result<()> {
+    if !paths.is_running() {
+        if json {
+            println!("{}", serde_json::json!({"running": false, "peers": []}));
+        } else {
+            println!("Synkrophase daemon is not running.");
+        }
+        return Ok(());
+    }
+
+    if let Ok(Some(res)) =
+        crate::daemon::IpcClient::send_command_with_paths(paths, "status", serde_json::Value::Null)
+            .await
+        && let Ok(snapshot) = serde_json::from_value::<DaemonStatusSnapshot>(res)
+    {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&snapshot.peers).unwrap_or_default()
+            );
+        } else {
+            println!("\n=== Connected Peers ({}) ===", snapshot.peers.len());
+            println!("  * {} ({:?}) [self]", snapshot.device_name, snapshot.role);
+            for peer in snapshot.peers {
+                if peer.name != snapshot.device_name {
+                    println!(
+                        "  - {} ({:?}) offset: {:+0.2}ms",
+                        peer.name,
+                        peer.role,
+                        (peer.clock_offset_us as f64) / 1000.0
+                    );
+                }
+            }
+            println!();
+        }
+    } else {
+        println!("Could not retrieve peers from active daemon.");
+    }
+
+    Ok(())
 }
 
 fn view_daemon_logs(paths: &DaemonPaths, follow: bool) -> Result<()> {
@@ -638,15 +711,6 @@ async fn setup_join_daemon(
     ));
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    send_join_request(
-        &session_socket,
-        device.device_id,
-        resolved_leader_addr,
-        room_code.clone(),
-        device.name.clone(),
-    )
-    .await?;
-
     let clock_task = tokio::spawn({
         let c = Arc::clone(&clock);
         async move { c.run_responder().await }
@@ -731,6 +795,24 @@ async fn setup_join_daemon(
         role_task.abort_handle(),
         recv_task.abort_handle(),
     ];
+
+    if let Err(err) = perform_join_handshake(
+        &session_socket,
+        device.device_id,
+        resolved_leader_addr,
+        room_code.clone(),
+        device.name.clone(),
+        &session,
+        5,
+        Duration::from_millis(500),
+    )
+    .await
+    {
+        for h in &abort_handles {
+            h.abort();
+        }
+        return Err(err);
+    }
 
     let (engine, mut command_rx) = SynkroEngine::new(
         Arc::clone(&session),
