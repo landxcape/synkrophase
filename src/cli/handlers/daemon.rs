@@ -20,9 +20,10 @@ use crate::cli::handlers::common::{
 };
 use crate::clock::sync::ClockSync;
 use crate::config::{DeviceConfig, SyncConfig};
+use crate::daemon::DaemonStatusSnapshot;
 use crate::daemon::paths::DaemonPaths;
 #[cfg(unix)]
-use crate::daemon::protocol::{DaemonStatusSnapshot, IpcRequest, IpcResponse};
+use crate::daemon::protocol::{IpcRequest, IpcResponse};
 use crate::daemon::{FollowerZeroTouchMonitor, IpcServer};
 use crate::error::{Result, SynkroError};
 use crate::protocol::messages::{QueueState, Role};
