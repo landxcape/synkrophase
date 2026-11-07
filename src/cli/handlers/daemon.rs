@@ -707,10 +707,11 @@ async fn setup_join_daemon(
         Arc::clone(&controller),
         Arc::clone(&session),
     ));
-    let drift_evaluator = Arc::new(DriftEvaluator::new(
+    let drift_evaluator = Arc::new(DriftEvaluator::with_session(
         Arc::clone(&clock) as _,
         Arc::clone(&controller),
         50_000,
+        Arc::clone(&session),
     ));
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
 

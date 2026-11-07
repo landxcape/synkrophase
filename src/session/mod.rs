@@ -144,6 +144,48 @@ impl SessionState {
         false
     }
 
+    pub fn check_and_consume_expected_play_pause(&self, is_playing: bool) -> bool {
+        let mut guard = self.expected_player_state.lock().unwrap();
+        if let Some(expected) = guard.as_mut() {
+            if expected.set_at.elapsed() > expected.timeout {
+                *guard = None;
+                return false;
+            }
+
+            if let Some(exp_playing) = expected.is_playing
+                && exp_playing == is_playing
+            {
+                expected.is_playing = None;
+                if expected.position_us.is_none() {
+                    *guard = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn check_and_consume_expected_seek(&self, position_us: i64) -> bool {
+        let mut guard = self.expected_player_state.lock().unwrap();
+        if let Some(expected) = guard.as_mut() {
+            if expected.set_at.elapsed() > expected.timeout {
+                *guard = None;
+                return false;
+            }
+
+            if let Some(exp_pos) = expected.position_us
+                && (exp_pos - position_us).abs() < 1_500_000
+            {
+                expected.position_us = None;
+                if expected.is_playing.is_none() {
+                    *guard = None;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn is_join_confirmed(&self) -> bool {
         self.is_join_confirmed.load(Ordering::Acquire)
     }
@@ -502,5 +544,15 @@ mod tests {
         // Position within tolerance matches
         assert!(session.check_and_consume_expected(true, 45_200_000));
         assert!(!session.check_and_consume_expected(true, 45_200_000));
+
+        // Test decoupled play/pause checking regardless of position
+        session.expect_playback_state(Some(true), None);
+        assert!(session.check_and_consume_expected_play_pause(true));
+        assert!(!session.check_and_consume_expected_play_pause(true));
+
+        // Test decoupled seek checking regardless of playing state
+        session.expect_playback_state(None, Some(60_000_000));
+        assert!(session.check_and_consume_expected_seek(60_500_000));
+        assert!(!session.check_and_consume_expected_seek(60_500_000));
     }
 }

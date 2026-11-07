@@ -69,7 +69,24 @@ impl IntentScheduler {
             }
         }
 
-        // 2. Scheduled Trigger with Pre-Dispatch Actuation Compensation
+        // 2. Pre-register expected state before scheduled trigger sleep to prevent
+        // zero-touch monitors from echoing state changes during the pre-dispatch lead time window.
+        if let Some(session) = &self.session {
+            match intent.action {
+                PlaybackAction::Play => {
+                    session.expect_playback_state(Some(true), None);
+                }
+                PlaybackAction::Pause => {
+                    session.expect_playback_state(Some(false), None);
+                }
+                PlaybackAction::Seek { target_position_us } => {
+                    session.expect_playback_state(None, Some(target_position_us));
+                }
+                _ => {}
+            }
+        }
+
+        // 3. Scheduled Trigger with Pre-Dispatch Actuation Compensation
         let now = self.clock.reference_now();
         let actuation_delay_us = self.controller.estimated_actuation_delay_us();
         let fire_ref_time = intent.target_ref_time.saturating_sub(actuation_delay_us);
@@ -105,7 +122,11 @@ impl IntentScheduler {
                 self.controller.play().await?;
 
                 if let Some(session) = &self.session {
-                    session.expect_playback_state(Some(true), Some(target_position));
+                    if target_position > 0 && delta > 300_000 {
+                        session.expect_playback_state(Some(true), Some(target_position));
+                    } else {
+                        session.expect_playback_state(Some(true), None);
+                    }
                 }
             }
             PlaybackAction::Pause => {

@@ -7,6 +7,7 @@ use tokio::time::sleep;
 use crate::controller::MediaController;
 use crate::error::Result;
 use crate::protocol::messages::SyncAnchor;
+use crate::session::SessionState;
 use crate::sync::controller::ClockSource;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +29,7 @@ pub struct DriftEvaluator {
     clock: Arc<dyn ClockSource>,
     controller: Arc<dyn MediaController>,
     threshold_us: u64,
+    session: Option<Arc<SessionState>>,
     notify_event: Arc<Notify>,
     last_seek: Mutex<Option<std::time::Instant>>,
     last_anchor: Mutex<Option<SyncAnchor>>,
@@ -70,11 +72,30 @@ impl DriftEvaluator {
         controller: Arc<dyn MediaController>,
         threshold_us: u64,
     ) -> Self {
+        Self::with_session_opt(clock, controller, threshold_us, None)
+    }
+
+    pub fn with_session(
+        clock: Arc<dyn ClockSource>,
+        controller: Arc<dyn MediaController>,
+        threshold_us: u64,
+        session: Arc<SessionState>,
+    ) -> Self {
+        Self::with_session_opt(clock, controller, threshold_us, Some(session))
+    }
+
+    pub fn with_session_opt(
+        clock: Arc<dyn ClockSource>,
+        controller: Arc<dyn MediaController>,
+        threshold_us: u64,
+        session: Option<Arc<SessionState>>,
+    ) -> Self {
         let default_lead = controller.default_seek_priming_lead_us() as i64;
         Self {
             clock,
             controller,
             threshold_us,
+            session,
             notify_event: Arc::new(Notify::new()),
             last_seek: Mutex::new(None),
             last_anchor: Mutex::new(None),
@@ -313,6 +334,9 @@ impl DriftEvaluator {
             // Leader is paused: ensure local follower player is paused
             if local_state.is_playing {
                 tracing::info!("Leader is paused; pausing local follower playback");
+                if let Some(session) = &self.session {
+                    session.expect_playback_state(Some(false), None);
+                }
                 let _ = self.controller.pause().await;
                 self.enter_buffering(Duration::from_millis(1500));
             }
@@ -325,6 +349,9 @@ impl DriftEvaluator {
                     target_pos_ms = anchor.media_position_us / 1000,
                     "Aligning paused follower timeline position"
                 );
+                if let Some(session) = &self.session {
+                    session.expect_playback_state(None, Some(anchor.media_position_us));
+                }
                 let _ = self.controller.seek_to(anchor.media_position_us).await;
             }
 
@@ -338,6 +365,9 @@ impl DriftEvaluator {
         // Leader is playing: ensure local follower player is playing
         if !local_state.is_playing {
             tracing::info!("Leader is playing; resuming local follower playback");
+            if let Some(session) = &self.session {
+                session.expect_playback_state(Some(true), None);
+            }
             let _ = self.controller.play().await;
             local_state.is_playing = true;
             self.enter_buffering(Duration::from_millis(1500));
@@ -545,6 +575,9 @@ impl DriftEvaluator {
         let target_seek_position_us = expected_position_us + actuation_delay_us + priming_lead_us;
 
         if should_seek {
+            if let Some(session) = &self.session {
+                session.expect_playback_state(None, Some(target_seek_position_us));
+            }
             self.controller.seek_to(target_seek_position_us).await?;
             *self.pending_seek_calibration.lock().unwrap() = true;
             let needs_restore = self.current_adjusted_rate.lock().unwrap().is_some();

@@ -69,7 +69,7 @@ impl FollowerZeroTouchMonitor {
             if state.is_playing != last_playing {
                 if self
                     .session
-                    .check_and_consume_expected(state.is_playing, state.position_us)
+                    .check_and_consume_expected_play_pause(state.is_playing)
                 {
                     tracing::debug!(
                         is_playing = state.is_playing,
@@ -107,7 +107,7 @@ impl FollowerZeroTouchMonitor {
                 if diff_us > 1_500_000 {
                     if self
                         .session
-                        .check_and_consume_expected(state.is_playing, state.position_us)
+                        .check_and_consume_expected_seek(state.position_us)
                     {
                         tracing::debug!(
                             jump_ms = diff_us / 1000,

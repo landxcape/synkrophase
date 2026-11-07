@@ -96,10 +96,11 @@ pub async fn run_join(
         Arc::clone(&session),
     ));
 
-    let drift_evaluator = Arc::new(DriftEvaluator::new(
+    let drift_evaluator = Arc::new(DriftEvaluator::with_session(
         Arc::clone(&clock) as Arc<dyn crate::sync::controller::ClockSource>,
         Arc::clone(&controller),
         50_000,
+        Arc::clone(&session),
     ));
 
     let clock_task = {

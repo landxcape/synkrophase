@@ -2,8 +2,10 @@ use std::sync::Arc;
 use synkrophase::controller::mock::MockMediaController;
 use synkrophase::controller::{MediaController, TrackMetadata};
 use synkrophase::protocol::messages::{PlaybackAction, PlaybackIntent};
+use synkrophase::session::SessionState;
 use synkrophase::sync::controller::ClockSource;
 use synkrophase::sync::scheduler::IntentScheduler;
+use uuid::Uuid;
 
 struct TestClock {
     time: std::sync::atomic::AtomicU64,
@@ -238,4 +240,44 @@ async fn test_intent_scheduler_registers_expected_playback_state() {
 
     // SessionState should consume expected state (is_playing: true)
     assert!(session.check_and_consume_expected(true, 20_000_000));
+}
+
+#[tokio::test]
+async fn test_intent_scheduler_pre_registers_expected_state_before_deadline() {
+    let clock = Arc::new(TestClock::new(10_000_000));
+    let controller = Arc::new(MockMediaController::new());
+    let session = Arc::new(SessionState::new_leader(
+        "ROOM".into(),
+        Uuid::new_v4(),
+        "Host".into(),
+    ));
+
+    let scheduler = Arc::new(IntentScheduler::with_session(
+        clock.clone(),
+        controller.clone(),
+        session.clone(),
+    ));
+
+    // Schedule an intent in the future (+200ms)
+    let future_ref_time = 10_000_000 + 200_000;
+    let play_intent = PlaybackIntent {
+        action: PlaybackAction::Play,
+        target_ref_time: future_ref_time,
+        position_us: 0,
+        track_title: None,
+    };
+
+    let s_clone = scheduler.clone();
+    let exec_task = tokio::spawn(async move {
+        s_clone.execute_intent(&play_intent).await.unwrap();
+    });
+
+    // Give a brief instant for execute_intent to enter and pre-register
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    // Even though the execution has NOT finished (waiting for deadline),
+    // the expected play state is ALREADY pre-registered in session!
+    assert!(session.check_and_consume_expected_play_pause(true));
+
+    exec_task.await.unwrap();
 }

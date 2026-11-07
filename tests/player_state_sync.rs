@@ -557,6 +557,125 @@ async fn test_zero_touch_monitor_suppresses_expected_playback_command() {
 }
 
 #[tokio::test]
+async fn test_zero_touch_monitor_suppresses_resume_echo_at_arbitrary_position() {
+    let host_id = Uuid::new_v4();
+    let host_session = Arc::new(SessionState::new_leader(
+        "ROOM1".into(),
+        host_id,
+        "Host".into(),
+    ));
+
+    let host_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let host_addr = host_socket.local_addr().unwrap();
+
+    let follower_id = Uuid::new_v4();
+    let follower_session = Arc::new(SessionState::from_join(
+        "ROOM1".into(),
+        follower_id,
+        "Moderator".into(),
+        host_id,
+        host_addr,
+        vec![],
+        Default::default(),
+    ));
+    follower_session.mark_join_confirmed();
+    follower_session.set_role(Role::Moderator);
+
+    let follower_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let follower_addr = follower_socket.local_addr().unwrap();
+
+    host_session.record_peer_heartbeat(
+        PeerInfo {
+            device_id: follower_id,
+            name: "Moderator".into(),
+            clock_offset_us: 0,
+            last_seen: 0,
+            role: Role::Moderator,
+        },
+        follower_addr,
+    );
+
+    let follower_controller = Arc::new(MockMediaController::new());
+    // Start paused at 45 seconds into track
+    follower_controller.pause().await.unwrap();
+    follower_controller.seek_to(45_000_000).await.unwrap();
+
+    let follower_clock = Arc::new(ClockSync::new(
+        UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+        SyncConfig::default(),
+        follower_id,
+    ));
+
+    let follower_scheduler = Arc::new(synkrophase::sync::scheduler::IntentScheduler::with_session(
+        follower_clock.clone() as Arc<dyn synkrophase::sync::controller::ClockSource>,
+        follower_controller.clone(),
+        follower_session.clone(),
+    ));
+
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (follower_engine, mut cmd_rx) = synkrophase::session::SynkroEngine::new(
+        follower_session.clone(),
+        follower_controller.clone(),
+        follower_socket.clone(),
+        Some(host_addr),
+        follower_clock.clone(),
+        follower_scheduler,
+        event_tx,
+        vec![],
+    );
+    let follower_engine = Arc::new(follower_engine);
+
+    let f_eng = follower_engine.clone();
+    let cmd_task = tokio::spawn(async move {
+        while let Some(cmd) = cmd_rx.recv().await {
+            let _ = f_eng.execute_command(cmd).await;
+        }
+    });
+
+    let monitor = synkrophase::daemon::FollowerZeroTouchMonitor::new(follower_engine.clone());
+    let monitor_task = tokio::spawn(async move {
+        let _ = monitor.run_monitor_loop().await;
+    });
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Simulate Synkrophase expecting a play action (with position_us: None, as set on Play resume)
+    follower_session.expect_playback_state(Some(true), None);
+
+    // Follower controller changes state to play (resumes from 45s)
+    follower_controller.play().await.unwrap();
+
+    // Zero-touch monitor should SUPPRESS emitting any proposed intent
+    let mut received_unexpected_intent = false;
+    let mut buf = [0u8; 4096];
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < Duration::from_secs(2) {
+        if let Ok(Ok((len, _))) =
+            tokio::time::timeout(Duration::from_millis(400), host_socket.recv_from(&mut buf)).await
+        {
+            if let Ok(Envelope {
+                sender,
+                payload: Message::Intent(_),
+            }) = deserialize(&buf[..len])
+            {
+                if sender == follower_id {
+                    received_unexpected_intent = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    cmd_task.abort();
+    monitor_task.abort();
+    assert!(
+        !received_unexpected_intent,
+        "Zero-touch monitor must suppress echoing play action at non-zero timeline positions"
+    );
+}
+
+#[tokio::test]
 async fn test_listener_intent_rejected_by_leader() {
     let host_id = Uuid::new_v4();
     let host_session = Arc::new(SessionState::new_leader(
